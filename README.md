@@ -1,5 +1,8 @@
 # CereWorker
 
+[![npm](https://img.shields.io/npm/v/@cereworker/cli)](https://www.npmjs.com/package/@cereworker/cli)
+[![GitHub](https://img.shields.io/github/license/Producible/CereWorker)](https://github.com/Producible/CereWorker/blob/main/LICENSE)
+
 A dual-LLM autonomous agent that pairs a small local model (the **Cerebellum**) with giant cloud LLMs (the **Cerebrum**) to produce work that is not just intelligent, but verifiably effective in the real world.
 
 ## Why CereWorker
@@ -71,15 +74,15 @@ The **Cerebellum** runs as a Python gRPC service inside a Docker container. The 
 - pnpm 9+
 - Docker (for Cerebellum)
 
+### Install from npm
+
+```bash
+npm install -g @cereworker/cli
+```
+
 ### Setup
 
 ```bash
-# Install dependencies
-pnpm install
-
-# Build all packages
-pnpm build
-
 # Create config with your API key
 mkdir -p ~/.cereworker
 cat > ~/.cereworker/config.yaml << 'EOF'
@@ -92,7 +95,17 @@ cerebrum:
 EOF
 
 # Run the TUI
-ANTHROPIC_API_KEY=sk-... pnpm start
+ANTHROPIC_API_KEY=sk-... cereworker
+```
+
+### From source
+
+```bash
+git clone https://github.com/Producible/CereWorker.git
+cd CereWorker
+pnpm install
+pnpm build
+pnpm start
 ```
 
 ### Start the Cerebellum (optional)
@@ -178,16 +191,16 @@ When a message arrives from Slack/Discord/Telegram/Matrix/Feishu/WeChat:
 
 ## Packages
 
-| Package | Description |
-|---------|-------------|
-| `@cereworker/config` | YAML config with Zod validation, env var interpolation |
-| `@cereworker/core` | Orchestrator, message model, typed events, conversation store |
-| `@cereworker/cerebrum` | AI SDK 6 multi-provider LLM abstraction + built-in tools |
-| `@cereworker/cerebellum-client` | gRPC client for the Cerebellum container |
-| `@cereworker/channels` | IM adapters (Slack, Discord, Telegram, Matrix, Feishu, WeChat) |
-| `@cereworker/browser` | Puppeteer browser automation tools |
-| `@cereworker/skills` | SKILL.md plugin loader and registry |
-| `@cereworker/cli` | Ink 5 terminal UI |
+| Package | npm | Description |
+|---------|-----|-------------|
+| [`@cereworker/cli`](apps/cli) | [![npm](https://img.shields.io/npm/v/@cereworker/cli)](https://www.npmjs.com/package/@cereworker/cli) | Ink 5 terminal UI |
+| [`@cereworker/core`](packages/core) | [![npm](https://img.shields.io/npm/v/@cereworker/core)](https://www.npmjs.com/package/@cereworker/core) | Orchestrator, message model, typed events, conversation store |
+| [`@cereworker/cerebrum`](packages/cerebrum) | [![npm](https://img.shields.io/npm/v/@cereworker/cerebrum)](https://www.npmjs.com/package/@cereworker/cerebrum) | AI SDK 6 multi-provider LLM abstraction + built-in tools |
+| [`@cereworker/cerebellum-client`](packages/cerebellum-client) | [![npm](https://img.shields.io/npm/v/@cereworker/cerebellum-client)](https://www.npmjs.com/package/@cereworker/cerebellum-client) | gRPC client for the Cerebellum container |
+| [`@cereworker/channels`](packages/channels) | [![npm](https://img.shields.io/npm/v/@cereworker/channels)](https://www.npmjs.com/package/@cereworker/channels) | IM adapters (Slack, Discord, Telegram, Matrix, Feishu, WeChat) |
+| [`@cereworker/browser`](packages/browser) | [![npm](https://img.shields.io/npm/v/@cereworker/browser)](https://www.npmjs.com/package/@cereworker/browser) | Puppeteer browser automation tools |
+| [`@cereworker/skills`](packages/skills) | [![npm](https://img.shields.io/npm/v/@cereworker/skills)](https://www.npmjs.com/package/@cereworker/skills) | SKILL.md plugin loader and registry |
+| [`@cereworker/config`](packages/config) | [![npm](https://img.shields.io/npm/v/@cereworker/config)](https://www.npmjs.com/package/@cereworker/config) | YAML config with Zod validation, env var interpolation |
 
 ## Built-in Tools
 
