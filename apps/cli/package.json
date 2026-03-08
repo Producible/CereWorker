@@ -5,6 +5,15 @@
   "bin": {
     "cereworker": "dist/index.js"
   },
+  "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Producible/CereWorker.git",
+    "directory": "apps/cli"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/index.tsx",

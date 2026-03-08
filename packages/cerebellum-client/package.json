@@ -4,6 +4,15 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": ["dist"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Producible/CereWorker.git",
+    "directory": "packages/cerebellum-client"
+  },
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
