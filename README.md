@@ -45,24 +45,33 @@ An agent that schedules its own work intelligently, catches its own mistakes, an
                              |
                     +--------+---------+
                     |   Orchestrator   |
-                    +--+-----+-----+--+
-                       |     |     |
-          +------------+     |     +------------+
-          |                  |                  |
-+---------+------+  +--------+--------+  +------+---------+
-| Cerebrum       |  | Cerebellum      |  | Channels       |
-| (AI SDK 6)     |  | (Docker/gRPC)   |  | Slack, Discord |
-| Claude, GPT,   |  | Qwen3 0.6B      |  | Telegram,Matrix|
-| Gemini, local  |  | Heartbeat/Mon/  |  | Feishu, WeChat |
-+----------------+  | Fine-tune       |  +----------------+
-                    +-----------------+
+                    +--+-+---+---+-+--+
+                       | |   |   | |
+        +--------------+ |   |   | +--------------+
+        |          +-----+   |   +------+         |
+        |          |         |          |         |
++-------+---+ +---+------+  |  +-------+--+ +----+--------+
+| Cerebrum  | | Cerebellum|  |  | Hippo-   | | Channels    |
+| (AI SDK 6)| | (Docker/  |  |  | campus   | | Slack,      |
+| Claude,   | |  gRPC)    |  |  | (Memory) | | Discord,    |
+| GPT,      | | Heartbeat |  |  | MEMORY.md| | Telegram,   |
+| Gemini,   | | Fine-tune |  |  | Daily    | | Matrix,     |
+| local     | | Instinct  |  |  | logs     | | Feishu,     |
++-----------+ +-----------+  |  +----------+ | WeChat      |
+                              |               +-------------+
+                     +--------+--------+
+                     | Browser/Skills  |
+                     | Puppeteer, SKILL|
+                     +-----------------+
 ```
 
 The **Orchestrator** sits at the center. It routes user messages to the Cerebrum, executes tool calls, streams responses to the TUI, and listens to heartbeat events from the Cerebellum. It emits typed events (`message:cerebrum:chunk`, `tool:start`, `heartbeat:tick`, etc.) that the UI and other components subscribe to.
 
-The **Cerebrum** wraps Vercel AI SDK 6 to provide a unified interface across providers. Switching from Claude to GPT to Gemini to a local Ollama model is a config change. The Cerebrum also owns the tool registry -- shell execution, file operations, and browser automation are all registered as AI SDK tools that the LLM can call during multi-step reasoning.
+The **Cerebrum** wraps Vercel AI SDK 6 to provide a unified interface across providers. Switching from Claude to GPT to Gemini to a local Ollama model is a config change. The Cerebrum also owns the tool registry -- shell execution, file operations, browser automation, and memory tools are all registered as AI SDK tools that the LLM can call during multi-step reasoning.
 
-The **Cerebellum** runs as a Python gRPC service inside a Docker container. The TypeScript side communicates with it via streaming RPCs defined in `proto/cerebellum.proto`. The container manages its own model weights, and can be hot-swapped after fine-tuning without interrupting the main process.
+The **Cerebellum** runs as a Python gRPC service inside a Docker container with a configurable small LLM (Qwen3 0.6B/1.7B, SmolLM2, Phi-4 Mini, or a custom model). The TypeScript side communicates with it via streaming RPCs defined in `proto/cerebellum.proto`. The container manages its own model weights and supports fine-tuning via LoRA, QLoRA, or full methods on a configurable schedule. After fine-tuning, the container can be hot-swapped with updated weights without interrupting the main process.
+
+The **Hippocampus** is CereWorker's temporary memory layer, inspired by the brain structure that consolidates short-term memory into long-term storage. It stores session notes, decisions, and observations in `~/.cereworker/memory/` as markdown files (`MEMORY.md` for curated knowledge, `YYYY-MM-DD.md` for daily logs). The Cerebrum reads and writes to the Hippocampus during normal conversation via memory tools. Periodically, a curator process reviews the Hippocampus and selects memories worth permanently learning -- these are extracted as training pairs and fed into the Cerebellum's fine-tuning pipeline. This is how ephemeral context becomes permanent knowledge without consuming context window.
 
 **Channels** are pluggable IM adapters. Each implements a simple interface: `start(handler)`, `stop()`, `send(msg)`, `isAllowed(senderId)`. The channel manager starts all enabled channels and routes inbound messages through the orchestrator, so the agent can be reached via Slack, Discord, Telegram, Matrix, Feishu, or WeChat simultaneously.
 
@@ -82,8 +91,28 @@ npm install -g @cereworker/cli
 
 ### Setup
 
+The easiest way to get started is the interactive onboarding wizard:
+
 ```bash
-# Create config with your API key
+cereworker onboard
+```
+
+The wizard walks you through:
+- **LLM provider** -- Anthropic, OpenAI, Google, or local (Ollama/vLLM)
+- **Cerebellum model** -- choose from Qwen3, SmolLM2, Phi-4 Mini, or a custom checkpoint, with hardware-aware recommendations
+- **Fine-tuning** -- method (Auto/LoRA/QLoRA/Full) and schedule, with GPU/RAM detection
+- **Messaging channels** -- enable Slack, Discord, Telegram, Matrix, Feishu, or WeChat
+- **Config output** -- writes `~/.cereworker/config.yaml` with env var references for secrets
+
+After onboarding, start the agent:
+
+```bash
+cereworker
+```
+
+Or configure manually:
+
+```bash
 mkdir -p ~/.cereworker
 cat > ~/.cereworker/config.yaml << 'EOF'
 cerebrum:
@@ -94,7 +123,6 @@ cerebrum:
       apiKey: ${ANTHROPIC_API_KEY}
 EOF
 
-# Run the TUI
 ANTHROPIC_API_KEY=sk-... cereworker
 ```
 
@@ -200,13 +228,16 @@ When a message arrives from Slack/Discord/Telegram/Matrix/Feishu/WeChat:
 | [`@cereworker/channels`](packages/channels) | [![npm](https://img.shields.io/npm/v/@cereworker/channels)](https://www.npmjs.com/package/@cereworker/channels) | IM adapters (Slack, Discord, Telegram, Matrix, Feishu, WeChat) |
 | [`@cereworker/browser`](packages/browser) | [![npm](https://img.shields.io/npm/v/@cereworker/browser)](https://www.npmjs.com/package/@cereworker/browser) | Puppeteer browser automation tools |
 | [`@cereworker/skills`](packages/skills) | [![npm](https://img.shields.io/npm/v/@cereworker/skills)](https://www.npmjs.com/package/@cereworker/skills) | SKILL.md plugin loader and registry |
+| [`@cereworker/hippocampus`](packages/hippocampus) | [![npm](https://img.shields.io/npm/v/@cereworker/hippocampus)](https://www.npmjs.com/package/@cereworker/hippocampus) | Temporary memory store, memory tools, fine-tune curator |
 | [`@cereworker/config`](packages/config) | [![npm](https://img.shields.io/npm/v/@cereworker/config)](https://www.npmjs.com/package/@cereworker/config) | YAML config with Zod validation, env var interpolation |
 
 ## Built-in Tools
 
-**Shell & File Operations** - Execute commands, read/write files, list directories
+**Shell & File Operations** -- Execute commands, read/write files, list directories
 
-**Browser Automation** - Navigate, screenshot, click, type, evaluate JS, wait for elements
+**Browser Automation** -- Navigate, screenshot, click, type, evaluate JS, wait for elements
+
+**Memory (Hippocampus)** -- Read/write MEMORY.md, append daily logs, search across memory files
 
 ## Skills
 
@@ -228,6 +259,39 @@ Use the `gh` CLI to interact with GitHub...
 
 Place skills in `~/.cereworker/skills/` or the project's `skills/` directory.
 
+## Cerebellum Models
+
+The Cerebellum supports multiple small LLMs, selectable during onboarding or via config:
+
+| Model | HuggingFace ID | Size | Min RAM | Best for |
+|-------|---------------|------|---------|----------|
+| Qwen3 0.6B | `Qwen/Qwen3-0.6B` | ~1.2 GB | 2 GB | CPU-only, low-memory systems |
+| Qwen3 1.7B | `Qwen/Qwen3-1.7B` | ~3.4 GB | 4 GB | CPU with 8+ GB RAM |
+| SmolLM2 360M | `HuggingFaceTB/SmolLM2-360M-Instruct` | ~720 MB | 1.5 GB | Ultra-lightweight, fastest |
+| SmolLM2 1.7B | `HuggingFaceTB/SmolLM2-1.7B-Instruct` | ~3.4 GB | 4 GB | Good balance of speed and quality |
+| Phi-4 Mini 3.8B | `microsoft/Phi-4-mini-instruct` | ~7.6 GB | 8 GB | GPU recommended, best quality |
+| Custom | local path | varies | varies | Your own fine-tuned checkpoint |
+
+Fine-tuning methods: **Auto** (detects your hardware), **LoRA** (GPU 4+ GB VRAM), **QLoRA** (GPU 2+ GB VRAM), **Full** (16+ GB RAM or 8+ GB VRAM). Schedule: Auto (idle time), Hourly, Daily, or Weekly.
+
+## Hippocampus: Memory System
+
+The Hippocampus is CereWorker's temporary memory layer that bridges conversations and fine-tuning:
+
+```
+~/.cereworker/memory/
+  MEMORY.md              # Curated long-term notes (always loaded)
+  2026-03-08.md           # Today's session log
+  2026-03-07.md           # Yesterday's log
+  finetune/
+    pending.jsonl         # Training pairs awaiting fine-tune
+    consumed/             # Archived after fine-tuning
+```
+
+The Cerebrum reads and writes memory through four tools: `memory_read`, `memory_write`, `memory_log`, and `memory_search`. Periodically, a **curator** reviews the Hippocampus and asks the Cerebrum: "Which of these memories contain durable knowledge worth permanently learning?" The answer is extracted as instruction/response training pairs and queued for the Cerebellum's fine-tuning pipeline.
+
+This creates a natural flow: conversation --> Hippocampus (files) --> curation (Cerebrum) --> fine-tuning (Cerebellum) --> permanent knowledge (model weights).
+
 ## Configuration
 
 Config is loaded with cascading precedence:
@@ -237,6 +301,40 @@ Config is loaded with cascading precedence:
 3. `./.cereworker.yaml` (project-local)
 4. Environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`)
 5. CLI flags
+
+Full config example:
+
+```yaml
+cerebrum:
+  defaultProvider: anthropic
+  defaultModel: claude-sonnet-4-6
+  providers:
+    anthropic:
+      apiKey: ${ANTHROPIC_API_KEY}
+
+cerebellum:
+  enabled: true
+  model:
+    source: huggingface
+    id: Qwen/Qwen3-0.6B
+  finetune:
+    enabled: true
+    method: auto       # auto | lora | qlora | full
+    schedule: auto     # auto | hourly | daily | weekly
+  docker:
+    autoStart: true
+
+hippocampus:
+  enabled: true
+  directory: ~/.cereworker/memory
+  maxDailyLogDays: 30
+  autoLog: true
+
+channels:
+  telegram:
+    enabled: true
+    token: ${TELEGRAM_BOT_TOKEN}
+```
 
 ## Development
 
