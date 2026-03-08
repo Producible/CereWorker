@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "Bash(pnpm install:*)",
+      "Bash(npm:*)",
+      "Read(//home/vincent/**)",
+      "Read(//home/vincent/.local/share/**)",
+      "Read(//usr/local/bin/**)",
+      "Read(//usr/bin/**)",
+      "Bash(command:*)",
+      "Bash(curl:*)",
+      "Bash(chmod +x:*)",
+      "Bash(export:*)"
+    ]
+  },
+  "defaultMode": "bypassPermissions"
+}

@@ -1,0 +1,23 @@
+services:
+  cerebellum:
+    build:
+      context: ./cerebellum
+      dockerfile: Dockerfile
+      additional_contexts:
+        proto: ./proto
+    ports:
+      - "50051:50051"
+    volumes:
+      - cerebellum-models:/root/.cache/huggingface  # persist downloaded model weights
+    environment:
+      - MODEL_PATH=Qwen/Qwen3-0.6B
+      - HEARTBEAT_INTERVAL=30
+      - CEREBELLUM_PORT=50051
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    restart: unless-stopped
+
+volumes:
+  cerebellum-models:

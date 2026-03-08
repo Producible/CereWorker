@@ -1,0 +1,15 @@
+export type {
+  ChannelPlugin,
+  ChannelMeta,
+  ChannelId,
+  ChannelConfig,
+  InboundMessage,
+  OutboundMessage,
+  MessageHandler,
+} from './types.js';
+export { ChannelManager } from './manager.js';
+export { createChannelManager } from './factory.js';
+export { createSlackChannel, type SlackChannelConfig } from './adapters/slack.js';
+export { createDiscordChannel, type DiscordChannelConfig } from './adapters/discord.js';
+export { createTelegramChannel, type TelegramChannelConfig } from './adapters/telegram.js';
+export { createMatrixChannel, type MatrixChannelConfig } from './adapters/matrix.js';

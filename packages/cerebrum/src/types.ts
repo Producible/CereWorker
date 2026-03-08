@@ -1,0 +1,31 @@
+import type { Message, ToolCall, ToolResult } from '@cereworker/core';
+
+export interface CerebrumConfig {
+  defaultProvider: string;
+  defaultModel: string;
+  providers: Record<string, ProviderConfig>;
+  maxSteps: number;
+  temperature: number;
+}
+
+export interface ProviderConfig {
+  apiKey?: string;
+  baseUrl?: string;
+  models?: string[];
+  model?: string;
+}
+
+export interface CerebrumRequest {
+  messages: Message[];
+  systemPrompt?: string;
+  model?: string;
+  provider?: string;
+  maxSteps?: number;
+}
+
+export interface StreamCallbacks {
+  onChunk: (chunk: string) => void;
+  onToolCall: (toolCall: ToolCall) => Promise<ToolResult>;
+  onFinish: (content: string) => void;
+  onError: (error: Error) => void;
+}

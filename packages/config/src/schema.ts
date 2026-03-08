@@ -1,0 +1,118 @@
+import { z } from 'zod';
+
+const providerConfigSchema = z.object({
+  apiKey: z.string().optional(),
+  baseUrl: z.string().optional(),
+  models: z.array(z.string()).optional(),
+});
+
+export const configSchema = z.object({
+  cerebrum: z
+    .object({
+      defaultProvider: z.string().default('anthropic'),
+      defaultModel: z.string().default('claude-sonnet-4-6'),
+      providers: z
+        .object({
+          anthropic: providerConfigSchema.optional(),
+          openai: providerConfigSchema.optional(),
+          google: providerConfigSchema.optional(),
+          local: providerConfigSchema
+            .extend({
+              baseUrl: z.string().default('http://localhost:11434'),
+              model: z.string().default('llama3'),
+            })
+            .optional(),
+        })
+        .default({}),
+      maxSteps: z.number().default(10),
+      temperature: z.number().default(0.7),
+    })
+    .default({}),
+
+  cerebellum: z
+    .object({
+      enabled: z.boolean().default(true),
+      address: z.string().default('localhost:50051'),
+      heartbeatInterval: z.number().default(30),
+      docker: z
+        .object({
+          autoStart: z.boolean().default(true),
+          image: z.string().default('cereworker-cerebellum'),
+        })
+        .default({}),
+    })
+    .default({}),
+
+  tools: z
+    .object({
+      shell: z
+        .object({
+          enabled: z.boolean().default(true),
+          denyList: z.array(z.string()).default(['rm -rf /']),
+          timeout: z.number().default(30000),
+          maxOutputSize: z.number().default(102400),
+        })
+        .default({}),
+      fileOps: z
+        .object({
+          enabled: z.boolean().default(true),
+          rootDir: z.string().optional(),
+        })
+        .default({}),
+    })
+    .default({}),
+
+  channels: z
+    .object({
+      slack: z
+        .object({
+          enabled: z.boolean().default(false),
+          botToken: z.string().optional(),
+          appToken: z.string().optional(),
+          signingSecret: z.string().optional(),
+          allowFrom: z.array(z.string()).default([]),
+        })
+        .default({}),
+      discord: z
+        .object({
+          enabled: z.boolean().default(false),
+          token: z.string().optional(),
+          applicationId: z.string().optional(),
+          allowFrom: z.array(z.string()).default([]),
+        })
+        .default({}),
+      telegram: z
+        .object({
+          enabled: z.boolean().default(false),
+          token: z.string().optional(),
+          allowFrom: z.array(z.string()).default([]),
+        })
+        .default({}),
+      matrix: z
+        .object({
+          enabled: z.boolean().default(false),
+          homeserver: z.string().default('https://matrix.org'),
+          token: z.string().optional(),
+          userId: z.string().optional(),
+          allowFrom: z.array(z.string()).default([]),
+        })
+        .default({}),
+    })
+    .default({}),
+
+  tui: z
+    .object({
+      theme: z.enum(['dark', 'light', 'auto']).default('auto'),
+      maxDisplayMessages: z.number().default(100),
+    })
+    .default({}),
+
+  skills: z
+    .object({
+      directories: z.array(z.string()).default([]),
+      enabled: z.array(z.string()).default([]),
+    })
+    .default({}),
+});
+
+export type CereWorkerConfig = z.infer<typeof configSchema>;

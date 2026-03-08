@@ -1,0 +1,33 @@
+{
+  "name": "@cereworker/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "cereworker": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.tsx",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@cereworker/core": "workspace:*",
+    "@cereworker/config": "workspace:*",
+    "@cereworker/cerebrum": "workspace:*",
+    "@cereworker/cerebellum-client": "workspace:*",
+    "@cereworker/skills": "workspace:*",
+    "@cereworker/channels": "workspace:*",
+    "@cereworker/browser": "workspace:*",
+    "ink": "^5.1.0",
+    "@inkjs/ui": "^2.0.0",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.3"
+  }
+}

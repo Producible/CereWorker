@@ -1,0 +1,22 @@
+[project]
+name = "cereworker-cerebellum"
+version = "0.1.0"
+description = "CereWorker Cerebellum - Small LLM service for heartbeat, monitoring, and instinct"
+requires-python = ">=3.11"
+dependencies = [
+    "grpcio>=1.68.0",
+    "grpcio-tools>=1.68.0",
+    "protobuf>=5.29.0",
+    "transformers>=4.51.0",
+    "torch>=2.6.0",
+    "accelerate>=1.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "grpcio-tools>=1.68.0",
+]
+
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"

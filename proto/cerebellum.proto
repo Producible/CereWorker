@@ -1,0 +1,88 @@
+syntax = "proto3";
+
+package cereworker.cerebellum;
+
+service Cerebellum {
+  // Heartbeat: cerebellum evaluates what tasks need attention
+  rpc Heartbeat(HeartbeatRequest) returns (HeartbeatResponse);
+
+  // Register a task for heartbeat to manage
+  rpc RegisterTask(RegisterTaskRequest) returns (RegisterTaskResponse);
+
+  // Remove a registered task
+  rpc UnregisterTask(UnregisterTaskRequest) returns (UnregisterTaskResponse);
+
+  // List all registered tasks
+  rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
+
+  // Health check
+  rpc GetStatus(StatusRequest) returns (StatusResponse);
+
+  // Stream heartbeat events to the TypeScript side
+  rpc SubscribeHeartbeat(SubscribeRequest) returns (stream HeartbeatEvent);
+}
+
+message TaskState {
+  string task_id = 1;
+  string description = 2;
+  string status = 3;               // "pending", "running", "waiting", "completed"
+  int64 last_run = 4;
+  string schedule_hint = 5;        // natural language like "every 5 minutes" or "when idle"
+  map<string, string> metadata = 6;
+}
+
+message TaskAction {
+  string task_id = 1;
+  string action = 2;               // "invoke", "skip", "defer", "cancel"
+  string reason = 3;               // cerebellum's reasoning
+}
+
+message HeartbeatRequest {
+  repeated TaskState tasks = 1;
+  string system_summary = 2;
+  int64 timestamp = 3;
+}
+
+message HeartbeatResponse {
+  repeated TaskAction actions = 1;
+}
+
+message HeartbeatEvent {
+  int64 timestamp = 1;
+  repeated TaskAction actions = 2;
+}
+
+message RegisterTaskRequest {
+  string description = 1;
+  string schedule_hint = 2;
+  map<string, string> metadata = 3;
+}
+
+message RegisterTaskResponse {
+  string task_id = 1;
+}
+
+message UnregisterTaskRequest {
+  string task_id = 1;
+}
+
+message UnregisterTaskResponse {}
+
+message ListTasksRequest {}
+
+message ListTasksResponse {
+  repeated TaskState tasks = 1;
+}
+
+message StatusRequest {}
+
+message StatusResponse {
+  bool healthy = 1;
+  string model_name = 2;
+  int64 uptime_seconds = 3;
+  int32 tasks_registered = 4;
+}
+
+message SubscribeRequest {
+  int32 interval_seconds = 1;      // how often to emit heartbeat events (default: 30)
+}
