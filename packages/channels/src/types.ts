@@ -43,7 +43,7 @@ export interface ChannelPlugin {
   isConnected(): boolean;
 }
 
-export type ChannelId = 'slack' | 'discord' | 'telegram' | 'matrix';
+export type ChannelId = 'slack' | 'discord' | 'telegram' | 'matrix' | 'feishu' | 'wechat';
 
 export interface ChannelConfig {
   enabled: boolean;

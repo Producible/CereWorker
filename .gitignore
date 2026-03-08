@@ -19,6 +19,9 @@ cerebellum/src/proto/*_pb2*.py
 .DS_Store
 Thumbs.db
 
+# Claude
+.claude/
+
 # Env
 .env
 .env.local

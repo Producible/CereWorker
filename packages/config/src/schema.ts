@@ -97,6 +97,24 @@ export const configSchema = z.object({
           allowFrom: z.array(z.string()).default([]),
         })
         .default({}),
+      feishu: z
+        .object({
+          enabled: z.boolean().default(false),
+          appId: z.string().optional(),
+          appSecret: z.string().optional(),
+          verificationToken: z.string().optional(),
+          encryptKey: z.string().optional(),
+          allowFrom: z.array(z.string()).default([]),
+        })
+        .default({}),
+      wechat: z
+        .object({
+          enabled: z.boolean().default(false),
+          puppet: z.string().default('wechaty-puppet-wechat4u'),
+          token: z.string().optional(),
+          allowFrom: z.array(z.string()).default([]),
+        })
+        .default({}),
     })
     .default({}),
 

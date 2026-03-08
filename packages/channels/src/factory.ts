@@ -1,10 +1,11 @@
 import type { CereWorkerConfig } from '@cereworker/config';
-import type { ChannelPlugin } from './types.js';
 import { ChannelManager } from './manager.js';
 import { createSlackChannel } from './adapters/slack.js';
 import { createDiscordChannel } from './adapters/discord.js';
 import { createTelegramChannel } from './adapters/telegram.js';
 import { createMatrixChannel } from './adapters/matrix.js';
+import { createFeishuChannel } from './adapters/feishu.js';
+import { createWeChatChannel } from './adapters/wechat.js';
 
 export function createChannelManager(config: CereWorkerConfig): ChannelManager {
   const manager = new ChannelManager();
@@ -48,6 +49,28 @@ export function createChannelManager(config: CereWorkerConfig): ChannelManager {
         token: channels.matrix.token,
         userId: channels.matrix.userId,
         allowFrom: channels.matrix.allowFrom,
+      }),
+    );
+  }
+
+  if (channels.feishu.enabled && channels.feishu.appId && channels.feishu.appSecret) {
+    manager.register(
+      createFeishuChannel({
+        appId: channels.feishu.appId,
+        appSecret: channels.feishu.appSecret,
+        verificationToken: channels.feishu.verificationToken,
+        encryptKey: channels.feishu.encryptKey,
+        allowFrom: channels.feishu.allowFrom,
+      }),
+    );
+  }
+
+  if (channels.wechat.enabled) {
+    manager.register(
+      createWeChatChannel({
+        puppet: channels.wechat.puppet,
+        token: channels.wechat.token,
+        allowFrom: channels.wechat.allowFrom,
       }),
     );
   }
