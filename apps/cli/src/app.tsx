@@ -5,6 +5,14 @@ import { CerebrumProvider } from '@cereworker/cerebrum';
 import type { CereWorkerConfig } from '@cereworker/config';
 import { createChannelManager, type ChannelManager } from '@cereworker/channels';
 import { browserToolDefinitions } from '@cereworker/browser';
+import {
+  HippocampusStore,
+  createMemoryTools,
+  memoryReadParameters,
+  memoryWriteParameters,
+  memoryLogParameters,
+  memorySearchParameters,
+} from '@cereworker/hippocampus';
 import { StatusBar } from './components/StatusBar.js';
 import { ChatView } from './components/ChatView.js';
 import { InputBar } from './components/InputBar.js';
@@ -42,6 +50,33 @@ export function App({ config }: AppProps) {
         await cerebrum.stream(messages, callbacks);
       },
     });
+
+    // Register hippocampus (memory) tools
+    if (config.hippocampus.enabled) {
+      const hippocampusStore = new HippocampusStore(config.hippocampus.directory);
+      const memoryTools = createMemoryTools(hippocampusStore);
+
+      orch.registerTool('memory_read', {
+        description: 'Read a memory file (MEMORY.md or a daily log like 2026-03-08.md)',
+        parameters: {},
+        execute: async (args) => memoryTools.executeMemoryRead(args as { file: string }),
+      });
+      orch.registerTool('memory_write', {
+        description: 'Write/update the main MEMORY.md file with curated long-term notes',
+        parameters: {},
+        execute: async (args) => memoryTools.executeMemoryWrite(args as { content: string }),
+      });
+      orch.registerTool('memory_log', {
+        description: "Append a note to today's daily log",
+        parameters: {},
+        execute: async (args) => memoryTools.executeMemoryLog(args as { content: string }),
+      });
+      orch.registerTool('memory_search', {
+        description: 'Search across all memory files for a text pattern',
+        parameters: {},
+        execute: async (args) => memoryTools.executeMemorySearch(args as { query: string }),
+      });
+    }
 
     // Register browser tools with orchestrator
     for (const [name, toolDef] of Object.entries(browserToolDefinitions)) {

@@ -8,7 +8,7 @@ const CONFIG_DIR = join(homedir(), '.cereworker');
 const GLOBAL_CONFIG = join(CONFIG_DIR, 'config.yaml');
 const LOCAL_CONFIG = '.cereworker.yaml';
 
-function ensureConfigDir(): void {
+export function ensureConfigDir(): void {
   if (!existsSync(CONFIG_DIR)) {
     mkdirSync(CONFIG_DIR, { recursive: true });
   }
@@ -52,7 +52,7 @@ function loadFromEnv(): Record<string, unknown> {
   return env;
 }
 
-function deepMerge(
+export function deepMerge(
   target: Record<string, unknown>,
   ...sources: Record<string, unknown>[]
 ): Record<string, unknown> {

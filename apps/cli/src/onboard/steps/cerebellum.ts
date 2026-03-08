@@ -1,0 +1,193 @@
+import { execSync } from 'node:child_process';
+import { totalmem } from 'node:os';
+import { clack, guardCancel } from '../prompter.js';
+
+export interface CerebellumResult {
+  enabled: boolean;
+  model?: {
+    source: 'huggingface' | 'local';
+    id?: string;
+    path?: string;
+  };
+  finetune?: {
+    enabled: boolean;
+    method: string;
+    schedule: string;
+  };
+  dockerAutoStart?: boolean;
+}
+
+interface HardwareInfo {
+  totalRamGB: number;
+  hasDocker: boolean;
+  hasGpu: boolean;
+  gpuVramGB: number | null;
+  gpuName: string | null;
+}
+
+function detectHardware(): HardwareInfo {
+  const totalRamGB = Math.round(totalmem() / (1024 * 1024 * 1024));
+
+  let hasDocker = false;
+  try {
+    execSync('which docker', { stdio: 'pipe' });
+    hasDocker = true;
+  } catch {}
+
+  let hasGpu = false;
+  let gpuVramGB: number | null = null;
+  let gpuName: string | null = null;
+  try {
+    const output = execSync(
+      'nvidia-smi --query-gpu=name,memory.total --format=csv,noheader,nounits',
+      { stdio: 'pipe' },
+    ).toString().trim();
+
+    if (output) {
+      const parts = output.split(',').map((s) => s.trim());
+      gpuName = parts[0] ?? null;
+      const vramMB = parseInt(parts[1] ?? '0', 10);
+      if (vramMB > 0) {
+        hasGpu = true;
+        gpuVramGB = Math.round(vramMB / 1024);
+      }
+    }
+  } catch {}
+
+  return { totalRamGB, hasDocker, hasGpu, gpuVramGB, gpuName };
+}
+
+export async function cerebellumStep(): Promise<CerebellumResult> {
+  const enabled = guardCancel(
+    await clack.confirm({
+      message: 'Enable Cerebellum (local AI co-processor)?',
+      initialValue: true,
+    }),
+  );
+
+  if (!enabled) {
+    return { enabled: false };
+  }
+
+  // Detect hardware
+  const hw = detectHardware();
+
+  const hwSummary = [
+    `RAM: ${hw.totalRamGB} GB`,
+    hw.hasGpu ? `GPU: ${hw.gpuName} (${hw.gpuVramGB} GB VRAM)` : 'GPU: not detected',
+    hw.hasDocker ? 'Docker: installed' : 'Docker: not found',
+  ].join('  |  ');
+
+  clack.log.info(`Hardware: ${hwSummary}`);
+
+  // Model selection
+  const modelChoice = guardCancel(
+    await clack.select({
+      message: 'Cerebellum model',
+      options: [
+        {
+          value: 'Qwen/Qwen3-0.6B',
+          label: 'Qwen3 0.6B',
+          hint: `~1.2 GB, CPU OK, 2 GB RAM min${hw.totalRamGB < 2 ? ' ⚠ low RAM' : ''}`,
+        },
+        {
+          value: 'Qwen/Qwen3-1.7B',
+          label: 'Qwen3 1.7B',
+          hint: `~3.4 GB, 4 GB RAM min${hw.totalRamGB < 4 ? ' ⚠ low RAM' : ''}`,
+        },
+        {
+          value: 'HuggingFaceTB/SmolLM2-360M-Instruct',
+          label: 'SmolLM2 360M',
+          hint: '~720 MB, ultra-lightweight, fastest',
+        },
+        {
+          value: 'HuggingFaceTB/SmolLM2-1.7B-Instruct',
+          label: 'SmolLM2 1.7B',
+          hint: `~3.4 GB, good balance${hw.totalRamGB < 4 ? ' ⚠ low RAM' : ''}`,
+        },
+        {
+          value: 'microsoft/Phi-4-mini-instruct',
+          label: 'Phi-4 Mini 3.8B',
+          hint: `~7.6 GB, best quality${!hw.hasGpu ? ' ⚠ GPU recommended' : ''}`,
+        },
+        {
+          value: '__custom__',
+          label: 'Custom local model',
+          hint: 'provide a local path',
+        },
+      ],
+    }),
+  ) as string;
+
+  let model: CerebellumResult['model'];
+
+  if (modelChoice === '__custom__') {
+    const path = guardCancel(
+      await clack.text({
+        message: 'Path to local model checkpoint',
+        validate: (v) => (v.length > 0 ? undefined : 'Path is required'),
+      }),
+    ) as string;
+    model = { source: 'local', path };
+  } else {
+    model = { source: 'huggingface', id: modelChoice };
+  }
+
+  // Fine-tuning
+  const finetuneEnabled = guardCancel(
+    await clack.confirm({
+      message: 'Enable fine-tuning (Instinct)?',
+      initialValue: true,
+    }),
+  );
+
+  let finetune: CerebellumResult['finetune'];
+
+  if (finetuneEnabled) {
+    const autoHint = hw.hasGpu
+      ? `will use LoRA (GPU detected, ${hw.gpuVramGB} GB VRAM)`
+      : `will use QLoRA or CPU full (no GPU detected)`;
+
+    const method = guardCancel(
+      await clack.select({
+        message: 'Fine-tune method',
+        options: [
+          { value: 'auto', label: 'Auto', hint: autoHint },
+          { value: 'lora', label: 'LoRA', hint: `GPU 4+ GB VRAM${hw.hasGpu && (hw.gpuVramGB ?? 0) >= 4 ? ' ✓' : ' ⚠'}` },
+          { value: 'qlora', label: 'QLoRA', hint: `GPU 2+ GB VRAM${hw.hasGpu && (hw.gpuVramGB ?? 0) >= 2 ? ' ✓' : ' ⚠'}` },
+          { value: 'full', label: 'Full', hint: `16+ GB RAM or 8+ GB VRAM${hw.totalRamGB >= 16 || (hw.hasGpu && (hw.gpuVramGB ?? 0) >= 8) ? ' ✓' : ' ⚠'}` },
+        ],
+      }),
+    ) as string;
+
+    const schedule = guardCancel(
+      await clack.select({
+        message: 'Fine-tune schedule',
+        options: [
+          { value: 'auto', label: 'Auto', hint: 'during idle time' },
+          { value: 'hourly', label: 'Hourly' },
+          { value: 'daily', label: 'Daily' },
+          { value: 'weekly', label: 'Weekly' },
+        ],
+      }),
+    ) as string;
+
+    finetune = { enabled: true, method, schedule };
+  } else {
+    finetune = { enabled: false, method: 'auto', schedule: 'auto' };
+  }
+
+  // Docker
+  if (!hw.hasDocker) {
+    clack.log.warn('Docker not found. Install Docker to use the Cerebellum container.');
+  }
+
+  const dockerAutoStart = guardCancel(
+    await clack.confirm({
+      message: 'Auto-start Cerebellum Docker container?',
+      initialValue: hw.hasDocker,
+    }),
+  );
+
+  return { enabled: true, model, finetune, dockerAutoStart };
+}

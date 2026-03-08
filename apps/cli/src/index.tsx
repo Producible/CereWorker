@@ -4,7 +4,15 @@ import { render, Text, Box } from 'ink';
 import { loadConfig } from '@cereworker/config';
 import { App } from './app.js';
 
-function main() {
+async function main() {
+  // Handle subcommands that bypass Ink
+  const subcommand = process.argv[2];
+  if (subcommand === 'onboard') {
+    const { runOnboardingWizard } = await import('./onboard/wizard.js');
+    await runOnboardingWizard();
+    return;
+  }
+
   try {
     const config = loadConfig();
     render(<App config={config} />);

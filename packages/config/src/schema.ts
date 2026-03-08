@@ -34,6 +34,20 @@ export const configSchema = z.object({
       enabled: z.boolean().default(true),
       address: z.string().default('localhost:50051'),
       heartbeatInterval: z.number().default(30),
+      model: z
+        .object({
+          source: z.enum(['huggingface', 'local']).default('huggingface'),
+          id: z.string().default('Qwen/Qwen3-0.6B'),
+          path: z.string().optional(),
+        })
+        .default({}),
+      finetune: z
+        .object({
+          enabled: z.boolean().default(true),
+          method: z.enum(['auto', 'lora', 'qlora', 'full']).default('auto'),
+          schedule: z.enum(['auto', 'hourly', 'daily', 'weekly']).default('auto'),
+        })
+        .default({}),
       docker: z
         .object({
           autoStart: z.boolean().default(true),
@@ -115,6 +129,15 @@ export const configSchema = z.object({
           allowFrom: z.array(z.string()).default([]),
         })
         .default({}),
+    })
+    .default({}),
+
+  hippocampus: z
+    .object({
+      enabled: z.boolean().default(true),
+      directory: z.string().default('~/.cereworker/memory'),
+      maxDailyLogDays: z.number().default(30),
+      autoLog: z.boolean().default(true),
     })
     .default({}),
 

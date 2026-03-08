@@ -13,6 +13,7 @@
     { "path": "../../packages/cerebellum-client" },
     { "path": "../../packages/skills" },
     { "path": "../../packages/channels" },
-    { "path": "../../packages/browser" }
+    { "path": "../../packages/browser" },
+    { "path": "../../packages/hippocampus" }
   ]
 }
