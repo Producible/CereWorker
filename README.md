@@ -1,7 +1,11 @@
-# CereWorker
+<p align="center">
+  <img src="assets/logo.png" alt="CereWorker" width="300" />
+</p>
 
-[![npm](https://img.shields.io/npm/v/@cereworker/cli)](https://www.npmjs.com/package/@cereworker/cli)
-[![GitHub](https://img.shields.io/github/license/Producible/CereWorker)](https://github.com/Producible/CereWorker/blob/main/LICENSE)
+<p align="center">
+  <a href="https://www.npmjs.com/package/@cereworker/cli"><img src="https://img.shields.io/npm/v/@cereworker/cli" alt="npm" /></a>
+  <a href="https://github.com/Producible/CereWorker/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Producible/CereWorker" alt="GitHub" /></a>
+</p>
 
 A dual-LLM autonomous agent that pairs a small local model (the **Cerebellum**) with giant cloud LLMs (the **Cerebrum**) to produce work that is not just intelligent, but verifiably effective in the real world.
 
