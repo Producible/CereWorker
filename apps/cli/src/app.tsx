@@ -78,6 +78,14 @@ export function App({ config }: AppProps) {
       });
     }
 
+    // Setup sub-agents
+    if (config.subAgents.enabled) {
+      orch.setupSubAgents({
+        maxConcurrent: config.subAgents.maxConcurrent,
+        monitorIntervalMs: config.subAgents.monitorIntervalSeconds * 1000,
+      });
+    }
+
     // Register browser tools with orchestrator
     for (const [name, toolDef] of Object.entries(browserToolDefinitions)) {
       orch.registerTool(name, {

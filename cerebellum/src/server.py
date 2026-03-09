@@ -15,9 +15,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.inference import CerebellumInference
 from src.heartbeat import HeartbeatEngine
+from src.verification import ToolVerifier
+from src.agent_monitor import AgentMonitor
 
 # These will be generated from proto/cerebellum.proto
-# For now, use grpc reflection or dynamic loading
 from src.proto import cerebellum_pb2, cerebellum_pb2_grpc
 
 logger = logging.getLogger(__name__)
@@ -26,13 +27,26 @@ logger = logging.getLogger(__name__)
 class CerebellumServicer(cerebellum_pb2_grpc.CerebellumServicer):
     """gRPC service implementation for the Cerebellum."""
 
-    def __init__(self, heartbeat: HeartbeatEngine, start_time: float):
+    def __init__(
+        self,
+        heartbeat: HeartbeatEngine,
+        verifier: ToolVerifier,
+        agent_monitor: AgentMonitor,
+        start_time: float,
+    ):
         self.heartbeat = heartbeat
+        self.verifier = verifier
+        self.agent_monitor = agent_monitor
         self.start_time = start_time
         self.inference = heartbeat.inference
+        self._last_agent_actions = []
 
     async def Heartbeat(self, request, context):
-        """Manual heartbeat trigger with provided task states."""
+        """Manual heartbeat trigger — evaluates tasks with binary yes/no."""
+        timestamp = request.timestamp or int(time.time())
+
+        # Use the heartbeat engine's own tick logic for consistency
+        # but we can also do a simple pass here for manual triggers
         tasks = [
             {
                 "task_id": t.task_id,
@@ -45,9 +59,22 @@ class CerebellumServicer(cerebellum_pb2_grpc.CerebellumServicer):
             for t in request.tasks
         ]
 
-        actions = self.inference.evaluate_tasks(
-            tasks, request.system_summary, request.timestamp
-        )
+        # For manual heartbeat, register temporary tasks and evaluate
+        actions = []
+        system_busy = any(t["status"] == "running" for t in tasks)
+        for task in tasks:
+            elapsed = timestamp - task.get("last_run", 0)
+            should_run = self.inference.should_run_task(
+                description=task["description"],
+                elapsed_seconds=elapsed,
+                schedule_hint=task.get("schedule_hint", ""),
+                system_busy=system_busy,
+            )
+            actions.append({
+                "task_id": task["task_id"],
+                "action": "invoke" if should_run else "skip",
+                "reason": "model",
+            })
 
         response = cerebellum_pb2.HeartbeatResponse()
         for action in actions:
@@ -118,6 +145,93 @@ class CerebellumServicer(cerebellum_pb2_grpc.CerebellumServicer):
         finally:
             self.heartbeat.remove_subscriber(on_event)
 
+    async def VerifyToolResult(self, request, context):
+        """Verify a tool execution result via programmatic checks + model verdict."""
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            self.verifier.verify,
+            request.tool_name,
+            dict(request.tool_args),
+            request.tool_output,
+            request.claimed_success,
+        )
+
+        response = cerebellum_pb2.VerifyResponse(
+            passed=result.passed,
+            model_verdict=result.model_verdict,
+        )
+        for check in result.checks:
+            vc = response.checks.add()
+            vc.name = check.name
+            vc.passed = check.passed
+            vc.description = check.description
+        return response
+
+
+    async def ReportAgentStates(self, request, context):
+        """Evaluate sub-agent health and return recommended actions."""
+        actions = []
+        for agent in request.agents:
+            agent_state = {
+                "id": agent.id,
+                "task": agent.task,
+                "status": agent.status,
+                "spawned_at": agent.spawned_at,
+                "last_activity_at": agent.last_activity_at,
+                "timeout_ms": agent.timeout_ms,
+                "messages_count": agent.messages_count,
+                "tool_calls_count": agent.tool_calls_count,
+                "retry_count": agent.retry_count,
+            }
+            health_action = self.agent_monitor.evaluate_agent(agent_state)
+            actions.append(health_action)
+
+        self._last_agent_actions = actions
+
+        response = cerebellum_pb2.AgentStatesResponse()
+        for action in actions:
+            ha = response.actions.add()
+            ha.agent_id = action.agent_id
+            ha.action = action.action
+            ha.reason = action.reason
+        return response
+
+    async def GetSystemStatus(self, request, context):
+        """Return combined system status: model health + heartbeat tasks + sub-agents."""
+        uptime = int(time.time() - self.start_time)
+
+        # Count agent states from last report
+        agents_total = len(self._last_agent_actions)
+        agents_running = sum(1 for a in self._last_agent_actions if a.action == "ok" and "active" in a.reason)
+        agents_completed = 0
+        agents_failed = 0
+        for a in self._last_agent_actions:
+            if "completed" in a.reason:
+                agents_completed += 1
+            elif a.action in ("timeout", "retry", "cancel"):
+                agents_failed += 1
+
+        response = cerebellum_pb2.SystemStatusResponse(
+            healthy=self.inference.is_loaded(),
+            model_name=self.inference.model_path,
+            uptime_seconds=uptime,
+            tasks_registered=len(self.heartbeat.tasks),
+            agents_total=agents_total,
+            agents_running=agents_running,
+            agents_completed=agents_completed,
+            agents_failed=agents_failed,
+        )
+
+        for action in self._last_agent_actions:
+            if action.action != "ok":
+                pa = response.pending_actions.add()
+                pa.agent_id = action.agent_id
+                pa.action = action.action
+                pa.reason = action.reason
+
+        return response
+
 
 async def serve(
     port: int = 50051,
@@ -136,10 +250,18 @@ async def serve(
     inference.load()
 
     heartbeat = HeartbeatEngine(inference, heartbeat_interval)
+
+    workspace_dir = os.environ.get("WORKSPACE_DIR", "/workspace")
+    memory_dir = os.environ.get("MEMORY_DIR", "/memory")
+    verifier = ToolVerifier(inference, workspace_dir, memory_dir)
+
+    stall_threshold = int(os.environ.get("AGENT_STALL_THRESHOLD", "120"))
+    agent_monitor = AgentMonitor(inference, stall_threshold)
+
     start_time = time.time()
 
     server = aio.server(futures.ThreadPoolExecutor(max_workers=4))
-    servicer = CerebellumServicer(heartbeat, start_time)
+    servicer = CerebellumServicer(heartbeat, verifier, agent_monitor, start_time)
     cerebellum_pb2_grpc.add_CerebellumServicer_to_server(servicer, server)
 
     listen_addr = f"[::]:{port}"

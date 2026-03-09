@@ -22,23 +22,25 @@ CereWorker solves these problems by splitting the agent into two cooperating bra
 - The **Cerebrum** (giant LLM) handles complex reasoning, planning, conversation, and tool use. It is the thinker.
 - The **Cerebellum** (small local LLM, Qwen3 0.6B in Docker) handles coordination, verification, and persistent memory. It is the doer's watchdog.
 
-This isn't just an architectural novelty. The Cerebellum provides three concrete capabilities that no prompt engineering can replicate:
+This isn't just an architectural novelty. The key insight: **a 600M-parameter model cannot reason, but it can answer "yes or no."** The Cerebellum never tries to think -- it only judges simple binary facts, while deterministic code does the heavy lifting. This keeps the small model from degrading the intelligence of the real brain.
 
-### 1. Heartbeat: Intelligent Scheduling
+### 1. Heartbeat: Deterministic Scheduling with LLM Tiebreaker
 
-Instead of cron expressions, tasks are registered with natural language hints like "check every few minutes" or "run when the user seems idle." The Cerebellum evaluates all pending tasks each tick and decides what to invoke, skip, or defer based on current system state. The schedule has judgment.
+Tasks are registered with natural language hints like "every 5 minutes" or "when idle." Deterministic code parses these into intervals and handles clear-cut cases: too early? skip. Way overdue? invoke. Only in the ambiguous zone (0.8x-2.0x the interval) does the Cerebellum get asked a single binary question: "Should this task run now? yes or no." The model is a tiebreaker, not a scheduler.
 
-### 2. Muscle+Skeleton: Work Verification
+### 2. Muscle+Skeleton: Programmatic Verification + Binary Verdict
 
-When the Cerebrum says it wrote a file, the Cerebellum checks the disk. When it says it made an API call, the Cerebellum checks network traffic. The Cerebrum thinks; the Cerebellum verifies what actually happened. This closes the gap between "the LLM said it did something" and "something was actually done."
+When the Cerebrum says it wrote a file, **programmatic checks** verify the actual effect: does the file exist? Was it modified in the last 30 seconds? Is it non-empty? These are `os.path.exists()` and `os.stat()` calls, not LLM inference. Only after all checks pass does the Cerebellum get asked one yes/no question: "Is everything OK?" If any check fails, the result is immediately flagged without touching the model.
+
+This means the Cerebrum gets a concrete warning appended to the tool output -- `[Cerebellum warning: file does not exist, not recently modified]` -- and can self-correct.
 
 ### 3. Instinct: Persistent Memory via Fine-Tuning
 
 Instead of simulating memory through prompt injection (which is lossy and context-limited), the Cerebellum periodically fine-tunes itself on conversations between the user and the agent. Knowledge is burned into model parameters, not pasted into prompts. The fine-tuning happens automatically during idle time: the Cerebellum copies itself, trains on accumulated conversations, and hot-swaps the container with updated weights. The agent genuinely learns, and that learning survives across sessions without consuming context window.
 
-### The Result
+### The Design Principle
 
-An agent that schedules its own work intelligently, catches its own mistakes, and builds genuine long-term memory -- not through clever prompting, but through architectural separation of concerns between thinking (Cerebrum) and acting/remembering (Cerebellum).
+The Cerebellum is a **watchdog**, not a thinker. It answers "yes" or "no" -- nothing more. Deterministic code handles scheduling math, file system checks, and output validation. The model is a final sanity gate that uses 3 tokens per verdict. This ensures the 0.6B model never degrades the quality of the Cerebrum's work -- it only catches the Cerebrum's mistakes.
 
 ## Architecture
 
@@ -49,33 +51,44 @@ An agent that schedules its own work intelligently, catches its own mistakes, an
                              |
                     +--------+---------+
                     |   Orchestrator   |
-                    +--+-+---+---+-+--+
-                       | |   |   | |
-        +--------------+ |   |   | +--------------+
-        |          +-----+   |   +------+         |
-        |          |         |          |         |
-+-------+---+ +---+------+  |  +-------+--+ +----+--------+
-| Cerebrum  | | Cerebellum|  |  | Hippo-   | | Channels    |
-| (AI SDK 6)| | (Docker/  |  |  | campus   | | Slack,      |
-| Claude,   | |  gRPC)    |  |  | (Memory) | | Discord,    |
-| GPT,      | | Heartbeat |  |  | MEMORY.md| | Telegram,   |
-| Gemini,   | | Fine-tune |  |  | Daily    | | Matrix,     |
-| local     | | Instinct  |  |  | logs     | | Feishu,     |
-+-----------+ +-----------+  |  +----------+ | WeChat      |
-                              |               +-------------+
-                     +--------+--------+
-                     | Browser/Skills  |
-                     | Puppeteer, SKILL|
-                     +-----------------+
+                    +--+-+-+---+-+-+--+
+                       | | |   | | |
+        +--------------+ | |   | | +--------------+
+        |          +-----+ |   | +------+         |
+        |          |       |   |        |         |
++-------+---+ +---+------+|  +|------+-++ +------+------+
+| Cerebrum  | | Cerebellum||  | Hippo-  | | Channels    |
+| (AI SDK 6)| | (Docker/  ||  | campus  | | Slack,      |
+| Claude,   | |  gRPC)    ||  | (Memory)| | Discord,    |
+| GPT,      | | Heartbeat ||  | MEMORY  | | Telegram,   |
+| Gemini,   | | Verify    ||  | Daily   | | Matrix,     |
+| local     | | Monitor   ||  | logs    | | Feishu,     |
++-----------+ +-----------+|  +--------++ | WeChat      |
+                            |              +-------------+
+              +-------------+------------+
+              |     SubAgentManager      |
+              | +-------+ +-------+      |
+              | |Agent 1| |Agent 2| ...  |
+              | |session | |session|      |
+              | |memory  | |memory |      |
+              | +-------+ +-------+      |
+              +-----------+--------------+
+                          |
+                 +--------+--------+
+                 | Browser/Skills  |
+                 | Puppeteer, SKILL|
+                 +-----------------+
 ```
 
-The **Orchestrator** sits at the center. It routes user messages to the Cerebrum, executes tool calls, streams responses to the TUI, and listens to heartbeat events from the Cerebellum. It emits typed events (`message:cerebrum:chunk`, `tool:start`, `heartbeat:tick`, etc.) that the UI and other components subscribe to.
+The **Orchestrator** sits at the center. It routes user messages to the Cerebrum, executes tool calls, streams responses to the TUI, and listens to heartbeat events from the Cerebellum. It also manages sub-agents via the SubAgentManager. It emits typed events (`message:cerebrum:chunk`, `tool:start`, `heartbeat:tick`, `agent:spawned`, etc.) that the UI and other components subscribe to.
 
 The **Cerebrum** wraps Vercel AI SDK 6 to provide a unified interface across providers. Switching from Claude to GPT to Gemini to a local Ollama model is a config change. The Cerebrum also owns the tool registry -- shell execution, file operations, browser automation, and memory tools are all registered as AI SDK tools that the LLM can call during multi-step reasoning.
 
 The **Cerebellum** runs as a Python gRPC service inside a Docker container with a configurable small LLM (Qwen3 0.6B/1.7B, SmolLM2, Phi-4 Mini, or a custom model). The TypeScript side communicates with it via streaming RPCs defined in `proto/cerebellum.proto`. The container manages its own model weights and supports fine-tuning via LoRA, QLoRA, or full methods on a configurable schedule. After fine-tuning, the container can be hot-swapped with updated weights without interrupting the main process.
 
 The **Hippocampus** is CereWorker's temporary memory layer, inspired by the brain structure that consolidates short-term memory into long-term storage. It stores session notes, decisions, and observations in `~/.cereworker/memory/` as markdown files (`MEMORY.md` for curated knowledge, `YYYY-MM-DD.md` for daily logs). The Cerebrum reads and writes to the Hippocampus during normal conversation via memory tools. Periodically, a curator process reviews the Hippocampus and selects memories worth permanently learning -- these are extracted as training pairs and fed into the Cerebellum's fine-tuning pipeline. This is how ephemeral context becomes permanent knowledge without consuming context window.
+
+The **SubAgentManager** enables the Cerebrum to spawn independent workers for parallel tasks. Each sub-agent gets its own isolated conversation, session (`session.json` + `transcript.jsonl`), and memory directory (`~/.cereworker/agents/<id>/memory/`). Sub-agents share the same Cerebrum provider and tool registry but cannot spawn sub-sub-agents (preventing infinite recursion). The Cerebellum monitors sub-agent health via the `ReportAgentStates` RPC -- deterministic checks detect stalls and timeouts, and the model answers "should we retry this stalled agent? yes/no" for ambiguous cases. The Cerebrum manages sub-agents through three tools: `spawn_agent`, `query_agents`, and `cancel_agent`.
 
 **Channels** are pluggable IM adapters. Each implements a simple interface: `start(handler)`, `stop()`, `send(msg)`, `isAllowed(senderId)`. The channel manager starts all enabled channels and routes inbound messages through the orchestrator, so the agent can be reached via Slack, Discord, Telegram, Matrix, Feishu, or WeChat simultaneously.
 
@@ -196,11 +209,24 @@ When you type a message in the TUI:
 Running in parallel:
 
 1. The Cerebellum's heartbeat engine ticks every N seconds (configurable, default 30s)
-2. It gathers all registered tasks and their current states
-3. Qwen3 0.6B evaluates a structured prompt describing the tasks and system state
-4. The model outputs a JSON array of decisions: invoke, skip, defer, or cancel each task
-5. "Invoke" actions stream back to the TypeScript orchestrator via gRPC server-streaming
-6. The orchestrator executes the invoked tasks (which may trigger Cerebrum calls, tool runs, or notifications)
+2. For each registered task, deterministic code checks elapsed time against the schedule: too early (< 0.8x interval)? skip. Way overdue (> 2.0x interval)? invoke. No model needed
+3. Only for tasks in the ambiguous zone does the Cerebellum get asked: "Should this run now? yes/no" (3 tokens, binary verdict)
+4. "Invoke" actions stream back to the TypeScript orchestrator via gRPC server-streaming
+5. The orchestrator executes the invoked tasks (which may trigger Cerebrum calls, tool runs, or notifications)
+
+### Sub-Agent Flow
+
+The Cerebrum can spawn independent sub-agents for parallel work:
+
+1. The Cerebrum calls `spawn_agent` with a task description, creating an async worker
+2. Each sub-agent gets its own isolated conversation, session directory, and Hippocampus memory at `~/.cereworker/agents/<id>/memory/`
+3. Sub-agents share the same Cerebrum provider and tools (except they cannot spawn further sub-agents)
+4. The Cerebellum monitors sub-agent health every heartbeat tick via `ReportAgentStates`:
+   - **Deterministic checks**: is the agent alive? has it timed out? is it stalled (no activity for > 2 minutes)?
+   - **Model tiebreaker**: for ambiguous stalls, the model answers "should we retry? yes/no"
+5. Corrective actions are applied automatically: `ping` (inject a prod message), `retry` (re-spawn), or `cancel`
+6. The Cerebrum can query agent status via `query_agents` and cancel via `cancel_agent`
+7. Completed agents with `cleanup: "delete"` have their session directories removed; `cleanup: "keep"` agents persist for later reference
 
 ### Channel Flow
 
@@ -219,7 +245,40 @@ When a message arrives from Slack/Discord/Telegram/Matrix/Feishu/WeChat:
 | Scheduling | Cron expressions, fixed timers | Small LLM evaluates what needs attention |
 | Verification | Trust LLM output | Cerebellum monitors actual disk/network effects |
 | Context limits | Summarize and hope | Knowledge survives in model weights |
+| Sub-agents | Manual orchestration or none | Cerebellum-monitored parallel workers with isolated memory |
 | Cost | Every request hits giant LLM | Routine decisions handled by local 0.6B model |
+
+## Self-Improvement: Beyond Prompt Engineering
+
+Most AI agents today are static -- they improve only when a developer ships a new prompt or a new model version drops. CereWorker is designed to improve itself continuously through architectural mechanisms that no amount of prompt engineering can replicate.
+
+### Weight-Level Learning, Not Context Tricks
+
+Traditional agents simulate memory by stuffing summaries into the context window. This is lossy, expensive, and bounded by token limits. CereWorker's Hippocampus-to-Cerebellum pipeline turns conversations into **actual model weight updates**. Knowledge isn't recalled -- it's *recognized*, the way a person doesn't "look up" how to ride a bike. After fine-tuning, the Cerebellum responds faster, uses zero context tokens for learned knowledge, and retains it permanently across sessions.
+
+### Adaptive Scheduling That Learns From Itself
+
+A cron job runs whether it's useful or not. CereWorker's Heartbeat asks the Cerebellum "what needs attention right now?" every tick. As the Cerebellum fine-tunes on past decisions -- which tasks were invoked, which were pointless, which were deferred too long -- its scheduling judgment improves. The agent learns *when* to act, not just *what* to do.
+
+### Verification Feedback Loop
+
+When the Cerebellum catches the Cerebrum lying (e.g., claiming a file was written when it wasn't), that failure becomes a training signal. Over time, the Cerebellum builds an internal model of which tool outputs to trust and which to double-check. This is a safety property that emerges from architecture, not from a system prompt saying "please verify your work."
+
+### Compounding Specialization
+
+Every user's CereWorker diverges. A developer's Cerebellum learns to schedule builds and check test results. A researcher's learns to watch for new papers and summarize findings. A DevOps engineer's learns to correlate deploy times with incident frequency. The fine-tuning is unsupervised and domain-agnostic -- the architecture doesn't know what you do, but the weights will.
+
+### Cost Curve That Bends Down
+
+Other agents get more expensive as they get smarter (longer prompts, more retrieval, bigger context). CereWorker gets *cheaper*: knowledge that moves from Hippocampus files into Cerebellum weights no longer needs to be fetched, embedded, or injected. The more the agent learns, the less work the Cerebrum has to do per request.
+
+| | Prompt-Engineered Agents | CereWorker |
+|---|---|---|
+| Memory | Injected into context (lossy, bounded) | Fine-tuned into weights (permanent, zero-cost at inference) |
+| Scheduling | Static rules or rigid tool calls | Small LLM that improves its own judgment over time |
+| Verification | "Please double-check" in system prompt | Independent model monitors actual side effects |
+| Specialization | Same generic agent for every user | Weights diverge per user's domain and habits |
+| Cost over time | Grows (more context, more retrieval) | Shrinks (learned knowledge exits the prompt) |
 
 ## Packages
 
@@ -242,6 +301,8 @@ When a message arrives from Slack/Discord/Telegram/Matrix/Feishu/WeChat:
 **Browser Automation** -- Navigate, screenshot, click, type, evaluate JS, wait for elements
 
 **Memory (Hippocampus)** -- Read/write MEMORY.md, append daily logs, search across memory files
+
+**Sub-Agents** -- Spawn parallel workers (`spawn_agent`), check status (`query_agents`), cancel (`cancel_agent`). Each sub-agent has isolated memory and session
 
 ## Skills
 
@@ -333,6 +394,12 @@ hippocampus:
   directory: ~/.cereworker/memory
   maxDailyLogDays: 30
   autoLog: true
+
+subAgents:
+  enabled: true
+  maxConcurrent: 5
+  defaultTimeoutMinutes: 5
+  monitorIntervalSeconds: 30
 
 channels:
   telegram:

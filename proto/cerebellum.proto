@@ -20,6 +20,15 @@ service Cerebellum {
 
   // Stream heartbeat events to the TypeScript side
   rpc SubscribeHeartbeat(SubscribeRequest) returns (stream HeartbeatEvent);
+
+  // Verify a tool execution result (Muscle+Skeleton)
+  rpc VerifyToolResult(VerifyRequest) returns (VerifyResponse);
+
+  // Report sub-agent states for health monitoring
+  rpc ReportAgentStates(AgentStatesRequest) returns (AgentStatesResponse);
+
+  // Query overall system status (main agent + sub-agents)
+  rpc GetSystemStatus(SystemStatusRequest) returns (SystemStatusResponse);
 }
 
 message TaskState {
@@ -85,4 +94,65 @@ message StatusResponse {
 
 message SubscribeRequest {
   int32 interval_seconds = 1;      // how often to emit heartbeat events (default: 30)
+}
+
+message VerifyRequest {
+  string tool_name = 1;              // "writeFile", "shell", "readFile", etc.
+  map<string, string> tool_args = 2; // arguments passed to the tool
+  string tool_output = 3;            // output the tool returned
+  bool claimed_success = 4;          // whether the tool reported success
+}
+
+message VerifyCheck {
+  string name = 1;                   // "file_exists", "recently_modified", etc.
+  bool passed = 2;
+  string description = 3;
+}
+
+message VerifyResponse {
+  bool passed = 1;                   // overall verdict
+  repeated VerifyCheck checks = 2;
+  bool model_verdict = 3;            // what the LLM specifically said
+}
+
+// Sub-agent monitoring messages
+
+message AgentState {
+  string id = 1;
+  string task = 2;
+  string status = 3;                 // pending, running, completed, failed, cancelled, timeout
+  int64 spawned_at = 4;
+  int64 last_activity_at = 5;
+  int64 timeout_ms = 6;
+  int32 messages_count = 7;
+  int32 tool_calls_count = 8;
+  int32 retry_count = 9;
+}
+
+message AgentHealthAction {
+  string agent_id = 1;
+  string action = 2;                 // "ok", "ping", "retry", "cancel", "timeout"
+  string reason = 3;
+}
+
+message AgentStatesRequest {
+  repeated AgentState agents = 1;
+}
+
+message AgentStatesResponse {
+  repeated AgentHealthAction actions = 1;
+}
+
+message SystemStatusRequest {}
+
+message SystemStatusResponse {
+  bool healthy = 1;
+  string model_name = 2;
+  int64 uptime_seconds = 3;
+  int32 tasks_registered = 4;
+  int32 agents_total = 5;
+  int32 agents_running = 6;
+  int32 agents_completed = 7;
+  int32 agents_failed = 8;
+  repeated AgentHealthAction pending_actions = 9;
 }

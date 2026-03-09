@@ -9,10 +9,14 @@ services:
       - "50051:50051"
     volumes:
       - cerebellum-models:/root/.cache/huggingface  # persist downloaded model weights
+      - ./:/workspace:ro                             # read-only access for tool verification
+      - ~/.cereworker/memory:/memory:ro               # read-only access for memory verification
     environment:
       - MODEL_PATH=Qwen/Qwen3-0.6B
       - HEARTBEAT_INTERVAL=30
       - CEREBELLUM_PORT=50051
+      - WORKSPACE_DIR=/workspace
+      - MEMORY_DIR=/memory
     deploy:
       resources:
         limits:

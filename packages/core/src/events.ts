@@ -1,4 +1,4 @@
-import type { Message, ToolCall, ToolResult, TaskAction, CerebellumStatus } from './types.js';
+import type { Message, ToolCall, ToolResult, TaskAction, CerebellumStatus, VerificationResult, AgentHealthAction } from './types.js';
 
 export type OrchestratorEvent =
   | { type: 'message:user'; message: Message }
@@ -8,8 +8,14 @@ export type OrchestratorEvent =
   | { type: 'message:cerebrum:toolcall'; toolCall: ToolCall }
   | { type: 'tool:start'; callId: string; name: string }
   | { type: 'tool:end'; result: ToolResult }
+  | { type: 'verification:start'; callId: string; toolName: string }
+  | { type: 'verification:end'; result: VerificationResult }
   | { type: 'heartbeat:tick'; actions: TaskAction[] }
   | { type: 'cerebellum:status'; status: CerebellumStatus }
+  | { type: 'agent:spawned'; agentId: string; task: string }
+  | { type: 'agent:completed'; agentId: string; result: string }
+  | { type: 'agent:failed'; agentId: string; error: string }
+  | { type: 'agent:health'; actions: AgentHealthAction[] }
   | { type: 'error'; error: Error };
 
 type EventHandler<T> = (event: T) => void;

@@ -1,30 +1,22 @@
-"""Qwen3 0.6B inference wrapper for cerebellum task evaluation."""
+"""Qwen3 0.6B inference wrapper - binary yes/no verdicts only.
 
-import json
+The Cerebellum is a watchdog, not a thinker. It answers simple yes/no
+questions: "Should this task run?" and "Is this tool result OK?"
+All complex reasoning stays in the Cerebrum (giant LLM).
+"""
+
 import logging
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-
-HEARTBEAT_PROMPT_TEMPLATE = """You are a task scheduler for CereWorker. Given the current tasks and system state, decide which tasks should run now.
-
-Current time: {timestamp}
-System state: {system_summary}
-
-Tasks:
-{tasks_text}
-
-For each task, respond with a JSON array. Each element must have:
-- "task_id": the task ID
-- "action": one of "invoke", "skip", "defer", "cancel"
-- "reason": brief explanation
-
-Respond ONLY with the JSON array, nothing else."""
+# Low temperature for deterministic binary outputs
+TEMPERATURE = 0.1
+MAX_NEW_TOKENS = 3
 
 
 class CerebellumInference:
-    """Wraps Qwen3-0.6B for structured task evaluation."""
+    """Wraps a small LLM for binary yes/no verdicts."""
 
     def __init__(self, model_path: str = "Qwen/Qwen3-0.6B"):
         self.model_path = model_path
@@ -59,36 +51,71 @@ class CerebellumInference:
     def is_loaded(self) -> bool:
         return self._loaded
 
-    def evaluate_tasks(
+    def should_run_task(
         self,
-        tasks: list[dict[str, Any]],
-        system_summary: str,
-        timestamp: int,
-    ) -> list[dict[str, str]]:
-        """Evaluate tasks and return actions."""
+        description: str,
+        elapsed_seconds: int,
+        schedule_hint: str,
+        system_busy: bool,
+    ) -> bool:
+        """Ask the model: should this single task run now? Returns True/False.
+
+        This is only called for ambiguous cases (0.8x-2.0x the expected
+        interval). Clear-cut cases are handled by deterministic code in
+        the HeartbeatEngine without touching the model.
+        """
         if not self._loaded:
-            logger.warning("Model not loaded, returning skip for all tasks")
-            return [
-                {"task_id": t["task_id"], "action": "skip", "reason": "model not loaded"}
-                for t in tasks
-            ]
+            logger.warning("Model not loaded, defaulting to skip")
+            return False
 
-        if not tasks:
-            return []
+        elapsed_str = _format_elapsed(elapsed_seconds)
+        status = "busy" if system_busy else "idle"
 
-        tasks_text = "\n".join(
-            f"- ID: {t['task_id']} | Description: {t['description']} | "
-            f"Status: {t['status']} | Last run: {t.get('last_run', 'never')} | "
-            f"Schedule: {t.get('schedule_hint', 'unspecified')}"
-            for t in tasks
+        prompt = (
+            f"Task: {description}. "
+            f"Last run: {elapsed_str} ago. "
+            f"Schedule: {schedule_hint}. "
+            f"System: {status}. "
+            f"Should this task run now? Answer only yes or no."
         )
 
-        prompt = HEARTBEAT_PROMPT_TEMPLATE.format(
-            timestamp=timestamp,
-            system_summary=system_summary or "Normal operation",
-            tasks_text=tasks_text,
+        response = self._generate(prompt)
+        result = self._parse_yes_no(response)
+
+        if result is None:
+            logger.warning(f"Unparseable response '{response}', defaulting to no")
+            return False
+
+        return result
+
+    def verify_checks(self, tool_name: str, check_summary: str) -> bool:
+        """Ask the model: given these check results, is everything OK?
+
+        The programmatic checks have already run. This is a final binary
+        sanity gate. If the model produces garbage, callers fall back to
+        the programmatic check results alone.
+        """
+        if not self._loaded:
+            logger.warning("Model not loaded, defaulting to pass")
+            return True
+
+        prompt = (
+            f"Tool '{tool_name}' ran. "
+            f"Results: {check_summary}. "
+            f"Is everything OK? Answer only yes or no."
         )
 
+        response = self._generate(prompt)
+        result = self._parse_yes_no(response)
+
+        if result is None:
+            logger.warning(f"Unparseable response '{response}', defaulting to pass")
+            return True
+
+        return result
+
+    def _generate(self, prompt: str) -> str:
+        """Run inference with minimal token generation."""
         try:
             messages = [{"role": "user", "content": prompt}]
             text = self.tokenizer.apply_chat_template(
@@ -98,56 +125,41 @@ class CerebellumInference:
 
             outputs = self.model.generate(
                 **inputs,
-                max_new_tokens=512,
-                temperature=0.3,
+                max_new_tokens=MAX_NEW_TOKENS,
+                temperature=TEMPERATURE,
                 do_sample=True,
             )
 
-            generated = outputs[0][inputs["input_ids"].shape[-1]:]
+            generated = outputs[0][inputs["input_ids"].shape[-1] :]
             response = self.tokenizer.decode(generated, skip_special_tokens=True).strip()
-            logger.debug(f"Model response: {response}")
-
-            return self._parse_actions(response, tasks)
+            logger.debug(f"Prompt: {prompt[:80]}... Response: {response}")
+            return response
         except Exception as e:
             logger.error(f"Inference error: {e}")
-            return [
-                {"task_id": t["task_id"], "action": "skip", "reason": f"inference error: {e}"}
-                for t in tasks
-            ]
+            return ""
 
-    def _parse_actions(
-        self, response: str, tasks: list[dict[str, Any]]
-    ) -> list[dict[str, str]]:
-        """Parse JSON response from the model."""
-        # Try to extract JSON array from response
-        try:
-            # Handle cases where model wraps in markdown code blocks
-            text = response.strip()
-            if text.startswith("```"):
-                text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-                if text.endswith("```"):
-                    text = text[:-3]
-                text = text.strip()
+    @staticmethod
+    def _parse_yes_no(response: str) -> bool | None:
+        """Parse a yes/no response. Returns None if unparseable."""
+        if not response:
+            return None
 
-            actions = json.loads(text)
-            if isinstance(actions, list):
-                valid_actions = {"invoke", "skip", "defer", "cancel"}
-                return [
-                    {
-                        "task_id": str(a.get("task_id", "")),
-                        "action": a.get("action", "skip")
-                        if a.get("action") in valid_actions
-                        else "skip",
-                        "reason": str(a.get("reason", "no reason")),
-                    }
-                    for a in actions
-                    if isinstance(a, dict)
-                ]
-        except (json.JSONDecodeError, KeyError, TypeError) as e:
-            logger.warning(f"Failed to parse model response: {e}")
+        first_word = response.strip().split()[0].lower().rstrip(".,!?")
 
-        # Fallback: skip all tasks
-        return [
-            {"task_id": t["task_id"], "action": "skip", "reason": "failed to parse model response"}
-            for t in tasks
-        ]
+        if first_word in ("yes", "y"):
+            return True
+        if first_word in ("no", "n"):
+            return False
+
+        return None
+
+
+def _format_elapsed(seconds: int) -> str:
+    """Format elapsed seconds into human-readable string."""
+    if seconds < 60:
+        return f"{seconds}s"
+    if seconds < 3600:
+        return f"{seconds // 60}m"
+    if seconds < 86400:
+        return f"{seconds // 3600}h"
+    return f"{seconds // 86400}d"

@@ -48,6 +48,12 @@ export const configSchema = z.object({
           schedule: z.enum(['auto', 'hourly', 'daily', 'weekly']).default('auto'),
         })
         .default({}),
+      verification: z
+        .object({
+          enabled: z.boolean().default(true),
+          timeoutMs: z.number().default(5000),
+        })
+        .default({}),
       docker: z
         .object({
           autoStart: z.boolean().default(true),
@@ -138,6 +144,16 @@ export const configSchema = z.object({
       directory: z.string().default('~/.cereworker/memory'),
       maxDailyLogDays: z.number().default(30),
       autoLog: z.boolean().default(true),
+    })
+    .default({}),
+
+  subAgents: z
+    .object({
+      enabled: z.boolean().default(true),
+      maxConcurrent: z.number().default(5),
+      defaultTimeoutMinutes: z.number().default(5),
+      monitorIntervalSeconds: z.number().default(30),
+      stallThresholdSeconds: z.number().default(120),
     })
     .default({}),
 
