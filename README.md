@@ -44,41 +44,9 @@ The Cerebellum is a **watchdog**, not a thinker. It answers "yes" or "no" -- not
 
 ## Architecture
 
-```
-                    +------------------+
-                    |   TUI (Ink/CLI)  |
-                    +--------+---------+
-                             |
-                    +--------+---------+
-                    |   Orchestrator   |
-                    +--+-+-+---+-+-+--+
-                       | | |   | | |
-        +--------------+ | |   | | +--------------+
-        |          +-----+ |   | +------+         |
-        |          |       |   |        |         |
-+-------+---+ +---+------+|  +|------+-++ +------+------+
-| Cerebrum  | | Cerebellum||  | Hippo-  | | Channels    |
-| (AI SDK 6)| | (Docker/  ||  | campus  | | Slack,      |
-| Claude,   | |  gRPC)    ||  | (Memory)| | Discord,    |
-| GPT,      | | Heartbeat ||  | MEMORY  | | Telegram,   |
-| Gemini,   | | Verify    ||  | Daily   | | Matrix,     |
-| local     | | Monitor   ||  | logs    | | Feishu,     |
-+-----------+ +-----------+|  +--------++ | WeChat      |
-                            |              +-------------+
-              +-------------+------------+
-              |     SubAgentManager      |
-              | +-------+ +-------+      |
-              | |Agent 1| |Agent 2| ...  |
-              | |session | |session|      |
-              | |memory  | |memory |      |
-              | +-------+ +-------+      |
-              +-----------+--------------+
-                          |
-                 +--------+--------+
-                 | Browser/Skills  |
-                 | Puppeteer, SKILL|
-                 +-----------------+
-```
+<p align="center">
+  <img src="assets/architecture.png" alt="CereWorker Architecture" width="700" />
+</p>
 
 The **Orchestrator** sits at the center. It routes user messages to the Cerebrum, executes tool calls, streams responses to the TUI, and listens to heartbeat events from the Cerebellum. It also manages sub-agents via the SubAgentManager. It emits typed events (`message:cerebrum:chunk`, `tool:start`, `heartbeat:tick`, `agent:spawned`, etc.) that the UI and other components subscribe to.
 
