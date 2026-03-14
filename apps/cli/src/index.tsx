@@ -16,6 +16,14 @@ async function main() {
     process.argv = process.argv.filter((a) => a !== '--debug' && a !== '-d');
   }
 
+  // Parse --resume <id> flag
+  let resumeId: string | undefined;
+  const resumeIdx = process.argv.indexOf('--resume');
+  if (resumeIdx !== -1 && process.argv[resumeIdx + 1]) {
+    resumeId = process.argv[resumeIdx + 1];
+    process.argv.splice(resumeIdx, 2);
+  }
+
   // Handle subcommands that bypass Ink
   const subcommand = process.argv[2];
   if (subcommand === 'onboard') {
@@ -60,7 +68,7 @@ async function main() {
       const { configureLogger } = await import('@cereworker/core');
       configureLogger({ level: 'debug', stderr: true });
     }
-    render(<App config={config} />);
+    render(<App config={config} resumeConversationId={resumeId} />);
   } catch (err) {
     render(
       <Box flexDirection="column" padding={1}>

@@ -338,7 +338,9 @@ export class Orchestrator extends TypedEventEmitter {
     const conversation = this.conversations.get(id);
     if (!conversation) return false;
     this.activeConversationId = id;
-    log.info('Resumed conversation', { id, messageCount: conversation.messages.length });
+    const messages = this.conversations.getMessages(id);
+    this.emit({ type: 'conversation:resumed', conversationId: id, messages });
+    log.info('Resumed conversation', { id, messageCount: messages.length });
     return true;
   }
 

@@ -70,6 +70,16 @@ export function useChat(orchestrator: Orchestrator) {
     );
 
     unsubs.push(
+      orchestrator.on('conversation:resumed', ({ messages: loaded }) => {
+        setMessages(loaded);
+        setStreamingContent('');
+        setIsStreaming(false);
+        setActiveToolCall(null);
+        setError(null);
+      }),
+    );
+
+    unsubs.push(
       orchestrator.on('error', ({ error: err }) => {
         setError(err.message);
         setIsStreaming(false);

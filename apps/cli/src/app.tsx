@@ -15,9 +15,10 @@ import { useCerebellum } from './hooks/useCerebellum.js';
 
 interface AppProps {
   config: CereWorkerConfig;
+  resumeConversationId?: string;
 }
 
-export function App({ config }: AppProps) {
+export function App({ config, resumeConversationId }: AppProps) {
   const { exit } = useApp();
   const [channelCount, setChannelCount] = useState(0);
   const [systemMessage, setSystemMessage] = useState<string | null>(null);
@@ -68,6 +69,19 @@ export function App({ config }: AppProps) {
       service.shutdown();
     };
   }, [service]);
+
+  // Resume conversation from --resume flag
+  useEffect(() => {
+    if (!resumeConversationId) return;
+    const store = orchestrator.getConversationStore();
+    const convs = store.list();
+    const match = convs.find((c) => c.id.startsWith(resumeConversationId));
+    if (match) {
+      orchestrator.resumeConversation(match.id);
+    } else {
+      setSystemMessage(`No conversation found starting with "${resumeConversationId}"`);
+    }
+  }, [orchestrator, resumeConversationId]);
 
   const { messages, isStreaming, streamingContent, activeToolCall, error } = useChat(orchestrator);
   const { status: cerebellumStatus, finetune } = useCerebellum(orchestrator);
@@ -208,7 +222,20 @@ export function App({ config }: AppProps) {
         case 'resume': {
           const targetId = args.trim();
           if (!targetId) {
-            setSystemMessage('Usage: /resume <conversation-id>');
+            const store = orchestrator.getConversationStore();
+            const convs = store.list().slice(0, 20);
+            if (convs.length === 0) {
+              setSystemMessage('No conversations to resume.');
+            } else {
+              const activeId = orchestrator.getActiveConversationId();
+              const lines = convs.map((c) => {
+                const date = new Date(c.updatedAt).toLocaleString();
+                const preview = store.getPreview(c.id)?.slice(0, 50) ?? '(empty)';
+                const marker = c.id === activeId ? ' *' : '';
+                return `  ${c.id.slice(0, 8)}${marker} | ${date} | ${preview}`;
+              });
+              setSystemMessage(`Pick a conversation to resume with /resume <id>:\n${lines.join('\n')}`);
+            }
             break;
           }
           // Support partial IDs

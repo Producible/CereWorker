@@ -27,6 +27,7 @@ export type OrchestratorEvent =
   | { type: 'finetune:progress'; jobId: string; progress: number; loss: number }
   | { type: 'finetune:complete'; jobId: string; checkpointPath: string }
   | { type: 'finetune:error'; jobId: string; error: string }
+  | { type: 'conversation:resumed'; conversationId: string; messages: Message[] }
   | { type: 'error'; error: Error };
 
 type EventHandler<T> = (event: T) => void;
