@@ -2,6 +2,7 @@ import { welcomeStep } from './steps/welcome.js';
 import { cerebrumStep } from './steps/cerebrum.js';
 import { cerebellumStep } from './steps/cerebellum.js';
 import { channelsStep } from './steps/channels.js';
+import { gatewayStep } from './steps/gateway.js';
 import { summaryStep } from './steps/summary.js';
 import { clack, guardCancel } from './prompter.js';
 
@@ -18,10 +19,21 @@ export async function runOnboardingWizard(): Promise<void> {
   );
   const channels = configureChannels ? await channelsStep() : [];
 
+  const configureGateway = guardCancel(
+    await clack.confirm({
+      message: 'Configure gateway mode (multi-node control)?',
+      initialValue: false,
+    }),
+  );
+  const gateway = configureGateway
+    ? await gatewayStep()
+    : { mode: 'standalone' as const };
+
   await summaryStep({
     cerebrum,
     cerebellum,
     channels,
+    gateway,
     existingConfig: welcome.existingRaw,
   });
 }

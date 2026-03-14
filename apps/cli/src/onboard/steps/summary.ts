@@ -35,6 +35,17 @@ export async function summaryStep(params: BuildConfigParams): Promise<void> {
     lines.push(`Channels:     none`);
   }
 
+  // Gateway
+  if (params.gateway && params.gateway.mode !== 'standalone') {
+    if (params.gateway.mode === 'gateway') {
+      lines.push(`Gateway:      hub on port ${params.gateway.port ?? 18800}`);
+    } else {
+      lines.push(`Gateway:      node → ${params.gateway.gatewayUrl} (${params.gateway.nodeId})`);
+    }
+  } else {
+    lines.push(`Gateway:      standalone`);
+  }
+
   lines.push(`Config path:  ${GLOBAL_CONFIG}`);
 
   clack.note(lines.join('\n'), 'Summary');

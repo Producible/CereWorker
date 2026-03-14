@@ -1,11 +1,13 @@
 import type { CerebrumResult } from './steps/cerebrum.js';
 import type { CerebellumResult } from './steps/cerebellum.js';
 import type { ChannelSetup } from './steps/channels.js';
+import type { GatewayResult } from './steps/gateway.js';
 
 export interface BuildConfigParams {
   cerebrum: CerebrumResult;
   cerebellum: CerebellumResult;
   channels: ChannelSetup[];
+  gateway?: GatewayResult;
   existingConfig?: Record<string, unknown> | null;
 }
 
@@ -96,6 +98,27 @@ export function buildConfig(params: BuildConfigParams): Record<string, unknown> 
     }
 
     config.channels = channels;
+  }
+
+  // Gateway
+  if (params.gateway && params.gateway.mode !== 'standalone') {
+    const gw: Record<string, unknown> = {
+      mode: params.gateway.mode,
+    };
+    if (params.gateway.mode === 'gateway') {
+      gw.port = params.gateway.port ?? 18800;
+    }
+    if (params.gateway.mode === 'node') {
+      gw.gatewayUrl = params.gateway.gatewayUrl;
+      gw.nodeId = params.gateway.nodeId;
+      if (params.gateway.capabilities?.length) {
+        gw.capabilities = params.gateway.capabilities;
+      }
+    }
+    if (params.gateway.token) {
+      gw.token = resolveCredentialValue(params.gateway.token);
+    }
+    config.gateway = gw;
   }
 
   return config;
