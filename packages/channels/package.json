@@ -1,10 +1,12 @@
 {
   "name": "@cereworker/channels",
-  "version": "26.313.8",
+  "version": "26.314.3",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "publishConfig": {
     "access": "public"
   },

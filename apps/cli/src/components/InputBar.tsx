@@ -1,5 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Box, Text, useInput } from 'ink';
+
+const SLASH_COMMANDS = [
+  '/auto', '/agents', '/auth', '/channels', '/clear', '/config',
+  '/conversations', '/exit', '/finetune', '/help', '/memory',
+  '/model', '/nodes', '/provider', '/quit', '/resume', '/skills', '/stop',
+];
 
 interface InputBarProps {
   onSubmit: (text: string) => void;
@@ -9,6 +15,12 @@ interface InputBarProps {
 
 export function InputBar({ onSubmit, onCommand, disabled }: InputBarProps) {
   const [input, setInput] = useState('');
+
+  const suggestion = useMemo(() => {
+    if (!input.startsWith('/') || input.length < 2) return '';
+    const match = SLASH_COMMANDS.find((cmd) => cmd.startsWith(input) && cmd !== input);
+    return match ? match.slice(input.length) : '';
+  }, [input]);
 
   useInput((ch, key) => {
     if (key.return) {
@@ -33,6 +45,11 @@ export function InputBar({ onSubmit, onCommand, disabled }: InputBarProps) {
         onSubmit(trimmed);
       }
       setInput('');
+      return;
+    }
+
+    if (key.tab && suggestion) {
+      setInput((prev) => prev + suggestion);
       return;
     }
 
@@ -63,7 +80,8 @@ export function InputBar({ onSubmit, onCommand, disabled }: InputBarProps) {
         {'> '}
       </Text>
       <Text>{input}</Text>
-      {!disabled && <Text color="blue">|</Text>}
+      {suggestion && <Text dimColor>{suggestion}</Text>}
+      {!disabled && !suggestion && <Text color="blue">|</Text>}
     </Box>
   );
 }

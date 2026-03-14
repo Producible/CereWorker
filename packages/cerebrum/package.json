@@ -1,6 +1,6 @@
 {
   "name": "@cereworker/cerebrum",
-  "version": "26.314.1",
+  "version": "26.314.3",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
