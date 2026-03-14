@@ -11,11 +11,18 @@ export function InputBar({ onSubmit, onCommand, disabled }: InputBarProps) {
   const [input, setInput] = useState('');
 
   useInput((ch, key) => {
-    if (disabled) return;
-
     if (key.return) {
       const trimmed = input.trim();
       if (!trimmed) return;
+
+      // /stop always works, even during streaming
+      if (trimmed === '/stop') {
+        onCommand('stop', '');
+        setInput('');
+        return;
+      }
+
+      if (disabled) return;
 
       if (trimmed.startsWith('/')) {
         const spaceIdx = trimmed.indexOf(' ');
@@ -27,6 +34,17 @@ export function InputBar({ onSubmit, onCommand, disabled }: InputBarProps) {
       }
       setInput('');
       return;
+    }
+
+    if (disabled && input.trim() !== '/sto') {
+      // Allow typing /stop even while disabled, block other input
+      if (ch && !key.ctrl && !key.meta) {
+        const next = input + ch;
+        if ('/stop'.startsWith(next.trim())) {
+          setInput(next);
+        }
+        return;
+      }
     }
 
     if (key.backspace || key.delete) {

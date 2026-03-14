@@ -34,9 +34,15 @@ When the Cerebrum says it wrote a file, **programmatic checks** verify the actua
 
 This means the Cerebrum gets a concrete warning appended to the tool output -- `[Cerebellum warning: file does not exist, not recently modified]` -- and can self-correct.
 
-### 3. Instinct: Persistent Memory via Fine-Tuning
+### 3. Instinct: Safety, Survival, and Persistent Memory
 
-Instead of simulating memory through prompt injection (which is lossy and context-limited), the Cerebellum periodically fine-tunes itself on conversations between the user and the agent. Knowledge is burned into model parameters, not pasted into prompts. The fine-tuning happens automatically during idle time: the Cerebellum copies itself, trains on accumulated conversations, and hot-swaps the container with updated weights. The agent genuinely learns, and that learning survives across sessions without consuming context window.
+The Cerebellum is the agent's instinctive layer -- it handles the things that should never require conscious thought.
+
+**Exec safety.** Every shell command the Cerebrum wants to run passes through an exec policy before execution. Safe read-only binaries (`ls`, `git status`, `node`, etc.) execute immediately. Destructive patterns (`rm -rf`, `curl | bash`, `git push --force`) are blocked outright. In supervised mode (default), unknown commands pause and ask the user for approval. In full-auto mode (`/auto on`), the Cerebellum pre-screens commands instead -- it answers "is this command safe? yes or no" the same way it answers every other binary question. Hard-block patterns (`rm -rf /`, `mkfs`, `dd` to block devices) are always blocked regardless of mode, because some things should never require a judgment call.
+
+**Emergency stop.** The Cerebellum is the only component with low enough latency to respond instantly during a crisis. When the user types `/stop` -- which works even while the Cerebrum is mid-stream -- the Cerebellum triggers an immediate halt: the active stream is aborted via AbortController, all running sub-agents are cancelled, and the TUI confirms the stop. The Cerebrum is a slow thinker; the Cerebellum is a fast reflex. This is the architectural reason the emergency stop exists at the Cerebellum level rather than waiting for the Cerebrum to finish its current thought.
+
+**Persistent memory.** Instead of simulating memory through prompt injection (which is lossy and context-limited), the Cerebellum periodically fine-tunes itself on conversations between the user and the agent. Knowledge is burned into model parameters, not pasted into prompts. The fine-tuning happens automatically during idle time: the Cerebellum copies itself, trains on accumulated conversations, and hot-swaps the container with updated weights. The agent genuinely learns, and that learning survives across sessions without consuming context window.
 
 ### The Design Principle
 
@@ -65,14 +71,29 @@ The **SubAgentManager** enables the Cerebrum to spawn independent workers for pa
 ### Prerequisites
 
 - Node.js 22+
-- pnpm 9+
-- Docker (for Cerebellum)
+- pnpm 9+ (for development)
+- Docker (for Cerebellum, optional)
 
 ### Install from npm
 
 ```bash
 npm install -g @cereworker/cli
 ```
+
+CereWorker uses SQLite for conversation persistence via `better-sqlite3`, which requires native build tools to compile. If you see a `gyp ERR!` warning during install, CereWorker will still work using a JSON file fallback. To enable SQLite (recommended for better performance), install build tools first:
+
+```bash
+# Ubuntu/Debian
+sudo apt install build-essential
+
+# macOS
+xcode-select --install
+
+# Windows
+npm install --global windows-build-tools
+```
+
+Then reinstall: `npm install -g @cereworker/cli`. Any conversations stored in the JSON fallback will be automatically migrated to SQLite on the next launch.
 
 ### Setup
 
@@ -92,7 +113,8 @@ The wizard walks you through:
 After onboarding, start the agent:
 
 ```bash
-cereworker
+cereworker              # interactive TUI
+cereworker serve        # headless service (for production/systemd)
 ```
 
 Or configure manually:
@@ -196,6 +218,89 @@ The Cerebrum can spawn independent sub-agents for parallel work:
 6. The Cerebrum can query agent status via `query_agents` and cancel via `cancel_agent`
 7. Completed agents with `cleanup: "delete"` have their session directories removed; `cleanup: "keep"` agents persist for later reference
 
+### Context Window Management
+
+Long conversations no longer crash. Before each Cerebrum call, the orchestrator estimates total tokens (chars/4 heuristic with a 1.2x safety margin). When the estimate exceeds a configurable threshold (default 80% of the model's context window), older messages are summarized into a single system message via an LLM call, and only the most recent messages (default 10) are kept verbatim. This happens transparently -- the user sees no interruption.
+
+Configure via:
+
+```yaml
+cerebrum:
+  contextWindow: 128000        # model context window size (tokens)
+  compaction:
+    enabled: true
+    threshold: 0.8             # compact at 80% of context window
+    keepRecentMessages: 10     # keep last N messages verbatim
+```
+
+### Exec Safety: Supervised and Full-Auto Modes
+
+Shell command execution has two operating modes, toggled via `/auto [on|off]`:
+
+- **Supervised mode** (default): Safe read-only commands (`ls`, `cat`, `git status`, `node`, etc.) execute automatically. Destructive patterns (`rm -rf`, `curl | bash`, `git push --force`, etc.) are blocked outright. Unknown commands prompt the user for approval before executing.
+
+- **Full-auto mode**: All commands execute without prompts. The Cerebellum pre-screens commands as a safety net. Hard-block patterns (`rm -rf /`, `mkfs`, `dd if=... of=/dev/...`) are always blocked regardless of mode.
+
+### Emergency Stop
+
+Type `/stop` at any time -- even while the Cerebrum is streaming -- to immediately abort all operations. The orchestrator cancels the active stream, terminates all running sub-agents, and emits an `emergency:stop` event. The TUI confirms the stop.
+
+### Gateway: Multi-Node Control
+
+CereWorker supports a hub-spoke topology where one instance (the **gateway**) coordinates multiple instances (**nodes**) on other machines. The gateway's Cerebrum can call tools on any connected node as if they were local.
+
+**Gateway mode**: One CereWorker instance runs the Cerebrum and starts a WebSocket server. Nodes connect and register their local tools. The gateway creates proxy tools (`shell@workstation-gpu`, `file@nas-server`, etc.) that the Cerebrum can call during normal reasoning. Tool invocations are forwarded over WebSocket, executed on the remote node (respecting the node's local exec-policy), and results flow back transparently.
+
+**Node mode**: A CereWorker instance connects to a gateway and exposes its local tools. It receives `invoke` frames, executes them locally, and returns results. Emergency stop commands propagate from gateway to all nodes.
+
+**Standalone mode** (default): No gateway behavior. Everything works as a single-machine agent.
+
+Configure via:
+
+```yaml
+# Gateway instance
+gateway:
+  mode: gateway
+  port: 18800
+  token: ${GATEWAY_TOKEN}    # shared secret for node auth
+
+# Node instance
+gateway:
+  mode: node
+  gatewayUrl: ws://gateway-host:18800
+  nodeId: workstation-gpu
+  token: ${GATEWAY_TOKEN}
+  capabilities: [shell, file]  # tools to expose (empty = all)
+```
+
+Use `/nodes` in the TUI to see connected nodes (gateway mode) or connection status (node mode). For remote access, use Tailscale, WireGuard, or SSH tunnels -- do not expose the WebSocket port on the public internet without TLS.
+
+### Headless Service Mode
+
+For production deployments, CereWorker can run without the TUI as a persistent background service:
+
+```bash
+cereworker serve
+```
+
+This starts the orchestrator, channels, and gateway/node connections headlessly. All log levels write to stderr (captured by journalctl) and to `~/.cereworker/cereworker.log`. A health HTTP endpoint is exposed for monitoring:
+
+| Mode | Health endpoint | Port |
+|------|-----------------|------|
+| Gateway | `/healthz` | 18801 (WS server uses 18800) |
+| Node | `/healthz` | 18800 |
+| Standalone | `/healthz` | 18800 |
+
+Systemd unit templates are provided in `systemd/`:
+
+```bash
+sudo cp systemd/cereworker-gateway.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now cereworker-gateway
+```
+
+The service handles `SIGTERM`/`SIGINT` for graceful shutdown and restarts on failure. Both unit files include systemd hardening (`NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome=read-only`).
+
 ### Channel Flow
 
 When a message arrives from Slack/Discord/Telegram/Matrix/Feishu/WeChat:
@@ -214,6 +319,7 @@ When a message arrives from Slack/Discord/Telegram/Matrix/Feishu/WeChat:
 | Verification | Trust LLM output | Cerebellum monitors actual disk/network effects |
 | Context limits | Summarize and hope | Knowledge survives in model weights |
 | Sub-agents | Manual orchestration or none | Cerebellum-monitored parallel workers with isolated memory |
+| Multi-node | Custom gateway or none | Built-in WebSocket gateway with remote tool proxying |
 | Cost | Every request hits giant LLM | Routine decisions handled by local 0.6B model |
 
 ## Self-Improvement: Beyond Prompt Engineering
@@ -260,11 +366,12 @@ Other agents get more expensive as they get smarter (longer prompts, more retrie
 | [`@cereworker/browser`](packages/browser) | [![npm](https://img.shields.io/npm/v/@cereworker/browser)](https://www.npmjs.com/package/@cereworker/browser) | Puppeteer browser automation tools |
 | [`@cereworker/skills`](packages/skills) | [![npm](https://img.shields.io/npm/v/@cereworker/skills)](https://www.npmjs.com/package/@cereworker/skills) | SKILL.md plugin loader and registry |
 | [`@cereworker/hippocampus`](packages/hippocampus) | [![npm](https://img.shields.io/npm/v/@cereworker/hippocampus)](https://www.npmjs.com/package/@cereworker/hippocampus) | Temporary memory store, memory tools, fine-tune curator |
+| [`@cereworker/gateway`](packages/gateway) | [![npm](https://img.shields.io/npm/v/@cereworker/gateway)](https://www.npmjs.com/package/@cereworker/gateway) | WebSocket gateway for multi-node control |
 | [`@cereworker/config`](packages/config) | [![npm](https://img.shields.io/npm/v/@cereworker/config)](https://www.npmjs.com/package/@cereworker/config) | YAML config with Zod validation, env var interpolation |
 
 ## Built-in Tools
 
-**Shell & File Operations** -- Execute commands, read/write files, list directories
+**Shell & File Operations** -- Execute commands, read/write files, list directories. Shell execution is governed by the exec policy: safe binaries (ls, git, node, etc.) auto-execute, destructive patterns are blocked, and unknown commands prompt for approval in supervised mode
 
 **Browser Automation** -- Navigate, screenshot, click, type, evaluate JS, wait for elements
 
@@ -344,6 +451,11 @@ cerebrum:
   providers:
     anthropic:
       apiKey: ${ANTHROPIC_API_KEY}
+  contextWindow: 128000
+  compaction:
+    enabled: true
+    threshold: 0.8
+    keepRecentMessages: 10
 
 cerebellum:
   enabled: true
@@ -369,6 +481,18 @@ subAgents:
   defaultTimeoutMinutes: 5
   monitorIntervalSeconds: 30
 
+tools:
+  shell:
+    autoMode: false              # true = full-auto (no approval prompts)
+
+gateway:
+  mode: standalone               # standalone | gateway | node
+  port: 18800
+  # token: ${GATEWAY_TOKEN}     # shared secret for node auth
+  # gatewayUrl: ws://host:18800 # node mode: gateway address
+  # nodeId: my-node             # node mode: unique identifier
+  # capabilities: [shell, file] # node mode: tools to expose
+
 channels:
   telegram:
     enabled: true
@@ -380,8 +504,10 @@ channels:
 ```bash
 pnpm install          # install deps
 pnpm build            # build all packages
+pnpm test             # run test suite (vitest)
 pnpm typecheck        # type-check without emitting
 pnpm dev              # run CLI in dev mode (tsx)
+pnpm dev -- serve     # run headless service in dev mode
 ```
 
 ## Acknowledgments

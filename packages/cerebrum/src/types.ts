@@ -13,6 +13,12 @@ export interface ProviderConfig {
   baseUrl?: string;
   models?: string[];
   model?: string;
+  auth?: 'apikey' | 'oauth';
+  oauth?: {
+    clientId?: string;
+    clientSecret?: string;
+    callbackPort?: number;
+  };
 }
 
 export interface CerebrumRequest {

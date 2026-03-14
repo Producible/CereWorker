@@ -1,11 +1,14 @@
 {
   "name": "@cereworker/cli",
-  "version": "0.3.0",
+  "version": "26.314.1",
   "type": "module",
   "bin": {
     "cereworker": "dist/index.js"
   },
-  "files": ["dist"],
+  "files": [
+    "dist",
+    "scripts"
+  ],
   "publishConfig": {
     "access": "public"
   },
@@ -31,6 +34,7 @@
     "@cereworker/channels": "workspace:*",
     "@cereworker/browser": "workspace:*",
     "@cereworker/hippocampus": "workspace:*",
+    "@cereworker/gateway": "workspace:*",
     "@clack/prompts": "^0.9.1",
     "ink": "^5.1.0",
     "@inkjs/ui": "^2.0.0",

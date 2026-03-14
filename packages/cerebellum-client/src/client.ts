@@ -1,5 +1,6 @@
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
+import { existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, resolve } from 'path';
 
@@ -72,6 +73,32 @@ export interface SystemStatus {
   pendingActions: AgentHealthAction[];
 }
 
+export interface FineTuneStatus {
+  status: 'idle' | 'running' | 'completed' | 'failed';
+  jobId: string;
+  progress: number;
+  currentStep: number;
+  totalSteps: number;
+  currentLoss: number;
+  error: string;
+  checkpointPath: string;
+  startedAt: number;
+  completedAt: number;
+}
+
+export interface FineTuneStartResult {
+  jobId: string;
+  started: boolean;
+  error: string;
+}
+
+export interface TrainingPairInput {
+  instruction: string;
+  response: string;
+  source: string;
+  createdAt: number;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type GrpcClient = any;
 
@@ -87,7 +114,11 @@ export class CerebellumClient {
   async connect(): Promise<void> {
     try {
       const currentDir = dirname(fileURLToPath(import.meta.url));
-      const protoPath = resolve(currentDir, '../../../proto/cerebellum.proto');
+      // Look for proto bundled with this package first, fall back to monorepo root
+      let protoPath = resolve(currentDir, '../proto/cerebellum.proto');
+      if (!existsSync(protoPath)) {
+        protoPath = resolve(currentDir, '../../../proto/cerebellum.proto');
+      }
 
       const packageDefinition = protoLoader.loadSync(protoPath, {
         keepCase: false,
@@ -324,6 +355,86 @@ export class CerebellumClient {
             action: a.action,
             reason: a.reason,
           })),
+        });
+      });
+    });
+  }
+
+  async ingestTrainingData(pairs: TrainingPairInput[]): Promise<number> {
+    if (!this.connected) return 0;
+
+    const grpcPairs = pairs.map((p) => ({
+      instruction: p.instruction,
+      response: p.response,
+      source: p.source,
+      createdAt: p.createdAt,
+    }));
+
+    return new Promise((resolve, reject) => {
+      this.client.ingestTrainingData(
+        { pairs: grpcPairs },
+        (err: Error | null, response: GrpcClient) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          resolve(response.totalPending);
+        },
+      );
+    });
+  }
+
+  async startFineTune(config?: {
+    method?: string;
+    epochs?: number;
+    learningRate?: number;
+    batchSize?: number;
+  }): Promise<FineTuneStartResult> {
+    if (!this.connected) return { jobId: '', started: false, error: 'Not connected' };
+
+    return new Promise((resolve, reject) => {
+      this.client.startFineTune(
+        {
+          method: config?.method ?? 'auto',
+          epochs: config?.epochs ?? 3,
+          learningRate: config?.learningRate ?? 2e-4,
+          batchSize: config?.batchSize ?? 4,
+        },
+        (err: Error | null, response: GrpcClient) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          resolve({
+            jobId: response.jobId,
+            started: response.started,
+            error: response.error,
+          });
+        },
+      );
+    });
+  }
+
+  async getFineTuneStatus(): Promise<FineTuneStatus | null> {
+    if (!this.connected) return null;
+
+    return new Promise((resolve, reject) => {
+      this.client.getFineTuneStatus({}, (err: Error | null, response: GrpcClient) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        resolve({
+          status: response.status,
+          jobId: response.jobId,
+          progress: response.progress,
+          currentStep: response.currentStep,
+          totalSteps: response.totalSteps,
+          currentLoss: response.currentLoss,
+          error: response.error,
+          checkpointPath: response.checkpointPath,
+          startedAt: response.startedAt,
+          completedAt: response.completedAt,
         });
       });
     });

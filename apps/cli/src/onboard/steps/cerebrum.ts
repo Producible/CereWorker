@@ -1,10 +1,16 @@
+import { exec } from 'node:child_process';
+import { platform } from 'node:os';
 import { clack, guardCancel } from '../prompter.js';
+import { loginOpenAI, loginGoogle, TokenStore } from '@cereworker/cerebrum';
 
 export interface CerebrumResult {
   provider: string;
   model: string;
   apiKey?: { envRef: string } | { plaintext: string };
   localBaseUrl?: string;
+  auth?: 'apikey' | 'oauth';
+  oauthClientId?: string;
+  oauthClientSecret?: string;
 }
 
 const PROVIDER_MODELS: Record<string, { value: string; label: string; hint?: string }[]> = {
@@ -30,6 +36,9 @@ const ENV_VAR_MAP: Record<string, string> = {
   google: 'GOOGLE_API_KEY',
 };
 
+// Providers that support OAuth login
+const OAUTH_PROVIDERS = new Set(['openai', 'google']);
+
 export async function cerebrumStep(): Promise<CerebrumResult> {
   const provider = guardCancel(
     await clack.select({
@@ -45,6 +54,9 @@ export async function cerebrumStep(): Promise<CerebrumResult> {
 
   let apiKey: CerebrumResult['apiKey'];
   let localBaseUrl: string | undefined;
+  let auth: CerebrumResult['auth'];
+  let oauthClientId: string | undefined;
+  let oauthClientSecret: string | undefined;
 
   if (provider === 'local') {
     localBaseUrl = guardCancel(
@@ -55,46 +67,104 @@ export async function cerebrumStep(): Promise<CerebrumResult> {
       }),
     ) as string;
   } else {
-    const envVar = ENV_VAR_MAP[provider];
-    const envValue = process.env[envVar];
-
-    if (envValue) {
-      const useEnv = guardCancel(
-        await clack.confirm({
-          message: `Found ${envVar} in environment. Use it?`,
-          initialValue: true,
-        }),
-      );
-
-      if (useEnv) {
-        apiKey = { envRef: envVar };
-      }
-    }
-
-    if (!apiKey) {
-      const keyMode = guardCancel(
+    // Ask auth method for providers that support OAuth
+    let authMethod: string = 'apikey';
+    if (OAUTH_PROVIDERS.has(provider)) {
+      authMethod = guardCancel(
         await clack.select({
-          message: 'How to store the API key?',
+          message: 'Authentication method',
           options: [
-            { value: 'env', label: `Reference env var (\${${envVar}})`, hint: 'recommended' },
-            { value: 'plain', label: 'Store directly in config', hint: 'less secure' },
+            { value: 'apikey', label: 'API Key', hint: 'traditional sk-... key' },
+            { value: 'oauth', label: 'OAuth (Browser Login)', hint: 'sign in with your account' },
           ],
         }),
       ) as string;
+    }
 
-      if (keyMode === 'env') {
-        if (!envValue) {
-          clack.log.warn(`Set ${envVar} in your shell profile before running CereWorker.`);
+    if (authMethod === 'oauth') {
+      auth = 'oauth';
+      clack.log.warn(
+        'OAuth uses shared credentials and may trigger account restrictions from the provider.\n'
+        + '  Use an API key if this is a production or high-volume setup.',
+      );
+      const proceed = guardCancel(
+        await clack.confirm({ message: 'Continue with OAuth?', initialValue: true }),
+      );
+      if (!proceed) {
+        authMethod = 'apikey';
+      }
+    }
+
+    if (authMethod === 'oauth') {
+      clack.log.info('Opening browser for sign-in...');
+
+      try {
+        const loginFn = provider === 'openai' ? loginOpenAI : loginGoogle;
+        const tokens = await loginFn({
+          onAuth: (url) => {
+            const cmd =
+              platform() === 'darwin' ? 'open' : platform() === 'win32' ? 'start' : 'xdg-open';
+            exec(`${cmd} ${JSON.stringify(url)}`);
+            clack.log.info(`If the browser didn't open, visit:\n  ${url}`);
+          },
+          onPrompt: async (message) => {
+            return guardCancel(
+              await clack.text({ message, validate: (v) => (v.length > 0 ? undefined : 'Required') }),
+            ) as string;
+          },
+          onProgress: (msg) => clack.log.step(msg),
+        });
+
+        const store = new TokenStore();
+        store.save(provider, tokens);
+        clack.log.success(`Authenticated with ${provider}!`);
+      } catch (err) {
+        clack.log.error(`OAuth failed: ${err instanceof Error ? err.message : err}`);
+        clack.log.warn('You can retry later with: cereworker auth ' + provider);
+      }
+    } else {
+      auth = 'apikey';
+      const envVar = ENV_VAR_MAP[provider];
+      const envValue = process.env[envVar];
+
+      if (envValue) {
+        const useEnv = guardCancel(
+          await clack.confirm({
+            message: `Found ${envVar} in environment. Use it?`,
+            initialValue: true,
+          }),
+        );
+
+        if (useEnv) {
+          apiKey = { envRef: envVar };
         }
-        apiKey = { envRef: envVar };
-      } else {
-        const key = guardCancel(
-          await clack.text({
-            message: `Enter your ${provider} API key`,
-            validate: (v) => (v.length > 0 ? undefined : 'API key is required'),
+      }
+
+      if (!apiKey) {
+        const keyMode = guardCancel(
+          await clack.select({
+            message: 'How to store the API key?',
+            options: [
+              { value: 'env', label: `Reference env var (\${${envVar}})`, hint: 'recommended' },
+              { value: 'plain', label: 'Store directly in config', hint: 'less secure' },
+            ],
           }),
         ) as string;
-        apiKey = { plaintext: key };
+
+        if (keyMode === 'env') {
+          if (!envValue) {
+            clack.log.warn(`Set ${envVar} in your shell profile before running CereWorker.`);
+          }
+          apiKey = { envRef: envVar };
+        } else {
+          const key = guardCancel(
+            await clack.text({
+              message: `Enter your ${provider} API key`,
+              validate: (v) => (v.length > 0 ? undefined : 'API key is required'),
+            }),
+          ) as string;
+          apiKey = { plaintext: key };
+        }
       }
     }
   }
@@ -136,5 +206,5 @@ export async function cerebrumStep(): Promise<CerebrumResult> {
     }
   }
 
-  return { provider, model, apiKey, localBaseUrl };
+  return { provider, model, apiKey, localBaseUrl, auth, oauthClientId, oauthClientSecret };
 }

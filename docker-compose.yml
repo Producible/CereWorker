@@ -9,6 +9,8 @@ services:
       - "50051:50051"
     volumes:
       - cerebellum-models:/root/.cache/huggingface  # persist downloaded model weights
+      - cerebellum-checkpoints:/checkpoints          # persist fine-tuned adapters/weights
+      - cerebellum-data:/data                        # training data staging
       - ./:/workspace:ro                             # read-only access for tool verification
       - ~/.cereworker/memory:/memory:ro               # read-only access for memory verification
     environment:
@@ -17,6 +19,8 @@ services:
       - CEREBELLUM_PORT=50051
       - WORKSPACE_DIR=/workspace
       - MEMORY_DIR=/memory
+      - CHECKPOINT_DIR=/checkpoints
+      - DATA_DIR=/data
     deploy:
       resources:
         limits:
@@ -25,3 +29,5 @@ services:
 
 volumes:
   cerebellum-models:
+  cerebellum-checkpoints:
+  cerebellum-data:

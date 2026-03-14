@@ -12,14 +12,18 @@ COPY pyproject.toml .
 RUN pip install --no-cache-dir .
 
 # Generate proto files
-COPY proto/ /app/proto/
-RUN python -m grpc_tools.protoc \
+COPY --from=proto / /app/proto/
+RUN mkdir -p /app/src/proto && python -m grpc_tools.protoc \
     -I/app/proto \
     --python_out=/app/src/proto \
     --grpc_python_out=/app/src/proto \
-    /app/proto/cerebellum.proto
+    /app/proto/cerebellum.proto \
+    && sed -i 's/^import cerebellum_pb2/from src.proto import cerebellum_pb2/' /app/src/proto/cerebellum_pb2_grpc.py \
+    && touch /app/src/proto/__init__.py
 
 COPY src/ /app/src/
+
+RUN mkdir -p /checkpoints /data
 
 EXPOSE 50051
 

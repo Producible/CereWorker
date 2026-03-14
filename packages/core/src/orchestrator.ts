@@ -3,7 +3,12 @@ import { TypedEventEmitter } from './events.js';
 import { ConversationStore } from './conversation.js';
 import { SubAgentManager } from './sub-agent-manager.js';
 import { createSubAgentTools } from './sub-agent-tools.js';
+import { createLogger } from './logger.js';
+import { buildSystemPrompt } from './system-prompt.js';
 import type { Message, ToolCall, ToolResult, VerificationResult, AgentHealthAction } from './types.js';
+import { estimateMessageTokens, shouldCompact, buildCompactionMessages } from './context.js';
+
+const log = createLogger('orchestrator');
 
 export interface CerebrumAdapter {
   stream(
@@ -11,6 +16,7 @@ export interface CerebrumAdapter {
     tools: Record<string, ToolDefinition>,
     callbacks: StreamCallbacks,
   ): Promise<void>;
+  summarize?(messages: Message[]): Promise<string>;
 }
 
 export interface ToolDefinition {
@@ -24,6 +30,26 @@ export interface StreamCallbacks {
   onToolCall: (toolCall: ToolCall) => Promise<ToolResult>;
   onFinish: (content: string) => void;
   onError: (error: Error) => void;
+}
+
+export interface FineTuneStatus {
+  status: 'idle' | 'running' | 'completed' | 'failed';
+  jobId: string;
+  progress: number;
+  currentStep: number;
+  totalSteps: number;
+  currentLoss: number;
+  error: string;
+  checkpointPath: string;
+  startedAt: number;
+  completedAt: number;
+}
+
+export interface TrainingPair {
+  instruction: string;
+  response: string;
+  source: string;
+  createdAt: number;
 }
 
 export interface CerebellumAdapter {
@@ -51,6 +77,21 @@ export interface CerebellumAdapter {
       retryCount: number;
     }>,
   ): Promise<AgentHealthAction[]>;
+  ingestTrainingData?(pairs: TrainingPair[]): Promise<number>;
+  startFineTune?(config?: { method?: string }): Promise<{ jobId: string; started: boolean; error: string }>;
+  getFineTuneStatus?(): Promise<FineTuneStatus | null>;
+}
+
+export interface CompactionConfig {
+  enabled: boolean;
+  threshold: number;
+  keepRecentMessages: number;
+  contextWindow: number;
+}
+
+export interface OrchestratorOptions {
+  conversationStore?: ConversationStore;
+  compaction?: Partial<CompactionConfig>;
 }
 
 export class Orchestrator extends TypedEventEmitter {
@@ -60,14 +101,32 @@ export class Orchestrator extends TypedEventEmitter {
   private subAgentManager: SubAgentManager | null = null;
   private tools = new Map<string, ToolDefinition>();
   private activeConversationId: string | null = null;
+  private systemContext: string | null = null;
   private verificationEnabled = true;
   private verificationTimeoutMs = 5000;
   private monitorIntervalMs = 30_000;
   private monitorTimer: ReturnType<typeof setInterval> | null = null;
+  private abortController: AbortController | null = null;
+  private autoMode = false;
+  private fineTunePoller: ReturnType<typeof setInterval> | null = null;
+  private fineTuneDataProvider: (() => Promise<TrainingPair[]>) | null = null;
+  private fineTuneMethod = 'auto';
+  private gatewayMode: 'standalone' | 'gateway' | 'node' = 'standalone';
+  private connectedNodes = 0;
+  private gatewayUrl: string | undefined;
+  private compactionConfig: CompactionConfig = {
+    enabled: true,
+    threshold: 0.8,
+    keepRecentMessages: 10,
+    contextWindow: 128000,
+  };
 
-  constructor() {
+  constructor(options?: OrchestratorOptions) {
     super();
-    this.conversations = new ConversationStore();
+    this.conversations = options?.conversationStore ?? new ConversationStore();
+    if (options?.compaction) {
+      this.compactionConfig = { ...this.compactionConfig, ...options.compaction };
+    }
   }
 
   setCerebrum(cerebrum: CerebrumAdapter): void {
@@ -81,6 +140,16 @@ export class Orchestrator extends TypedEventEmitter {
     this.cerebellum = cerebellum;
     if (options?.enabled !== undefined) this.verificationEnabled = options.enabled;
     if (options?.timeoutMs !== undefined) this.verificationTimeoutMs = options.timeoutMs;
+  }
+
+  /** Set system context (e.g. skills prompt) prepended to every Cerebrum call */
+  setSystemContext(context: string): void {
+    this.systemContext = context;
+    log.info('System context updated', { length: context.length });
+  }
+
+  getSystemContext(): string | null {
+    return this.systemContext;
   }
 
   setupSubAgents(options?: {
@@ -112,8 +181,135 @@ export class Orchestrator extends TypedEventEmitter {
     return this.subAgentManager;
   }
 
+  getConversationStore(): ConversationStore {
+    return this.conversations;
+  }
+
   registerTool(name: string, tool: ToolDefinition): void {
     this.tools.set(name, tool);
+  }
+
+  registerTools(tools: Record<string, ToolDefinition>): void {
+    for (const [name, tool] of Object.entries(tools)) {
+      this.tools.set(name, tool);
+    }
+  }
+
+  unregisterTool(name: string): boolean {
+    return this.tools.delete(name);
+  }
+
+  setAutoMode(enabled: boolean): void {
+    this.autoMode = enabled;
+    log.info('Auto mode changed', { autoMode: enabled });
+  }
+
+  getAutoMode(): boolean {
+    return this.autoMode;
+  }
+
+  setGatewayMode(
+    mode: 'standalone' | 'gateway' | 'node',
+    extras?: { connectedNodes?: number; gatewayUrl?: string },
+  ): void {
+    this.gatewayMode = mode;
+    if (extras?.connectedNodes !== undefined) this.connectedNodes = extras.connectedNodes;
+    if (extras?.gatewayUrl !== undefined) this.gatewayUrl = extras.gatewayUrl;
+  }
+
+  emergencyStop(): void {
+    // 1. Abort current stream
+    this.abortController?.abort();
+    this.abortController = null;
+
+    // 2. Cancel all sub-agents
+    if (this.subAgentManager) {
+      const agents = this.subAgentManager.listAgents();
+      agents
+        .filter((a) => a.status === 'running' || a.status === 'pending')
+        .forEach((a) => this.subAgentManager!.cancel(a.id));
+    }
+
+    // 3. Emit event
+    this.emit({ type: 'emergency:stop' });
+    log.warn('Emergency stop triggered');
+  }
+
+  /** Set a callback that provides training pairs for fine-tuning (from HippocampusCurator). */
+  setFineTuneDataProvider(provider: () => Promise<TrainingPair[]>, method = 'auto'): void {
+    this.fineTuneDataProvider = provider;
+    this.fineTuneMethod = method;
+  }
+
+  /** Trigger a fine-tuning run: collect training data, send to cerebellum, start training, poll progress. */
+  async triggerFineTune(): Promise<void> {
+    if (!this.cerebellum?.ingestTrainingData || !this.cerebellum?.startFineTune) {
+      throw new Error('Cerebellum fine-tuning not available');
+    }
+
+    // 1. Collect training data
+    let pairs: TrainingPair[] = [];
+    if (this.fineTuneDataProvider) {
+      pairs = await this.fineTuneDataProvider();
+    }
+
+    // 2. Ingest training data
+    if (pairs.length > 0) {
+      const totalPending = await this.cerebellum.ingestTrainingData(pairs);
+      log.info('Training data ingested', { newPairs: pairs.length, totalPending });
+    }
+
+    // 3. Start fine-tuning
+    const result = await this.cerebellum.startFineTune({ method: this.fineTuneMethod });
+    if (!result.started) {
+      throw new Error(result.error || 'Failed to start fine-tuning');
+    }
+
+    this.emit({ type: 'finetune:start', jobId: result.jobId });
+    log.info('Fine-tuning started', { jobId: result.jobId });
+
+    // 4. Poll for progress
+    this.stopFineTunePoller();
+    this.fineTunePoller = setInterval(async () => {
+      try {
+        const status = await this.cerebellum!.getFineTuneStatus!();
+        if (!status) return;
+
+        if (status.status === 'running') {
+          this.emit({
+            type: 'finetune:progress',
+            jobId: status.jobId,
+            progress: status.progress,
+            loss: status.currentLoss,
+          });
+        } else if (status.status === 'completed') {
+          this.emit({
+            type: 'finetune:complete',
+            jobId: status.jobId,
+            checkpointPath: status.checkpointPath,
+          });
+          log.info('Fine-tuning completed', { jobId: status.jobId, checkpoint: status.checkpointPath });
+          this.stopFineTunePoller();
+        } else if (status.status === 'failed') {
+          this.emit({
+            type: 'finetune:error',
+            jobId: status.jobId,
+            error: status.error,
+          });
+          log.error('Fine-tuning failed', { jobId: status.jobId, error: status.error });
+          this.stopFineTunePoller();
+        }
+      } catch {
+        // Polling failure is non-blocking
+      }
+    }, 10_000);
+  }
+
+  private stopFineTunePoller(): void {
+    if (this.fineTunePoller) {
+      clearInterval(this.fineTunePoller);
+      this.fineTunePoller = null;
+    }
   }
 
   getActiveConversationId(): string | null {
@@ -133,7 +329,17 @@ export class Orchestrator extends TypedEventEmitter {
   startConversation(): string {
     const conversation = this.conversations.create();
     this.activeConversationId = conversation.id;
+    log.info('Started conversation', { id: conversation.id });
     return conversation.id;
+  }
+
+  /** Resume an existing conversation by ID */
+  resumeConversation(id: string): boolean {
+    const conversation = this.conversations.get(id);
+    if (!conversation) return false;
+    this.activeConversationId = id;
+    log.info('Resumed conversation', { id, messageCount: conversation.messages.length });
+    return true;
   }
 
   async sendMessage(content: string, conversationId?: string): Promise<void> {
@@ -146,12 +352,56 @@ export class Orchestrator extends TypedEventEmitter {
     this.emit({ type: 'message:user', message: userMessage });
     this.emit({ type: 'message:cerebrum:start', conversationId: convId });
 
-    const messages = this.conversations.getMessages(convId);
+    let messages = this.conversations.getMessages(convId);
+
+    // Context window compaction
+    if (
+      this.compactionConfig.enabled &&
+      this.cerebrum?.summarize &&
+      shouldCompact(messages, this.compactionConfig.contextWindow, this.compactionConfig.threshold)
+    ) {
+      try {
+        const keepRecent = this.compactionConfig.keepRecentMessages;
+        const olderMessages = messages.slice(0, Math.max(0, messages.length - keepRecent));
+        if (olderMessages.length > 0) {
+          log.info('Compacting conversation', {
+            totalMessages: messages.length,
+            compactingMessages: olderMessages.length,
+            estimatedTokens: estimateMessageTokens(messages),
+          });
+          const summary = await this.cerebrum.summarize(olderMessages);
+          messages = buildCompactionMessages(messages, summary, keepRecent);
+        }
+      } catch (error) {
+        log.warn('Compaction failed, continuing with full context', {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    // Build system prompt with runtime state + skills context
+    const basePrompt = buildSystemPrompt({
+      cerebellumConnected: this.cerebellum?.isConnected() ?? false,
+      tools: this.tools,
+      autoMode: this.autoMode,
+      gatewayMode: this.gatewayMode,
+      connectedNodes: this.connectedNodes,
+      gatewayUrl: this.gatewayUrl,
+    });
+    const systemParts = [basePrompt];
+    if (this.systemContext) systemParts.push(this.systemContext);
+    const fullSystemPrompt = systemParts.join('\n\n---\n\n');
+
+    const allMessages: Message[] = [
+      { id: 'system', role: 'system' as const, content: fullSystemPrompt, timestamp: 0 },
+      ...messages,
+    ];
+
     const toolDefs = Object.fromEntries(this.tools);
     let fullContent = '';
 
     try {
-      await this.cerebrum.stream(messages, toolDefs, {
+      await this.cerebrum.stream(allMessages, toolDefs, {
         onChunk: (chunk) => {
           fullContent += chunk;
           this.emit({ type: 'message:cerebrum:chunk', chunk });
@@ -237,14 +487,14 @@ export class Orchestrator extends TypedEventEmitter {
           this.emit({ type: 'message:cerebrum:end', message: cerebrumMessage });
         },
         onError: (error) => {
+          log.error('Cerebrum stream error', { error: error.message });
           this.emit({ type: 'error', error });
         },
       });
     } catch (error) {
-      this.emit({
-        type: 'error',
-        error: error instanceof Error ? error : new Error(String(error)),
-      });
+      const err = error instanceof Error ? error : new Error(String(error));
+      log.error('Send message failed', { error: err.message });
+      this.emit({ type: 'error', error: err });
     }
   }
 
@@ -264,7 +514,9 @@ export class Orchestrator extends TypedEventEmitter {
       clearInterval(this.monitorTimer);
       this.monitorTimer = null;
     }
+    this.stopFineTunePoller();
     this.removeAllListeners();
+    log.info('Orchestrator stopped');
   }
 
   private startMonitorLoop(): void {

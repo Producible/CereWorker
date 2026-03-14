@@ -1,5 +1,6 @@
 import { Client, GatewayIntentBits, Events, type Message as DiscordMessage } from 'discord.js';
 import type { ChannelPlugin, MessageHandler, OutboundMessage, InboundMessage } from '../types.js';
+import { chunkMarkdown, CHANNEL_LIMITS } from '../chunking.js';
 
 export interface DiscordChannelConfig {
   token: string;
@@ -10,6 +11,7 @@ export interface DiscordChannelConfig {
 export function createDiscordChannel(config: DiscordChannelConfig): ChannelPlugin {
   let client: Client | null = null;
   let connected = false;
+  const limit = CHANNEL_LIMITS.discord;
 
   return {
     id: 'discord',
@@ -53,8 +55,7 @@ export function createDiscordChannel(config: DiscordChannelConfig): ChannelPlugi
 
         const response = await handler(inbound);
         if (response) {
-          // Discord has a 2000 char limit per message
-          const chunks = chunkText(response, 2000);
+          const chunks = chunkMarkdown(response, limit);
           for (const chunk of chunks) {
             await message.reply(chunk);
           }
@@ -76,7 +77,7 @@ export function createDiscordChannel(config: DiscordChannelConfig): ChannelPlugi
       if (!client) throw new Error('Discord not started');
       const channel = await client.channels.fetch(msg.to);
       if (channel && 'send' in channel) {
-        const chunks = chunkText(msg.text, 2000);
+        const chunks = chunkMarkdown(msg.text, limit);
         for (const chunk of chunks) {
           await (channel as { send: (text: string) => Promise<unknown> }).send(chunk);
         }
@@ -92,22 +93,4 @@ export function createDiscordChannel(config: DiscordChannelConfig): ChannelPlugi
       return connected;
     },
   };
-}
-
-function chunkText(text: string, limit: number): string[] {
-  if (text.length <= limit) return [text];
-  const chunks: string[] = [];
-  let remaining = text;
-  while (remaining.length > 0) {
-    if (remaining.length <= limit) {
-      chunks.push(remaining);
-      break;
-    }
-    // Try to break at a newline
-    let breakAt = remaining.lastIndexOf('\n', limit);
-    if (breakAt <= 0) breakAt = limit;
-    chunks.push(remaining.slice(0, breakAt));
-    remaining = remaining.slice(breakAt).trimStart();
-  }
-  return chunks;
 }

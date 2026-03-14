@@ -1,18 +1,12 @@
 import React, { useMemo, useCallback, useEffect, useState } from 'react';
 import { Box, Text, useApp } from 'ink';
-import { Orchestrator } from '@cereworker/core';
-import { CerebrumProvider } from '@cereworker/cerebrum';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { readFileSync, existsSync } from 'node:fs';
+import { configureLogger } from '@cereworker/core';
 import type { CereWorkerConfig } from '@cereworker/config';
-import { createChannelManager, type ChannelManager } from '@cereworker/channels';
-import { browserToolDefinitions } from '@cereworker/browser';
-import {
-  HippocampusStore,
-  createMemoryTools,
-  memoryReadParameters,
-  memoryWriteParameters,
-  memoryLogParameters,
-  memorySearchParameters,
-} from '@cereworker/hippocampus';
+import { GatewayServer, GatewayNodeClient } from '@cereworker/gateway';
+import { createService } from './service.js';
 import { StatusBar } from './components/StatusBar.js';
 import { ChatView } from './components/ChatView.js';
 import { InputBar } from './components/InputBar.js';
@@ -26,108 +20,57 @@ interface AppProps {
 export function App({ config }: AppProps) {
   const { exit } = useApp();
   const [channelCount, setChannelCount] = useState(0);
+  const [systemMessage, setSystemMessage] = useState<string | null>(null);
+  const [currentProvider, setCurrentProvider] = useState(config.cerebrum.defaultProvider);
+  const [currentModel, setCurrentModel] = useState(config.cerebrum.defaultModel);
+  const [autoMode, setAutoMode] = useState(config.tools.shell.autoMode);
+  const [gatewayNodeCount, setGatewayNodeCount] = useState(0);
+  const [gatewayServer, setGatewayServer] = useState<GatewayServer | null>(null);
+  const [gatewayClient, setGatewayClient] = useState<GatewayNodeClient | null>(null);
 
-  const { orchestrator, channelManager } = useMemo(() => {
-    const orch = new Orchestrator();
-
-    const cerebrumConfig = {
-      defaultProvider: config.cerebrum.defaultProvider,
-      defaultModel: config.cerebrum.defaultModel,
-      providers: config.cerebrum.providers as Record<string, { apiKey?: string; baseUrl?: string; model?: string }>,
-      maxSteps: config.cerebrum.maxSteps,
-      temperature: config.cerebrum.temperature,
-    };
-
-    const cerebrum = new CerebrumProvider(cerebrumConfig, {
-      denyList: config.tools.shell.denyList,
-      timeout: config.tools.shell.timeout,
-      maxOutputSize: config.tools.shell.maxOutputSize,
+  const service = useMemo(() => {
+    configureLogger({
+      level: config.logging.level as 'debug' | 'info' | 'warn' | 'error',
+      file: config.logging.file,
     });
-
-    // Bridge CerebrumProvider to Orchestrator's CerebrumAdapter interface
-    orch.setCerebrum({
-      stream: async (messages, _tools, callbacks) => {
-        await cerebrum.stream(messages, callbacks);
-      },
-    });
-
-    // Register hippocampus (memory) tools
-    if (config.hippocampus.enabled) {
-      const hippocampusStore = new HippocampusStore(config.hippocampus.directory);
-      const memoryTools = createMemoryTools(hippocampusStore);
-
-      orch.registerTool('memory_read', {
-        description: 'Read a memory file (MEMORY.md or a daily log like 2026-03-08.md)',
-        parameters: {},
-        execute: async (args) => memoryTools.executeMemoryRead(args as { file: string }),
-      });
-      orch.registerTool('memory_write', {
-        description: 'Write/update the main MEMORY.md file with curated long-term notes',
-        parameters: {},
-        execute: async (args) => memoryTools.executeMemoryWrite(args as { content: string }),
-      });
-      orch.registerTool('memory_log', {
-        description: "Append a note to today's daily log",
-        parameters: {},
-        execute: async (args) => memoryTools.executeMemoryLog(args as { content: string }),
-      });
-      orch.registerTool('memory_search', {
-        description: 'Search across all memory files for a text pattern',
-        parameters: {},
-        execute: async (args) => memoryTools.executeMemorySearch(args as { query: string }),
-      });
-    }
-
-    // Setup sub-agents
-    if (config.subAgents.enabled) {
-      orch.setupSubAgents({
-        maxConcurrent: config.subAgents.maxConcurrent,
-        monitorIntervalMs: config.subAgents.monitorIntervalSeconds * 1000,
-      });
-    }
-
-    // Register browser tools with orchestrator
-    for (const [name, toolDef] of Object.entries(browserToolDefinitions)) {
-      orch.registerTool(name, {
-        description: toolDef.description,
-        parameters: {},
-        execute: async (args) => toolDef.execute(args as never),
-      });
-    }
-
-    // Create channel manager
-    const chMgr = createChannelManager(config);
-
-    // Wire channels to orchestrator
-    chMgr.setHandler(async (msg) => {
-      // Send inbound channel message through the orchestrator
-      // For now, return a placeholder - full integration would route through cerebrum
-      await orch.sendMessage(msg.text);
-      const messages = orch.getMessages();
-      const lastMsg = messages[messages.length - 1];
-      return lastMsg?.role === 'cerebrum' ? lastMsg.content : undefined;
-    });
-
-    orch.start();
-    return { orchestrator: orch, channelManager: chMgr };
+    return createService(config);
   }, [config]);
+  const { orchestrator, channelManager, cerebrum, skillRegistry } = service;
 
   // Start channels in background
   useEffect(() => {
-    const channels = channelManager.list();
-    if (channels.length > 0) {
-      channelManager.startAll().then(() => {
-        setChannelCount(channelManager.listConnected().length);
-      });
-    }
-
+    service.startChannels().then(setChannelCount);
     return () => {
       channelManager.stopAll();
     };
-  }, [channelManager]);
+  }, [service]);
+
+  // Start cerebellum in background
+  useEffect(() => {
+    if (config.cerebellum.enabled) {
+      service.startCerebellum();
+    }
+  }, [service]);
+
+  // Start gateway/node mode
+  useEffect(() => {
+    if (config.gateway.mode === 'standalone') return;
+
+    service.startGateway({
+      onNodeConnected: (_id, count) => setGatewayNodeCount(count),
+      onNodeDisconnected: (_id, count) => setGatewayNodeCount(count),
+    }).then(({ server, client }) => {
+      setGatewayServer(server);
+      setGatewayClient(client);
+    });
+
+    return () => {
+      service.shutdown();
+    };
+  }, [service]);
 
   const { messages, isStreaming, streamingContent, activeToolCall, error } = useChat(orchestrator);
-  const { status: cerebellumStatus } = useCerebellum(orchestrator);
+  const { status: cerebellumStatus, finetune } = useCerebellum(orchestrator);
 
   const handleSubmit = useCallback(
     (text: string) => {
@@ -145,27 +88,253 @@ export function App({ config }: AppProps) {
           channelManager.stopAll();
           exit();
           break;
+
         case 'clear':
           orchestrator.startConversation();
           break;
-        case 'channels':
-          // Display connected channels
+
+        case 'channels': {
+          const connected = channelManager.listConnected();
+          const all = channelManager.list();
+          const info = all.map((ch) => `  ${ch.meta.emoji} ${ch.meta.name}: ${ch.isConnected() ? 'connected' : 'offline'}`).join('\n');
+          setSystemMessage(`Channels (${connected.length}/${all.length} connected):\n${info || '  (none registered)'}`);
           break;
+        }
+
+        case 'model':
+          if (args.trim()) {
+            cerebrum.setModel(args.trim());
+            setCurrentModel(args.trim());
+            setSystemMessage(`Model switched to: ${args.trim()}`);
+          } else {
+            setSystemMessage(`Current model: ${currentModel}`);
+          }
+          break;
+
+        case 'provider':
+          if (args.trim()) {
+            cerebrum.setProvider(args.trim());
+            setCurrentProvider(args.trim());
+            setSystemMessage(`Provider switched to: ${args.trim()}`);
+          } else {
+            setSystemMessage(`Current provider: ${currentProvider}`);
+          }
+          break;
+
+        case 'agents': {
+          const mgr = orchestrator.getSubAgentManager();
+          if (!mgr) {
+            setSystemMessage('Sub-agents are not enabled.');
+            break;
+          }
+          const summary = mgr.getSummary();
+          const agents = mgr.listAgents();
+          const lines = [
+            `Agents: ${summary.total} total, ${summary.running} running, ${summary.completed} completed, ${summary.failed} failed`,
+          ];
+          for (const a of agents.slice(0, 10)) {
+            const elapsed = Math.round((Date.now() - a.spawnedAt) / 1000);
+            lines.push(`  [${a.status}] ${a.label ?? a.id} - ${a.task.slice(0, 60)} (${elapsed}s)`);
+          }
+          setSystemMessage(lines.join('\n'));
+          break;
+        }
+
+        case 'memory': {
+          const memPath = join(
+            config.hippocampus.directory.replace('~', homedir()),
+            'MEMORY.md',
+          );
+          try {
+            if (existsSync(memPath)) {
+              const content = readFileSync(memPath, 'utf-8');
+              setSystemMessage(`--- MEMORY.md ---\n${content.slice(0, 2000)}`);
+            } else {
+              setSystemMessage('No MEMORY.md found.');
+            }
+          } catch {
+            setSystemMessage('Failed to read MEMORY.md');
+          }
+          break;
+        }
+
+        case 'skills': {
+          const skills = skillRegistry.list();
+          if (skills.length === 0) {
+            setSystemMessage('No skills loaded.');
+          } else {
+            const lines = skills.map((s) => {
+              const emoji = s.metadata?.cereworker?.emoji ?? '';
+              return `  ${emoji} ${s.name} - ${s.description}`;
+            });
+            setSystemMessage(`Loaded skills (${skills.length}):\n${lines.join('\n')}`);
+          }
+          break;
+        }
+
+        case 'config': {
+          const lines = [
+            `Provider: ${currentProvider}`,
+            `Model: ${currentModel}`,
+            `Temperature: ${config.cerebrum.temperature}`,
+            `Max steps: ${config.cerebrum.maxSteps}`,
+            `Cerebellum: ${config.cerebellum.enabled ? 'enabled' : 'disabled'}`,
+            `Hippocampus: ${config.hippocampus.enabled ? config.hippocampus.directory : 'disabled'}`,
+            `Sub-agents: ${config.subAgents.enabled ? `max ${config.subAgents.maxConcurrent}` : 'disabled'}`,
+            `Logging: ${config.logging.level}${config.logging.file ? ` -> ${config.logging.file}` : ''}`,
+          ];
+          setSystemMessage(`Configuration:\n${lines.map((l) => `  ${l}`).join('\n')}`);
+          break;
+        }
+
+        case 'conversations': {
+          const store = orchestrator.getConversationStore();
+          const convs = store.list().slice(0, 20);
+          if (convs.length === 0) {
+            setSystemMessage('No conversations found.');
+          } else {
+            const activeId = orchestrator.getActiveConversationId();
+            const lines = convs.map((c) => {
+              const date = new Date(c.updatedAt).toLocaleString();
+              const preview = store.getPreview(c.id)?.slice(0, 50) ?? '(empty)';
+              const marker = c.id === activeId ? ' *' : '';
+              return `  ${c.id.slice(0, 8)}${marker} | ${date} | ${preview}`;
+            });
+            setSystemMessage(`Conversations (${convs.length}):\n${lines.join('\n')}`);
+          }
+          break;
+        }
+
+        case 'resume': {
+          const targetId = args.trim();
+          if (!targetId) {
+            setSystemMessage('Usage: /resume <conversation-id>');
+            break;
+          }
+          // Support partial IDs
+          const store = orchestrator.getConversationStore();
+          const convs = store.list();
+          const match = convs.find((c) => c.id.startsWith(targetId));
+          if (!match) {
+            setSystemMessage(`No conversation found starting with "${targetId}"`);
+            break;
+          }
+          if (orchestrator.resumeConversation(match.id)) {
+            setSystemMessage(`Resumed conversation ${match.id.slice(0, 8)} (${store.getMessages(match.id).length} messages)`);
+          } else {
+            setSystemMessage(`Failed to resume conversation ${targetId}`);
+          }
+          break;
+        }
+
+        case 'auto': {
+          const arg = args.trim().toLowerCase();
+          if (arg === 'on') {
+            setAutoMode(true);
+            orchestrator.setAutoMode(true);
+            setSystemMessage('Auto mode ENABLED. Commands execute without approval. Cerebellum pre-screens destructive operations.');
+          } else if (arg === 'off') {
+            setAutoMode(false);
+            orchestrator.setAutoMode(false);
+            setSystemMessage('Auto mode DISABLED. Unknown commands require approval.');
+          } else {
+            setSystemMessage(`Auto mode: ${autoMode ? 'ON' : 'OFF'}. Usage: /auto [on|off]`);
+          }
+          break;
+        }
+
+        case 'nodes': {
+          const gwMode = config.gateway.mode;
+          if (gwMode === 'gateway' && gatewayServer) {
+            const nodes = gatewayServer.listNodes();
+            if (nodes.length === 0) {
+              setSystemMessage('No nodes connected.');
+            } else {
+              const lines = nodes.map((n) => {
+                const elapsed = Math.round((Date.now() - n.connectedAt) / 1000);
+                return `  ${n.nodeId} (${n.status}, ${n.capabilities.length} tools, ${elapsed}s)`;
+              });
+              setSystemMessage(`Connected nodes (${nodes.length}):\n${lines.join('\n')}`);
+            }
+          } else if (gwMode === 'node' && gatewayClient) {
+            setSystemMessage(`Node mode: ${gatewayClient.isConnected() ? 'connected' : 'disconnected'} to ${config.gateway.gatewayUrl}`);
+          } else {
+            setSystemMessage('Gateway not active. Set gateway.mode in config to "gateway" or "node".');
+          }
+          break;
+        }
+
+        case 'auth': {
+          const authProvider = args.trim() || 'openai';
+          setSystemMessage(`Run 'cereworker auth ${authProvider}' from your terminal to authenticate via OAuth.`);
+          break;
+        }
+
+        case 'finetune':
+          orchestrator.triggerFineTune()
+            .then(() => setSystemMessage('Fine-tuning started.'))
+            .catch((err: Error) => setSystemMessage(`Fine-tune error: ${err.message}`));
+          break;
+
+        case 'stop':
+          orchestrator.emergencyStop();
+          gatewayServer?.emergencyStopAll();
+          setSystemMessage('Emergency stop triggered. All operations aborted.');
+          break;
+
+        case 'help':
+          setSystemMessage(
+            `Available commands:
+  /model [name]         Show or switch the current model
+  /provider [name]      Show or switch the current provider
+  /agents               Show sub-agent summary
+  /memory               Show MEMORY.md contents
+  /skills               List loaded skills
+  /config               Show current configuration
+  /conversations        List past conversations
+  /resume <id>          Resume a past conversation
+  /channels             Show channel status
+  /nodes                Show connected nodes (gateway/node mode)
+  /auto [on|off]        Toggle auto mode (skip command approval)
+  /auth [provider]      OAuth authentication instructions
+  /finetune             Manually trigger fine-tuning
+  /stop                 Emergency stop (works during streaming)
+  /clear                Start a new conversation
+  /help                 Show this help
+  /quit                 Exit CereWorker`,
+          );
+          break;
+
         default:
+          setSystemMessage(`Unknown command: /${command}. Type /help for available commands.`);
           break;
       }
     },
-    [orchestrator, channelManager, exit],
+    [orchestrator, channelManager, cerebrum, skillRegistry, exit, config, currentModel, currentProvider, autoMode, gatewayServer, gatewayClient],
   );
+
+  // Clear system message after a delay
+  useEffect(() => {
+    if (!systemMessage) return;
+    const timer = setTimeout(() => setSystemMessage(null), 15_000);
+    return () => clearTimeout(timer);
+  }, [systemMessage]);
 
   return (
     <Box flexDirection="column" height="100%">
       <StatusBar
-        provider={config.cerebrum.defaultProvider}
-        model={config.cerebrum.defaultModel}
+        provider={currentProvider}
+        model={currentModel}
         cerebellumStatus={cerebellumStatus}
         isStreaming={isStreaming}
         channelCount={channelCount}
+        autoMode={autoMode}
+        gatewayMode={config.gateway.mode}
+        gatewayNodeCount={gatewayNodeCount}
+        gatewayConnected={gatewayClient?.isConnected() ?? false}
+        gatewayUrl={config.gateway.gatewayUrl}
+        finetuneActive={finetune.active}
+        finetuneProgress={finetune.progress}
       />
       <ChatView
         messages={messages}
@@ -173,6 +342,11 @@ export function App({ config }: AppProps) {
         isStreaming={isStreaming}
         activeToolCall={activeToolCall}
       />
+      {systemMessage && (
+        <Box paddingX={1} borderStyle="single" borderColor="gray">
+          <Text color="gray">{systemMessage}</Text>
+        </Box>
+      )}
       {error && (
         <Box paddingX={1}>
           <Text color="red">Error: {error}</Text>

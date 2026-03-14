@@ -1,5 +1,6 @@
 import { App as SlackApp, type SlackEventMiddlewareArgs } from '@slack/bolt';
 import type { ChannelPlugin, MessageHandler, OutboundMessage, InboundMessage } from '../types.js';
+import { chunkMarkdown, CHANNEL_LIMITS } from '../chunking.js';
 
 export interface SlackChannelConfig {
   botToken: string;
@@ -11,6 +12,7 @@ export interface SlackChannelConfig {
 export function createSlackChannel(config: SlackChannelConfig): ChannelPlugin {
   let app: SlackApp | null = null;
   let connected = false;
+  const limit = CHANNEL_LIMITS.slack;
 
   return {
     id: 'slack',
@@ -38,10 +40,13 @@ export function createSlackChannel(config: SlackChannelConfig): ChannelPlugin {
 
         const response = await handler(inbound);
         if (response) {
-          await say({
-            text: response,
-            thread_ts: inbound.threadId ?? message.ts,
-          });
+          const chunks = chunkMarkdown(response, limit);
+          for (const chunk of chunks) {
+            await say({
+              text: chunk,
+              thread_ts: inbound.threadId ?? message.ts,
+            });
+          }
         }
       });
 
@@ -58,11 +63,14 @@ export function createSlackChannel(config: SlackChannelConfig): ChannelPlugin {
 
     async send(msg: OutboundMessage) {
       if (!app) throw new Error('Slack not started');
-      await app.client.chat.postMessage({
-        channel: msg.to,
-        text: msg.text,
-        thread_ts: msg.threadId,
-      });
+      const chunks = chunkMarkdown(msg.text, limit);
+      for (const chunk of chunks) {
+        await app.client.chat.postMessage({
+          channel: msg.to,
+          text: chunk,
+          thread_ts: msg.threadId,
+        });
+      }
     },
 
     isAllowed(senderId: string) {

@@ -51,6 +51,35 @@ class CerebellumInference:
     def is_loaded(self) -> bool:
         return self._loaded
 
+    def apply_adapter(self, adapter_path: str) -> None:
+        """Load and merge a LoRA adapter into the current model."""
+        if not self._loaded:
+            logger.error("Cannot apply adapter: model not loaded")
+            return
+
+        from peft import PeftModel
+
+        logger.info(f"Applying adapter from {adapter_path}")
+        self.model = PeftModel.from_pretrained(self.model, adapter_path)
+        self.model = self.model.merge_and_unload()
+        logger.info("Adapter merged successfully")
+
+    def reload(self, model_path: str) -> None:
+        """Reload the model from a full checkpoint (for full fine-tune)."""
+        logger.info(f"Reloading model from {model_path}")
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_path, trust_remote_code=True
+        )
+        self.model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            torch_dtype="auto",
+            device_map="auto",
+            trust_remote_code=True,
+        )
+        logger.info("Model reloaded successfully")
+
     def should_run_task(
         self,
         description: str,

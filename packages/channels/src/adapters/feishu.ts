@@ -1,5 +1,6 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import type { ChannelPlugin, MessageHandler, OutboundMessage, InboundMessage } from '../types.js';
+import { chunkMarkdown, CHANNEL_LIMITS } from '../chunking.js';
 
 export interface FeishuChannelConfig {
   appId: string;
@@ -69,14 +70,17 @@ export function createFeishuChannel(config: FeishuChannelConfig): ChannelPlugin 
           const response = await messageHandler(inbound);
           if (response && client) {
             const chatId = message.chat_id as string;
-            await client.im.message.create({
-              params: { receive_id_type: 'chat_id' },
-              data: {
-                receive_id: chatId,
-                msg_type: 'text',
-                content: JSON.stringify({ text: response }),
-              },
-            });
+            const chunks = chunkMarkdown(response, CHANNEL_LIMITS.feishu);
+            for (const chunk of chunks) {
+              await client.im.message.create({
+                params: { receive_id_type: 'chat_id' },
+                data: {
+                  receive_id: chatId,
+                  msg_type: 'text',
+                  content: JSON.stringify({ text: chunk }),
+                },
+              });
+            }
           }
         },
       });
@@ -101,14 +105,17 @@ export function createFeishuChannel(config: FeishuChannelConfig): ChannelPlugin 
 
     async send(msg: OutboundMessage) {
       if (!client) throw new Error('Feishu not started');
-      await client.im.message.create({
-        params: { receive_id_type: 'chat_id' },
-        data: {
-          receive_id: msg.to,
-          msg_type: 'text',
-          content: JSON.stringify({ text: msg.text }),
-        },
-      });
+      const chunks = chunkMarkdown(msg.text, CHANNEL_LIMITS.feishu);
+      for (const chunk of chunks) {
+        await client.im.message.create({
+          params: { receive_id_type: 'chat_id' },
+          data: {
+            receive_id: msg.to,
+            msg_type: 'text',
+            content: JSON.stringify({ text: chunk }),
+          },
+        });
+      }
     },
 
     isAllowed(senderId: string) {

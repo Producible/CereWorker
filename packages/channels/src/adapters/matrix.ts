@@ -1,5 +1,6 @@
 import sdk from 'matrix-js-sdk';
 import type { ChannelPlugin, MessageHandler, OutboundMessage, InboundMessage } from '../types.js';
+import { chunkMarkdown, CHANNEL_LIMITS } from '../chunking.js';
 
 export interface MatrixChannelConfig {
   homeserver: string;
@@ -42,7 +43,10 @@ export function createMatrixChannel(config: MatrixChannelConfig): ChannelPlugin 
 
         const response = await handler(inbound);
         if (response) {
-          await client!.sendTextMessage(room.roomId, response);
+          const chunks = chunkMarkdown(response, CHANNEL_LIMITS.matrix);
+          for (const chunk of chunks) {
+            await client!.sendTextMessage(room.roomId, chunk);
+          }
         }
       });
 
@@ -59,7 +63,10 @@ export function createMatrixChannel(config: MatrixChannelConfig): ChannelPlugin 
 
     async send(msg: OutboundMessage) {
       if (!client) throw new Error('Matrix not started');
-      await client.sendTextMessage(msg.to, msg.text);
+      const chunks = chunkMarkdown(msg.text, CHANNEL_LIMITS.matrix);
+      for (const chunk of chunks) {
+        await client.sendTextMessage(msg.to, chunk);
+      }
     },
 
     isAllowed(senderId: string) {

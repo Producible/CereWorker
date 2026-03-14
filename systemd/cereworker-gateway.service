@@ -1,0 +1,26 @@
+[Unit]
+Description=CereWorker Gateway Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/cereworker serve
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Config at ~/.cereworker/config.yaml with gateway.mode: gateway
+Environment=NODE_ENV=production
+
+# Health check: curl -sf http://localhost:18800/status
+# (GatewayServer built-in status endpoint)
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.cereworker
+
+[Install]
+WantedBy=multi-user.target

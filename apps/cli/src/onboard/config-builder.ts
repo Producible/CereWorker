@@ -30,6 +30,17 @@ export function buildConfig(params: BuildConfigParams): Record<string, unknown> 
         model: params.cerebrum.model,
       },
     };
+  } else if (params.cerebrum.auth === 'oauth') {
+    const providerKey = params.cerebrum.provider;
+    cerebrum.providers = {
+      [providerKey]: {
+        auth: 'oauth',
+        oauth: {
+          clientId: params.cerebrum.oauthClientId,
+          ...(params.cerebrum.oauthClientSecret ? { clientSecret: params.cerebrum.oauthClientSecret } : {}),
+        },
+      },
+    };
   } else if (params.cerebrum.apiKey) {
     const providerKey = params.cerebrum.provider;
     let apiKeyValue: string;

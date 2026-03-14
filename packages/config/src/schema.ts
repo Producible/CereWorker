@@ -4,6 +4,14 @@ const providerConfigSchema = z.object({
   apiKey: z.string().optional(),
   baseUrl: z.string().optional(),
   models: z.array(z.string()).optional(),
+  auth: z.enum(['apikey', 'oauth']).default('apikey'),
+  oauth: z
+    .object({
+      clientId: z.string().optional(),
+      clientSecret: z.string().optional(),
+      callbackPort: z.number().default(18888),
+    })
+    .optional(),
 });
 
 export const configSchema = z.object({
@@ -26,6 +34,14 @@ export const configSchema = z.object({
         .default({}),
       maxSteps: z.number().default(10),
       temperature: z.number().default(0.7),
+      contextWindow: z.number().default(128000),
+      compaction: z
+        .object({
+          enabled: z.boolean().default(true),
+          threshold: z.number().default(0.8),
+          keepRecentMessages: z.number().default(10),
+        })
+        .default({}),
     })
     .default({}),
 
@@ -71,6 +87,7 @@ export const configSchema = z.object({
           denyList: z.array(z.string()).default(['rm -rf /']),
           timeout: z.number().default(30000),
           maxOutputSize: z.number().default(102400),
+          autoMode: z.boolean().default(false),
         })
         .default({}),
       fileOps: z
@@ -157,6 +174,13 @@ export const configSchema = z.object({
     })
     .default({}),
 
+  logging: z
+    .object({
+      level: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+      file: z.string().optional(),
+    })
+    .default({}),
+
   tui: z
     .object({
       theme: z.enum(['dark', 'light', 'auto']).default('auto'),
@@ -168,6 +192,20 @@ export const configSchema = z.object({
     .object({
       directories: z.array(z.string()).default([]),
       enabled: z.array(z.string()).default([]),
+    })
+    .default({}),
+
+  gateway: z
+    .object({
+      enabled: z.boolean().default(false),
+      mode: z.enum(['gateway', 'node', 'standalone']).default('standalone'),
+      port: z.number().default(18800),
+      token: z.string().optional(),
+      invokeTimeoutMs: z.number().default(60000),
+      pingIntervalMs: z.number().default(30000),
+      gatewayUrl: z.string().optional(),
+      nodeId: z.string().optional(),
+      capabilities: z.array(z.string()).default([]),
     })
     .default({}),
 });

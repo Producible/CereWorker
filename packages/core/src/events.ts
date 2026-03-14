@@ -16,6 +16,17 @@ export type OrchestratorEvent =
   | { type: 'agent:completed'; agentId: string; result: string }
   | { type: 'agent:failed'; agentId: string; error: string }
   | { type: 'agent:health'; actions: AgentHealthAction[] }
+  | { type: 'exec:approval-required'; command: string }
+  | { type: 'exec:blocked'; command: string; reason: string }
+  | { type: 'emergency:stop' }
+  | { type: 'node:connected'; nodeId: string; capabilities: string[] }
+  | { type: 'node:disconnected'; nodeId: string; reason: string }
+  | { type: 'node:invoke'; nodeId: string; tool: string; id: string }
+  | { type: 'node:invoke-result'; nodeId: string; id: string; isError: boolean }
+  | { type: 'finetune:start'; jobId: string }
+  | { type: 'finetune:progress'; jobId: string; progress: number; loss: number }
+  | { type: 'finetune:complete'; jobId: string; checkpointPath: string }
+  | { type: 'finetune:error'; jobId: string; error: string }
   | { type: 'error'; error: Error };
 
 type EventHandler<T> = (event: T) => void;

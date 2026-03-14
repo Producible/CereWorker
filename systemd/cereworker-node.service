@@ -1,0 +1,25 @@
+[Unit]
+Description=CereWorker Node Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/cereworker serve
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Config at ~/.cereworker/config.yaml with gateway.mode: node
+Environment=NODE_ENV=production
+
+# Health check: curl -sf http://localhost:18800/healthz
+
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.cereworker
+
+[Install]
+WantedBy=multi-user.target

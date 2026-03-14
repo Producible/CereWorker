@@ -95,7 +95,7 @@ export class SubAgentManager {
     // Initialize empty MEMORY.md for the agent
     writeFileSync(join(memoryDir, 'MEMORY.md'), '', 'utf-8');
 
-    const conversation = new ConversationStore();
+    const conversation = new ConversationStore(join(agentDir, 'conversations.db'));
     const conv = conversation.create();
 
     const instance: SubAgentInstance = {

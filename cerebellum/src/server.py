@@ -17,6 +17,7 @@ from src.inference import CerebellumInference
 from src.heartbeat import HeartbeatEngine
 from src.verification import ToolVerifier
 from src.agent_monitor import AgentMonitor
+from src.finetune import FineTuneEngine
 
 # These will be generated from proto/cerebellum.proto
 from src.proto import cerebellum_pb2, cerebellum_pb2_grpc
@@ -32,11 +33,13 @@ class CerebellumServicer(cerebellum_pb2_grpc.CerebellumServicer):
         heartbeat: HeartbeatEngine,
         verifier: ToolVerifier,
         agent_monitor: AgentMonitor,
+        finetune: FineTuneEngine,
         start_time: float,
     ):
         self.heartbeat = heartbeat
         self.verifier = verifier
         self.agent_monitor = agent_monitor
+        self.finetune = finetune
         self.start_time = start_time
         self.inference = heartbeat.inference
         self._last_agent_actions = []
@@ -232,6 +235,60 @@ class CerebellumServicer(cerebellum_pb2_grpc.CerebellumServicer):
 
         return response
 
+    async def IngestTrainingData(self, request, context):
+        """Receive training pairs for fine-tuning."""
+        pairs = [
+            {
+                "instruction": p.instruction,
+                "response": p.response,
+                "source": p.source,
+                "created_at": p.created_at,
+            }
+            for p in request.pairs
+        ]
+        total = self.finetune.ingest(pairs)
+        logger.info(f"Ingested {len(pairs)} training pairs, {total} total pending")
+        return cerebellum_pb2.IngestResponse(total_pending=total)
+
+    async def StartFineTune(self, request, context):
+        """Start a fine-tuning job in the background."""
+        inference = self.inference
+
+        def on_complete(checkpoint_path: str, method: str):
+            if method == "full":
+                inference.reload(checkpoint_path)
+            else:
+                inference.apply_adapter(checkpoint_path)
+
+        job = self.finetune.start(
+            method=request.method or "auto",
+            epochs=request.epochs or 3,
+            lr=request.learning_rate or 2e-4,
+            batch_size=request.batch_size or 4,
+            on_complete=on_complete,
+        )
+        return cerebellum_pb2.FineTuneResponse(
+            job_id=job.job_id,
+            started=job.status == "running",
+            error=job.error,
+        )
+
+    async def GetFineTuneStatus(self, request, context):
+        """Return current fine-tune job status."""
+        job = self.finetune.get_status()
+        return cerebellum_pb2.FineTuneStatusResponse(
+            status=job.status,
+            job_id=job.job_id,
+            progress=job.progress,
+            current_step=job.current_step,
+            total_steps=job.total_steps,
+            current_loss=job.current_loss,
+            error=job.error,
+            checkpoint_path=job.checkpoint_path,
+            started_at=int(job.started_at),
+            completed_at=int(job.completed_at),
+        )
+
 
 async def serve(
     port: int = 50051,
@@ -258,10 +315,16 @@ async def serve(
     stall_threshold = int(os.environ.get("AGENT_STALL_THRESHOLD", "120"))
     agent_monitor = AgentMonitor(inference, stall_threshold)
 
+    data_dir = os.environ.get("DATA_DIR", "/data")
+    checkpoint_dir = os.environ.get("CHECKPOINT_DIR", "/checkpoints")
+    finetune_engine = FineTuneEngine(model_path, checkpoint_dir, data_dir)
+
     start_time = time.time()
 
     server = aio.server(futures.ThreadPoolExecutor(max_workers=4))
-    servicer = CerebellumServicer(heartbeat, verifier, agent_monitor, start_time)
+    servicer = CerebellumServicer(
+        heartbeat, verifier, agent_monitor, finetune_engine, start_time
+    )
     cerebellum_pb2_grpc.add_CerebellumServicer_to_server(servicer, server)
 
     listen_addr = f"[::]:{port}"

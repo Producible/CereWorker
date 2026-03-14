@@ -1,10 +1,10 @@
 {
   "name": "@cereworker/cerebellum-client",
-  "version": "0.3.0",
+  "version": "26.313.8",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "files": ["dist"],
+  "files": ["dist", "proto"],
   "publishConfig": {
     "access": "public"
   },

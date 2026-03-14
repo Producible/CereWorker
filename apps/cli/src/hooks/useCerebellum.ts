@@ -1,9 +1,22 @@
 import { useState, useEffect } from 'react';
 import type { Orchestrator, CerebellumStatus, TaskAction } from '@cereworker/core';
 
+export interface FineTuneInfo {
+  active: boolean;
+  jobId: string;
+  progress: number;
+  loss: number;
+}
+
 export function useCerebellum(orchestrator: Orchestrator) {
   const [status, setStatus] = useState<CerebellumStatus | null>(null);
   const [lastActions, setLastActions] = useState<TaskAction[]>([]);
+  const [finetune, setFinetune] = useState<FineTuneInfo>({
+    active: false,
+    jobId: '',
+    progress: 0,
+    loss: 0,
+  });
 
   useEffect(() => {
     const unsubs: Array<() => void> = [];
@@ -20,8 +33,32 @@ export function useCerebellum(orchestrator: Orchestrator) {
       }),
     );
 
+    unsubs.push(
+      orchestrator.on('finetune:start', ({ jobId }) => {
+        setFinetune({ active: true, jobId, progress: 0, loss: 0 });
+      }),
+    );
+
+    unsubs.push(
+      orchestrator.on('finetune:progress', ({ jobId, progress, loss }) => {
+        setFinetune({ active: true, jobId, progress, loss });
+      }),
+    );
+
+    unsubs.push(
+      orchestrator.on('finetune:complete', () => {
+        setFinetune((prev) => ({ ...prev, active: false, progress: 1 }));
+      }),
+    );
+
+    unsubs.push(
+      orchestrator.on('finetune:error', () => {
+        setFinetune((prev) => ({ ...prev, active: false }));
+      }),
+    );
+
     return () => unsubs.forEach((u) => u());
   }, [orchestrator]);
 
-  return { status, lastActions };
+  return { status, lastActions, finetune };
 }

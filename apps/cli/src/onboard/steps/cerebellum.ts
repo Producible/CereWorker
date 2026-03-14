@@ -1,6 +1,10 @@
 import { execSync } from 'node:child_process';
 import { totalmem } from 'node:os';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
 import { clack, guardCancel } from '../prompter.js';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export interface CerebellumResult {
   enabled: boolean;
@@ -179,7 +183,32 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
 
   // Docker
   if (!hw.hasDocker) {
-    clack.log.warn('Docker not found. Install Docker to use the Cerebellum container.');
+    const installDocker = guardCancel(
+      await clack.confirm({
+        message: 'Docker not found. Install Docker now?',
+        initialValue: true,
+      }),
+    );
+
+    if (installDocker) {
+      const setupScript = resolve(__dirname, '..', '..', '..', 'scripts', 'setup.sh');
+      clack.log.info('Installing Docker...');
+      try {
+        execSync(`bash "${setupScript}" --docker`, { stdio: 'inherit' });
+        // Re-check after install
+        try {
+          execSync('which docker', { stdio: 'pipe' });
+          hw.hasDocker = true;
+          clack.log.success('Docker installed successfully.');
+        } catch {
+          clack.log.warn('Docker was installed but may require a re-login to work.');
+        }
+      } catch {
+        clack.log.warn('Docker installation failed. Install it manually to use the Cerebellum container.');
+      }
+    } else {
+      clack.log.warn('Skipped. Install Docker manually to use the Cerebellum container.');
+    }
   }
 
   const dockerAutoStart = guardCancel(

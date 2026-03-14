@@ -1,5 +1,6 @@
 import { Telegraf, type Context } from 'telegraf';
 import type { ChannelPlugin, MessageHandler, OutboundMessage, InboundMessage } from '../types.js';
+import { chunkMarkdown, CHANNEL_LIMITS } from '../chunking.js';
 
 export interface TelegramChannelConfig {
   token: string;
@@ -9,6 +10,7 @@ export interface TelegramChannelConfig {
 export function createTelegramChannel(config: TelegramChannelConfig): ChannelPlugin {
   let bot: Telegraf | null = null;
   let connected = false;
+  const limit = CHANNEL_LIMITS.telegram;
 
   return {
     id: 'telegram',
@@ -34,8 +36,7 @@ export function createTelegramChannel(config: TelegramChannelConfig): ChannelPlu
 
         const response = await handler(inbound);
         if (response) {
-          // Telegram has a 4096 char limit per message
-          const chunks = chunkText(response, 4096);
+          const chunks = chunkMarkdown(response, limit);
           for (const chunk of chunks) {
             await ctx.reply(chunk, {
               reply_parameters: { message_id: message.message_id },
@@ -62,7 +63,7 @@ export function createTelegramChannel(config: TelegramChannelConfig): ChannelPlu
 
     async send(msg: OutboundMessage) {
       if (!bot) throw new Error('Telegram not started');
-      const chunks = chunkText(msg.text, 4096);
+      const chunks = chunkMarkdown(msg.text, limit);
       for (const chunk of chunks) {
         await bot.telegram.sendMessage(msg.to, chunk, {
           reply_parameters: msg.replyToId
@@ -81,21 +82,4 @@ export function createTelegramChannel(config: TelegramChannelConfig): ChannelPlu
       return connected;
     },
   };
-}
-
-function chunkText(text: string, limit: number): string[] {
-  if (text.length <= limit) return [text];
-  const chunks: string[] = [];
-  let remaining = text;
-  while (remaining.length > 0) {
-    if (remaining.length <= limit) {
-      chunks.push(remaining);
-      break;
-    }
-    let breakAt = remaining.lastIndexOf('\n', limit);
-    if (breakAt <= 0) breakAt = limit;
-    chunks.push(remaining.slice(0, breakAt));
-    remaining = remaining.slice(breakAt).trimStart();
-  }
-  return chunks;
 }
