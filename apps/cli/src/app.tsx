@@ -3,6 +3,7 @@ import { Box, Text, useApp } from 'ink';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readFileSync, existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { configureLogger } from '@cereworker/core';
 import type { CereWorkerConfig } from '@cereworker/config';
 import { GatewayServer, GatewayNodeClient } from '@cereworker/gateway';
@@ -13,6 +14,9 @@ import { InputBar } from './components/InputBar.js';
 import { useChat } from './hooks/useChat.js';
 import { useCerebellum } from './hooks/useCerebellum.js';
 
+const require = createRequire(import.meta.url);
+const { version: APP_VERSION } = require('../package.json');
+
 interface AppProps {
   config: CereWorkerConfig;
   resumeConversationId?: string;
@@ -22,6 +26,7 @@ export function App({ config, resumeConversationId }: AppProps) {
   const { exit } = useApp();
   const [channelCount, setChannelCount] = useState(0);
   const [systemMessage, setSystemMessage] = useState<string | null>(null);
+  const [stickyMessage, setStickyMessage] = useState(false);
   const [currentProvider, setCurrentProvider] = useState(config.cerebrum.defaultProvider);
   const [currentModel, setCurrentModel] = useState(config.cerebrum.defaultModel);
   const [autoMode, setAutoMode] = useState(config.tools.shell.autoMode);
@@ -88,6 +93,8 @@ export function App({ config, resumeConversationId }: AppProps) {
 
   const handleSubmit = useCallback(
     (text: string) => {
+      setStickyMessage(false);
+      setSystemMessage(null);
       orchestrator.sendMessage(text);
     },
     [orchestrator],
@@ -95,12 +102,14 @@ export function App({ config, resumeConversationId }: AppProps) {
 
   const handleCommand = useCallback(
     (command: string, args: string) => {
+      // Clear any sticky system message from previous command
+      setStickyMessage(false);
+
       switch (command) {
         case 'quit':
         case 'exit':
-          orchestrator.stop();
-          channelManager.stopAll();
           exit();
+          service.shutdown().finally(() => process.exit(0));
           break;
 
         case 'clear':
@@ -205,6 +214,7 @@ export function App({ config, resumeConversationId }: AppProps) {
           const store = orchestrator.getConversationStore();
           const convs = store.list().slice(0, 20);
           if (convs.length === 0) {
+            setStickyMessage(false);
             setSystemMessage('No conversations found.');
           } else {
             const activeId = orchestrator.getActiveConversationId();
@@ -214,6 +224,7 @@ export function App({ config, resumeConversationId }: AppProps) {
               const marker = c.id === activeId ? ' *' : '';
               return `  ${c.id.slice(0, 8)}${marker} | ${date} | ${preview}`;
             });
+            setStickyMessage(true);
             setSystemMessage(`Conversations (${convs.length}):\n${lines.join('\n')}`);
           }
           break;
@@ -225,6 +236,7 @@ export function App({ config, resumeConversationId }: AppProps) {
             const store = orchestrator.getConversationStore();
             const convs = store.list().slice(0, 20);
             if (convs.length === 0) {
+              setStickyMessage(false);
               setSystemMessage('No conversations to resume.');
             } else {
               const activeId = orchestrator.getActiveConversationId();
@@ -234,6 +246,7 @@ export function App({ config, resumeConversationId }: AppProps) {
                 const marker = c.id === activeId ? ' *' : '';
                 return `  ${c.id.slice(0, 8)}${marker} | ${date} | ${preview}`;
               });
+              setStickyMessage(true);
               setSystemMessage(`Pick a conversation to resume with /resume <id>:\n${lines.join('\n')}`);
             }
             break;
@@ -337,15 +350,15 @@ export function App({ config, resumeConversationId }: AppProps) {
           break;
       }
     },
-    [orchestrator, channelManager, cerebrum, skillRegistry, exit, config, currentModel, currentProvider, autoMode, gatewayServer, gatewayClient],
+    [service, orchestrator, channelManager, cerebrum, skillRegistry, exit, config, currentModel, currentProvider, autoMode, gatewayServer, gatewayClient],
   );
 
-  // Clear system message after a delay
+  // Clear system message after a delay (skip sticky messages like /resume lists)
   useEffect(() => {
-    if (!systemMessage) return;
+    if (!systemMessage || stickyMessage) return;
     const timer = setTimeout(() => setSystemMessage(null), 15_000);
     return () => clearTimeout(timer);
-  }, [systemMessage]);
+  }, [systemMessage, stickyMessage]);
 
   return (
     <Box flexDirection="column" height="100%">
@@ -368,6 +381,7 @@ export function App({ config, resumeConversationId }: AppProps) {
         streamingContent={streamingContent}
         isStreaming={isStreaming}
         activeToolCall={activeToolCall}
+        version={APP_VERSION}
       />
       {systemMessage && (
         <Box paddingX={1} borderStyle="single" borderColor="gray">

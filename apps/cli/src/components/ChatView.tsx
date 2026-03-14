@@ -1,12 +1,14 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import type { Message } from '@cereworker/core';
+import { Banner } from './Banner.js';
 
 interface ChatViewProps {
   messages: Message[];
   streamingContent: string;
   isStreaming: boolean;
   activeToolCall: string | null;
+  version: string;
 }
 
 function MessageBlock({ message }: { message: Message }) {
@@ -52,9 +54,12 @@ function MessageBlock({ message }: { message: Message }) {
   );
 }
 
-export function ChatView({ messages, streamingContent, isStreaming, activeToolCall }: ChatViewProps) {
+export function ChatView({ messages, streamingContent, isStreaming, activeToolCall, version }: ChatViewProps) {
+  const showBanner = messages.length === 0 && !isStreaming;
+
   return (
     <Box flexDirection="column" flexGrow={1} paddingX={1}>
+      {showBanner && <Banner version={version} />}
       {messages.map((msg) => (
         <MessageBlock key={msg.id} message={msg} />
       ))}

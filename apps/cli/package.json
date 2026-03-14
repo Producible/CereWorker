@@ -1,6 +1,6 @@
 {
   "name": "@cereworker/cli",
-  "version": "26.314.4",
+  "version": "26.314.5",
   "type": "module",
   "bin": {
     "cereworker": "dist/index.js"
@@ -23,7 +23,8 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "generate:logo": "tsx scripts/generate-logo.ts"
   },
   "dependencies": {
     "@cereworker/core": "workspace:*",
@@ -42,6 +43,7 @@
   },
   "devDependencies": {
     "@types/react": "^18.3.0",
+    "sharp": "^0.33.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.3"
   }

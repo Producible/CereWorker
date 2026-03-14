@@ -84,4 +84,51 @@ describe('TypedEventEmitter', () => {
     expect(h1).not.toHaveBeenCalled();
     expect(h2).toHaveBeenCalledOnce();
   });
+
+  // --- New event types (v26.314+) ---
+
+  it('handles finetune:start event with jobId', () => {
+    const emitter = new TypedEventEmitter();
+    const handler = vi.fn();
+    emitter.on('finetune:start', handler);
+    emitter.emit({ type: 'finetune:start', jobId: 'ft-abc' });
+    expect(handler).toHaveBeenCalledWith({ type: 'finetune:start', jobId: 'ft-abc' });
+  });
+
+  it('handles finetune:progress event with progress and loss', () => {
+    const emitter = new TypedEventEmitter();
+    const handler = vi.fn();
+    emitter.on('finetune:progress', handler);
+    emitter.emit({ type: 'finetune:progress', jobId: 'ft-1', progress: 0.42, loss: 1.23 });
+    expect(handler).toHaveBeenCalledWith({ type: 'finetune:progress', jobId: 'ft-1', progress: 0.42, loss: 1.23 });
+  });
+
+  it('handles finetune:complete event with checkpoint', () => {
+    const emitter = new TypedEventEmitter();
+    const handler = vi.fn();
+    emitter.on('finetune:complete', handler);
+    emitter.emit({ type: 'finetune:complete', jobId: 'ft-1', checkpointPath: '/checkpoints/ft-1' });
+    expect(handler).toHaveBeenCalledWith({
+      type: 'finetune:complete', jobId: 'ft-1', checkpointPath: '/checkpoints/ft-1',
+    });
+  });
+
+  it('handles finetune:error event', () => {
+    const emitter = new TypedEventEmitter();
+    const handler = vi.fn();
+    emitter.on('finetune:error', handler);
+    emitter.emit({ type: 'finetune:error', jobId: 'ft-1', error: 'OOM' });
+    expect(handler).toHaveBeenCalledWith({ type: 'finetune:error', jobId: 'ft-1', error: 'OOM' });
+  });
+
+  it('handles conversation:resumed event with messages array', () => {
+    const emitter = new TypedEventEmitter();
+    const handler = vi.fn();
+    emitter.on('conversation:resumed', handler);
+    const msgs = [{ id: 'm1', role: 'user' as const, content: 'hi', timestamp: 1 }];
+    emitter.emit({ type: 'conversation:resumed', conversationId: 'c1', messages: msgs });
+    expect(handler).toHaveBeenCalledWith({
+      type: 'conversation:resumed', conversationId: 'c1', messages: msgs,
+    });
+  });
 });

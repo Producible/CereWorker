@@ -2,7 +2,7 @@ import { GLOBAL_CONFIG, writeConfig } from '@cereworker/config';
 import { clack, guardCancel } from '../prompter.js';
 import { buildConfig, type BuildConfigParams } from '../config-builder.js';
 
-function getChannelInstructions(channelId: string): string {
+export function getChannelInstructions(channelId: string): string {
   switch (channelId) {
     case 'telegram':
       return 'Telegram: Message @BotFather → /newbot → copy token → set webhook or use polling';
