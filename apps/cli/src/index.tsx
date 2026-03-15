@@ -54,6 +54,23 @@ async function main() {
     return;
   }
 
+  if (subcommand === 'approve') {
+    const code = process.argv[3];
+    if (!code) {
+      console.error('Usage: cereworker approve <CODE>');
+      process.exit(1);
+    }
+    const { runApprove } = await import('./pairing.js');
+    await runApprove(code);
+    return;
+  }
+
+  if (subcommand === 'pairing') {
+    const { runPairingList } = await import('./pairing.js');
+    await runPairingList();
+    return;
+  }
+
   if (subcommand === 'serve') {
     const { runHeadlessService } = await import('./serve.js');
     const config = loadConfig();

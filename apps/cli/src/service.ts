@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Orchestrator, ConversationStore, createLogger } from '@cereworker/core';
+import { Orchestrator, ConversationStore, PairingStore, createLogger } from '@cereworker/core';
 import { CerebellumClient } from '@cereworker/cerebellum-client';
 import type { ToolDefinition } from '@cereworker/core';
 import { CerebrumProvider } from '@cereworker/cerebrum';
@@ -39,6 +39,7 @@ export interface ServiceInstance {
   channelManager: ChannelManager;
   cerebrum: CerebrumProvider;
   skillRegistry: SkillRegistry;
+  pairingStore: PairingStore;
   startChannels(): Promise<number>;
   startCerebellum(): Promise<boolean>;
   startGateway(callbacks?: GatewayCallbacks): Promise<GatewayHandles>;
@@ -179,6 +180,23 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
   // Create channel manager
   const channelManager = createChannelManager(config);
 
+  // Create pairing store and wire to channel manager
+  const pairingStore = new PairingStore();
+  channelManager.setDmPolicy(config.channels.dmPolicy);
+  channelManager.setPairingProvider(pairingStore);
+
+  // Seed approved users from static allowFrom config
+  const channelConfigs = config.channels as Record<string, unknown>;
+  for (const [channelId, channelCfg] of Object.entries(channelConfigs)) {
+    if (channelId === 'dmPolicy' || typeof channelCfg !== 'object' || !channelCfg) continue;
+    const cfg = channelCfg as { allowFrom?: string[] };
+    if (cfg.allowFrom) {
+      for (const userId of cfg.allowFrom) {
+        pairingStore.addConfigUser(channelId, userId);
+      }
+    }
+  }
+
   // Wire channels to orchestrator
   channelManager.setHandler(async (msg) => {
     await orchestrator.sendMessage(msg.text);
@@ -188,6 +206,9 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
   });
 
   orchestrator.start();
+
+  // Expire stale pairing codes every 5 minutes
+  const pairingExpiryInterval = setInterval(() => pairingStore.expireStale(), 5 * 60 * 1000);
 
   // Track handles for cleanup
   let cerebellumClient: CerebellumClient | null = null;
@@ -270,6 +291,8 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     }
   }
 
+  const GHCR_IMAGE = 'ghcr.io/producible/cereworker-cerebellum:latest';
+
   function ensureImageExists(): boolean {
     const image = config.cerebellum.docker.image;
     try {
@@ -279,10 +302,21 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
       return false;
     }
 
-    // Image doesn't exist — try to build it
+    // Image doesn't exist — try to pull from registry first (works for npm-installed CLI)
+    log.info('Pulling Cerebellum Docker image (first run, this may take a few minutes)...');
+    try {
+      execSync(`${dockerPrefix}docker pull ${GHCR_IMAGE}`, { stdio: 'pipe', timeout: 600_000 });
+      execSync(`${dockerPrefix}docker tag ${GHCR_IMAGE} ${image}`, { stdio: 'pipe' });
+      log.info('Cerebellum image pulled from registry');
+      return true;
+    } catch {
+      log.info('Registry pull failed, trying local build...');
+    }
+
+    // Fall back to building from compose file (works in source repo checkout)
     const composeFile = findComposeFile();
     if (composeFile) {
-      log.info('Building Cerebellum Docker image (first run, this may take a few minutes)...');
+      log.info('Building Cerebellum Docker image from source...');
       try {
         execSync(`${dockerPrefix}docker compose -f "${composeFile}" build cerebellum`, {
           cwd: dirname(composeFile),
@@ -294,9 +328,9 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
       } catch (err) {
         log.warn('Failed to build Cerebellum image', { error: (err as Error).message });
       }
-    } else {
-      log.warn(`Docker image "${image}" not found. Build it with: docker compose build cerebellum`);
     }
+
+    log.warn(`Could not pull or build Cerebellum image. Run: docker pull ${GHCR_IMAGE}`);
     return false;
   }
 
@@ -557,6 +591,8 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
       gatewayClient.disconnect();
       gatewayClient = null;
     }
+    clearInterval(pairingExpiryInterval);
+    pairingStore.close();
     channelManager.stopAll();
     orchestrator.stop();
     log.info('Service shut down');
@@ -567,6 +603,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     channelManager,
     cerebrum,
     skillRegistry,
+    pairingStore,
     startChannels,
     startCerebellum,
     startGateway,

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ChannelManager } from './manager.js';
-import type { ChannelPlugin, OutboundMessage } from './types.js';
+import { ChannelManager, type PairingProvider } from './manager.js';
+import type { ChannelPlugin, OutboundMessage, MessageHandler, InboundMessage } from './types.js';
 
 function mockChannel(id: string, connected = true): ChannelPlugin {
   return {
@@ -115,5 +115,127 @@ describe('ChannelManager', () => {
     expect(ch1.send).toHaveBeenCalledWith(msg);
     expect(ch2.send).toHaveBeenCalledWith(msg);
     expect(ch3.send).not.toHaveBeenCalled();
+  });
+});
+
+// --- Pairing integration tests ---
+
+function createCapturingChannel(id: string, allowFrom: string[] = []): ChannelPlugin & { lastHandler: MessageHandler | null } {
+  const plugin: ChannelPlugin & { lastHandler: MessageHandler | null } = {
+    id,
+    meta: { name: id, emoji: id[0] },
+    lastHandler: null,
+    async start(handler: MessageHandler) {
+      plugin.lastHandler = handler;
+    },
+    async stop() {},
+    async send() {},
+    isAllowed(senderId: string) {
+      if (allowFrom.length === 0) return true;
+      return allowFrom.includes(senderId);
+    },
+    isConnected() { return true; },
+  };
+  return plugin;
+}
+
+function createInbound(channelId: string, senderId: string, senderName?: string): InboundMessage {
+  return { channelId, senderId, senderName, text: 'hello', timestamp: Date.now() };
+}
+
+describe('ChannelManager pairing', () => {
+  it('issues pairing challenge for unknown user in pairing mode', async () => {
+    const manager = new ChannelManager();
+    const channel = createCapturingChannel('telegram');
+    const handler = vi.fn().mockResolvedValue('bot reply');
+    const pairing: PairingProvider = {
+      isApproved: vi.fn().mockReturnValue(false),
+      createPairingCode: vi.fn().mockReturnValue('ABCD-1234'),
+    };
+
+    manager.register(channel);
+    manager.setHandler(handler);
+    manager.setDmPolicy('pairing');
+    manager.setPairingProvider(pairing);
+    await manager.startAll();
+
+    const result = await channel.lastHandler!(createInbound('telegram', '999'));
+    expect(handler).not.toHaveBeenCalled();
+    expect(pairing.createPairingCode).toHaveBeenCalledWith('telegram', '999', undefined);
+    expect(result).toContain('ABCD-1234');
+    expect(result).toContain('cereworker approve');
+  });
+
+  it('allows approved user through in pairing mode', async () => {
+    const manager = new ChannelManager();
+    const channel = createCapturingChannel('telegram');
+    const handler = vi.fn().mockResolvedValue('bot reply');
+    const pairing: PairingProvider = {
+      isApproved: vi.fn().mockReturnValue(true),
+      createPairingCode: vi.fn(),
+    };
+
+    manager.register(channel);
+    manager.setHandler(handler);
+    manager.setDmPolicy('pairing');
+    manager.setPairingProvider(pairing);
+    await manager.startAll();
+
+    const msg = createInbound('telegram', '12345');
+    const result = await channel.lastHandler!(msg);
+    expect(handler).toHaveBeenCalledWith(msg);
+    expect(result).toBe('bot reply');
+  });
+
+  it('silently drops when rate limited in pairing mode', async () => {
+    const manager = new ChannelManager();
+    const channel = createCapturingChannel('telegram');
+    const handler = vi.fn();
+    const pairing: PairingProvider = {
+      isApproved: vi.fn().mockReturnValue(false),
+      createPairingCode: vi.fn().mockReturnValue(null),
+    };
+
+    manager.register(channel);
+    manager.setHandler(handler);
+    manager.setDmPolicy('pairing');
+    manager.setPairingProvider(pairing);
+    await manager.startAll();
+
+    const result = await channel.lastHandler!(createInbound('telegram', '999'));
+    expect(handler).not.toHaveBeenCalled();
+    expect(result).toBeUndefined();
+  });
+
+  it('uses legacy isAllowed in open mode', async () => {
+    const manager = new ChannelManager();
+    const channel = createCapturingChannel('telegram', ['12345']);
+    const handler = vi.fn().mockResolvedValue('ok');
+
+    manager.register(channel);
+    manager.setHandler(handler);
+    manager.setDmPolicy('open');
+    await manager.startAll();
+
+    await channel.lastHandler!(createInbound('telegram', '12345'));
+    expect(handler).toHaveBeenCalledTimes(1);
+
+    const result = await channel.lastHandler!(createInbound('telegram', '999'));
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(result).toBeUndefined();
+  });
+
+  it('allows everyone in open mode with empty allowFrom', async () => {
+    const manager = new ChannelManager();
+    const channel = createCapturingChannel('telegram', []);
+    const handler = vi.fn().mockResolvedValue('ok');
+
+    manager.register(channel);
+    manager.setHandler(handler);
+    manager.setDmPolicy('open');
+    await manager.startAll();
+
+    await channel.lastHandler!(createInbound('telegram', '999'));
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 });

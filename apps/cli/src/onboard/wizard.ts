@@ -17,7 +17,9 @@ export async function runOnboardingWizard(): Promise<void> {
       initialValue: false,
     }),
   );
-  const channels = configureChannels ? await channelsStep() : [];
+  const channelsResult = configureChannels
+    ? await channelsStep()
+    : { channels: [], dmPolicy: 'pairing' as const };
 
   const configureGateway = guardCancel(
     await clack.confirm({
@@ -32,7 +34,8 @@ export async function runOnboardingWizard(): Promise<void> {
   await summaryStep({
     cerebrum,
     cerebellum,
-    channels,
+    channels: channelsResult.channels,
+    dmPolicy: channelsResult.dmPolicy,
     gateway,
     existingConfig: welcome.existingRaw,
   });

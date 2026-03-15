@@ -8,6 +8,7 @@ export type {
   MessageHandler,
 } from './types.js';
 export { ChannelManager } from './manager.js';
+export type { PairingProvider } from './manager.js';
 export { createChannelManager } from './factory.js';
 export { chunkMarkdown, CHANNEL_LIMITS } from './chunking.js';
 export { createSlackChannel, type SlackChannelConfig } from './adapters/slack.js';

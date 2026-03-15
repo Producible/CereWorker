@@ -6,6 +6,11 @@ export interface ChannelSetup {
   allowFrom?: string[];
 }
 
+export interface ChannelsResult {
+  channels: ChannelSetup[];
+  dmPolicy: 'pairing' | 'open';
+}
+
 interface ChannelDef {
   id: string;
   label: string;
@@ -238,23 +243,49 @@ async function validateToken(channelId: string, credentials: Record<string, stri
 }
 
 async function resolveTelegramUsername(token: string, username: string): Promise<string | null> {
+  const bare = username.startsWith('@') ? username.slice(1) : username;
+  const atName = `@${bare}`;
+
+  // Try getChat first (works if bot has interacted with the user before)
   try {
-    const chatId = username.startsWith('@') ? username : `@${username}`;
     const res = await fetchWithTimeout(
-      `https://api.telegram.org/bot${token}/getChat?chat_id=${encodeURIComponent(chatId)}`,
+      `https://api.telegram.org/bot${token}/getChat?chat_id=${encodeURIComponent(atName)}`,
       {},
     );
     const data = await res.json() as { ok: boolean; result?: { id?: number } };
     if (data.ok && data.result?.id) {
       return String(data.result.id);
     }
-    return null;
   } catch {
-    return null;
+    // Fall through to getUpdates
   }
+
+  // Fallback: search recent updates for a matching username
+  try {
+    const res = await fetchWithTimeout(
+      `https://api.telegram.org/bot${token}/getUpdates?limit=100`,
+      {},
+    );
+    const data = await res.json() as {
+      ok: boolean;
+      result?: Array<{ message?: { from?: { id: number; username?: string } } }>;
+    };
+    if (data.ok && data.result) {
+      for (const update of data.result) {
+        const from = update.message?.from;
+        if (from?.username?.toLowerCase() === bare.toLowerCase()) {
+          return String(from.id);
+        }
+      }
+    }
+  } catch {
+    // Give up
+  }
+
+  return null;
 }
 
-export async function channelsStep(): Promise<ChannelSetup[]> {
+export async function channelsStep(): Promise<ChannelsResult> {
   const selected = guardCancel(
     await clack.multiselect({
       message: 'Enable messaging channels (space to select, enter to confirm)',
@@ -267,8 +298,19 @@ export async function channelsStep(): Promise<ChannelSetup[]> {
   ) as string[];
 
   if (selected.length === 0) {
-    return [];
+    return { channels: [], dmPolicy: 'pairing' };
   }
+
+  // Ask about DM policy before channel-specific config
+  const dmPolicy = guardCancel(
+    await clack.select({
+      message: 'How should the bot handle messages from unknown users?',
+      options: [
+        { value: 'pairing', label: 'Pairing (recommended)', hint: 'Unknown users get a code, you approve via CLI' },
+        { value: 'open', label: 'Open', hint: 'Anyone can message the bot' },
+      ],
+    }),
+  ) as 'pairing' | 'open';
 
   const setups: ChannelSetup[] = [];
 
@@ -371,9 +413,12 @@ export async function channelsStep(): Promise<ChannelSetup[]> {
 
     // Allowlist prompt
     let allowFrom: string[] | undefined;
+    const allowlistHint = dmPolicy === 'pairing'
+      ? 'Pre-approve specific user IDs? (they skip pairing)'
+      : 'Restrict who can message the bot? (recommended)';
     const wantAllowlist = guardCancel(
       await clack.confirm({
-        message: 'Restrict who can message the bot? (recommended)',
+        message: allowlistHint,
         initialValue: false,
       }),
     );
@@ -403,12 +448,26 @@ export async function channelsStep(): Promise<ChannelSetup[]> {
             const resolved: string[] = [];
             for (const entry of allowFrom) {
               if (entry.startsWith('@') || /^[a-zA-Z]/.test(entry)) {
-                const numericId = await resolveTelegramUsername(token, entry);
+                let numericId = await resolveTelegramUsername(token, entry);
+                if (!numericId) {
+                  clack.log.warn(
+                    `Could not resolve ${entry} — the user must message the bot first.`,
+                  );
+                  const retry = guardCancel(
+                    await clack.confirm({
+                      message: `Have ${entry} send any message to the bot, then confirm to retry`,
+                      initialValue: true,
+                    }),
+                  );
+                  if (retry) {
+                    numericId = await resolveTelegramUsername(token, entry);
+                  }
+                }
                 if (numericId) {
                   clack.log.info(`${entry} → ${numericId}`);
                   resolved.push(numericId);
                 } else {
-                  clack.log.warn(`Could not resolve ${entry}, keeping as-is`);
+                  clack.log.warn(`Still could not resolve ${entry}, keeping as-is`);
                   resolved.push(entry);
                 }
               } else {
@@ -428,5 +487,5 @@ export async function channelsStep(): Promise<ChannelSetup[]> {
     });
   }
 
-  return setups;
+  return { channels: setups, dmPolicy };
 }

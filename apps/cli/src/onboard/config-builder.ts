@@ -9,6 +9,7 @@ export interface BuildConfigParams {
   cerebrum: CerebrumResult;
   cerebellum: CerebellumResult;
   channels: ChannelSetup[];
+  dmPolicy?: 'pairing' | 'open';
   gateway?: GatewayResult;
   existingConfig?: Record<string, unknown> | null;
 }
@@ -106,8 +107,12 @@ export function buildConfig(params: BuildConfigParams): Record<string, unknown> 
   }
 
   // Channels
-  if (params.channels.length > 0) {
+  if (params.channels.length > 0 || params.dmPolicy) {
     const channels: Record<string, unknown> = {};
+
+    if (params.dmPolicy) {
+      channels.dmPolicy = params.dmPolicy;
+    }
 
     for (const ch of params.channels) {
       const channelConfig: Record<string, unknown> = { enabled: true };

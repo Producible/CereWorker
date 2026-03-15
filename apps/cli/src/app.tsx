@@ -322,6 +322,39 @@ export function App({ config, resumeConversationId }: AppProps) {
           setSystemMessage('Emergency stop triggered. All operations aborted.');
           break;
 
+        case 'approve': {
+          if (!args.trim()) {
+            setSystemMessage('Usage: /approve <CODE>');
+            break;
+          }
+          const result = service.pairingStore.approveCode(args.trim());
+          if (result.ok) {
+            const name = result.senderName ?? result.senderId;
+            setSystemMessage(`Approved: ${name} on ${result.channelId}`);
+          } else {
+            setSystemMessage(`Failed: ${result.error}`);
+          }
+          break;
+        }
+
+        case 'pairing': {
+          service.pairingStore.expireStale();
+          const pending = service.pairingStore.listPending();
+          if (pending.length === 0) {
+            setSystemMessage('No pending pairing requests.');
+          } else {
+            const lines = pending.map((req) => {
+              const name = req.senderName ?? req.senderId;
+              const ttl = Math.round((req.expiresAt - Date.now()) / 60000);
+              const code = `${req.code.slice(0, 4)}-${req.code.slice(4)}`;
+              return `  ${code}  ${req.channelId}  ${name}  expires in ${ttl}m`;
+            });
+            setStickyMessage(true);
+            setSystemMessage(`Pending pairing requests:\n${lines.join('\n')}\n\nApprove with: /approve <CODE>`);
+          }
+          break;
+        }
+
         case 'help':
           setSystemMessage(
             `Available commands:
@@ -335,6 +368,8 @@ export function App({ config, resumeConversationId }: AppProps) {
   /resume <id>          Resume a past conversation
   /channels             Show channel status
   /nodes                Show connected nodes (gateway/node mode)
+  /approve <code>       Approve a channel pairing request
+  /pairing              List pending pairing requests
   /auto [on|off]        Toggle auto mode (skip command approval)
   /auth [provider]      OAuth authentication instructions
   /finetune             Manually trigger fine-tuning
@@ -375,6 +410,7 @@ export function App({ config, resumeConversationId }: AppProps) {
         gatewayUrl={config.gateway.gatewayUrl}
         finetuneActive={finetune.active}
         finetuneProgress={finetune.progress}
+        dmPolicy={config.channels.dmPolicy}
       />
       <ChatView
         messages={messages}

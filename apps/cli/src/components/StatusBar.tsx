@@ -15,6 +15,7 @@ interface StatusBarProps {
   gatewayUrl?: string;
   finetuneActive?: boolean;
   finetuneProgress?: number;
+  dmPolicy?: 'pairing' | 'open';
 }
 
 export function StatusBar({
@@ -30,6 +31,7 @@ export function StatusBar({
   gatewayUrl,
   finetuneActive = false,
   finetuneProgress = 0,
+  dmPolicy = 'pairing',
 }: StatusBarProps) {
   return (
     <Box borderStyle="single" borderColor="gray" paddingX={1} justifyContent="space-between">
@@ -49,6 +51,9 @@ export function StatusBar({
           <Text color={gatewayConnected ? 'magenta' : 'yellow'}>
             [NODE{gatewayConnected ? '' : '?'}]
           </Text>
+        )}
+        {dmPolicy === 'pairing' && (
+          <Text color="green">[PAIR]</Text>
         )}
         {finetuneActive && (
           <Text color="blue">[FT {Math.round(finetuneProgress * 100)}%]</Text>

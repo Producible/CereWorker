@@ -102,6 +102,7 @@ export const configSchema = z.object({
 
   channels: z
     .object({
+      dmPolicy: z.enum(['pairing', 'open']).default('pairing'),
       slack: z
         .object({
           enabled: z.boolean().default(false),

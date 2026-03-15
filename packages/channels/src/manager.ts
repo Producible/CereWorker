@@ -1,12 +1,29 @@
 import type { ChannelPlugin, MessageHandler, OutboundMessage, ChannelId } from './types.js';
 
+export interface PairingProvider {
+  isApproved(channelId: string, senderId: string): boolean;
+  createPairingCode(channelId: string, senderId: string, senderName?: string): string | null;
+}
+
 export class ChannelManager {
   private channels = new Map<string, ChannelPlugin>();
   private handler: MessageHandler | null = null;
+  private dmPolicy: 'pairing' | 'open' = 'open';
+  private pairingProvider: PairingProvider | null = null;
 
   /** Set the global message handler (usually wired to the orchestrator) */
   setHandler(handler: MessageHandler): void {
     this.handler = handler;
+  }
+
+  /** Set the DM access policy */
+  setDmPolicy(policy: 'pairing' | 'open'): void {
+    this.dmPolicy = policy;
+  }
+
+  /** Set the pairing provider for pairing mode */
+  setPairingProvider(provider: PairingProvider): void {
+    this.pairingProvider = provider;
   }
 
   /** Register a channel plugin */
@@ -41,6 +58,22 @@ export class ChannelManager {
       this.list().map(async (channel) => {
         try {
           await channel.start(async (msg) => {
+            // Pairing mode: PairingStore is the single source of truth
+            if (this.dmPolicy === 'pairing' && this.pairingProvider) {
+              if (this.pairingProvider.isApproved(msg.channelId, msg.senderId)) {
+                return handler(msg);
+              }
+              // Issue pairing challenge
+              const code = this.pairingProvider.createPairingCode(
+                msg.channelId, msg.senderId, msg.senderName,
+              );
+              if (code) {
+                return `Access required. Your pairing code: ${code}\nAsk the bot owner to run: cereworker approve ${code}`;
+              }
+              return; // rate limited, silent drop
+            }
+
+            // Open mode: use legacy isAllowed behavior
             if (!channel.isAllowed(msg.senderId)) {
               return;
             }
