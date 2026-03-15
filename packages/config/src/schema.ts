@@ -74,6 +74,7 @@ export const configSchema = z.object({
         .object({
           autoStart: z.boolean().default(true),
           image: z.string().default('cereworker-cerebellum'),
+          composeFile: z.string().optional(),
         })
         .default({}),
     })

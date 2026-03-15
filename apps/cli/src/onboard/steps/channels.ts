@@ -3,6 +3,7 @@ import { clack, guardCancel } from '../prompter.js';
 export interface ChannelSetup {
   id: string;
   credentials: Record<string, string | { envRef: string }>;
+  allowFrom?: string[];
 }
 
 interface ChannelDef {
@@ -60,6 +61,199 @@ const CHANNEL_DEFS: ChannelDef[] = [
   },
 ];
 
+const SETUP_GUIDES: Record<string, string> = {
+  telegram: [
+    '1. Open Telegram and message @BotFather',
+    '2. Send /newbot and follow the prompts',
+    '3. Copy the bot token BotFather gives you',
+    '',
+    'Tip: set TELEGRAM_BOT_TOKEN env var to avoid storing in config.',
+  ].join('\n'),
+
+  discord: [
+    '1. Go to discord.com/developers/applications → New Application',
+    '2. Bot tab → Reset Token → copy the token',
+    '3. Enable "Message Content Intent" under Privileged Gateway Intents',
+    '4. OAuth2 → URL Generator → select "bot" scope + "Send Messages" permission',
+    '5. Open the generated URL to invite the bot to your server',
+  ].join('\n'),
+
+  slack: [
+    '1. Go to api.slack.com/apps → Create New App → "From a manifest"',
+    '2. Paste the manifest shown below',
+    '3. Install to workspace',
+    '4. Copy Bot Token (xoxb-...) from OAuth & Permissions',
+    '5. Copy App Token (xapp-...) from Basic Information → App-Level Tokens',
+  ].join('\n'),
+
+  matrix: [
+    '1. Create a bot account on your homeserver (e.g., via Element)',
+    '2. Log in → Settings → Help & About → Access Token → copy',
+    '3. Note the full user ID (e.g., @bot:matrix.org)',
+  ].join('\n'),
+
+  feishu: [
+    '1. Go to open.feishu.cn → Create Custom App',
+    '2. Bot tab → enable bot capability',
+    '3. Event Subscriptions → add "im.message.receive_v1"',
+    '4. Copy the App ID and App Secret from Credentials',
+  ].join('\n'),
+
+  wechat: [
+    'WeChat bots use puppet providers (e.g., wechaty-puppet-wechat4u).',
+    'See wechaty.js.org for puppet setup instructions.',
+  ].join('\n'),
+};
+
+export function buildSlackManifest(): object {
+  return {
+    display_information: {
+      name: 'CereWorker',
+      description: 'CereWorker AI assistant',
+    },
+    features: {
+      bot_user: {
+        display_name: 'CereWorker',
+        always_online: true,
+      },
+    },
+    oauth_config: {
+      scopes: {
+        bot: [
+          'chat:write',
+          'channels:history',
+          'im:history',
+          'app_mentions:read',
+          'users:read',
+        ],
+      },
+    },
+    settings: {
+      event_subscriptions: {
+        bot_events: ['app_mention', 'message.im', 'message.channels'],
+      },
+      socket_mode_enabled: true,
+      org_deploy_enabled: false,
+    },
+  };
+}
+
+interface ValidationResult {
+  ok: boolean;
+  display?: string;
+  error?: string;
+}
+
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 5000): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function validateToken(channelId: string, credentials: Record<string, string | { envRef: string }>): Promise<ValidationResult | null> {
+  const getPlain = (key: string): string | null => {
+    const val = credentials[key];
+    return typeof val === 'string' ? val : null;
+  };
+
+  try {
+    switch (channelId) {
+      case 'telegram': {
+        const token = getPlain('token');
+        if (!token) return null;
+        const res = await fetchWithTimeout(`https://api.telegram.org/bot${token}/getMe`, {});
+        const data = await res.json() as { ok: boolean; result?: { username?: string } };
+        if (data.ok && data.result?.username) {
+          return { ok: true, display: `@${data.result.username}` };
+        }
+        return { ok: false, error: 'Invalid token or API error' };
+      }
+      case 'discord': {
+        const token = getPlain('token');
+        if (!token) return null;
+        const res = await fetchWithTimeout('https://discord.com/api/v10/users/@me', {
+          headers: { Authorization: `Bot ${token}` },
+        });
+        const data = await res.json() as { username?: string; message?: string };
+        if (data.username) {
+          return { ok: true, display: data.username };
+        }
+        return { ok: false, error: data.message ?? 'Invalid token' };
+      }
+      case 'slack': {
+        const token = getPlain('botToken');
+        if (!token) return null;
+        const res = await fetchWithTimeout('https://slack.com/api/auth.test', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json() as { ok: boolean; team?: string; error?: string };
+        if (data.ok && data.team) {
+          return { ok: true, display: data.team };
+        }
+        return { ok: false, error: data.error ?? 'Invalid token' };
+      }
+      case 'matrix': {
+        const token = getPlain('token');
+        const homeserver = getPlain('homeserver');
+        if (!token || !homeserver) return null;
+        const url = `${homeserver.replace(/\/$/, '')}/_matrix/client/r0/account/whoami`;
+        const res = await fetchWithTimeout(url, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json() as { user_id?: string; errcode?: string };
+        if (data.user_id) {
+          return { ok: true, display: data.user_id };
+        }
+        return { ok: false, error: data.errcode ?? 'Invalid token' };
+      }
+      case 'feishu': {
+        const appId = getPlain('appId');
+        const appSecret = getPlain('appSecret');
+        if (!appId || !appSecret) return null;
+        const res = await fetchWithTimeout(
+          'https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json; charset=utf-8' },
+            body: JSON.stringify({ app_id: appId, app_secret: appSecret }),
+          },
+        );
+        const data = await res.json() as { code?: number; msg?: string; tenant_access_token?: string };
+        if (data.code === 0 && data.tenant_access_token) {
+          return { ok: true, display: 'credentials verified' };
+        }
+        return { ok: false, error: data.msg ?? 'Invalid credentials' };
+      }
+      default:
+        return null;
+    }
+  } catch {
+    return { ok: false, error: 'Connection failed (timeout or network error)' };
+  }
+}
+
+async function resolveTelegramUsername(token: string, username: string): Promise<string | null> {
+  try {
+    const chatId = username.startsWith('@') ? username : `@${username}`;
+    const res = await fetchWithTimeout(
+      `https://api.telegram.org/bot${token}/getChat?chat_id=${encodeURIComponent(chatId)}`,
+      {},
+    );
+    const data = await res.json() as { ok: boolean; result?: { id?: number } };
+    if (data.ok && data.result?.id) {
+      return String(data.result.id);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function channelsStep(): Promise<ChannelSetup[]> {
   const selected = guardCancel(
     await clack.multiselect({
@@ -80,6 +274,19 @@ export async function channelsStep(): Promise<ChannelSetup[]> {
 
   for (const channelId of selected) {
     const def = CHANNEL_DEFS.find((d) => d.id === channelId)!;
+
+    // Show setup guide before asking for credentials
+    const guide = SETUP_GUIDES[channelId];
+    if (guide) {
+      clack.note(guide, `${def.label} Setup`);
+    }
+
+    // Show Slack manifest
+    if (channelId === 'slack') {
+      const manifest = buildSlackManifest();
+      clack.note(JSON.stringify(manifest, null, 2), 'Slack App Manifest');
+    }
+
     clack.log.step(`Configure ${def.label}`);
 
     const credentials: Record<string, string | { envRef: string }> = {};
@@ -150,7 +357,75 @@ export async function channelsStep(): Promise<ChannelSetup[]> {
       }
     }
 
-    setups.push({ id: channelId, credentials });
+    // Validate token
+    const spinner = clack.spinner();
+    spinner.start('Validating credentials...');
+    const validation = await validateToken(channelId, credentials);
+    spinner.stop(
+      validation === null
+        ? 'Validation skipped (env var reference)'
+        : validation.ok
+          ? `Verified: ${validation.display}`
+          : `Warning: ${validation.error} (continuing anyway)`,
+    );
+
+    // Allowlist prompt
+    let allowFrom: string[] | undefined;
+    const wantAllowlist = guardCancel(
+      await clack.confirm({
+        message: 'Restrict who can message the bot? (recommended)',
+        initialValue: false,
+      }),
+    );
+
+    if (wantAllowlist) {
+      const raw = guardCancel(
+        await clack.text({
+          message: 'Enter comma-separated user IDs or usernames',
+          placeholder: 'user1, user2, @username',
+          validate: (v) => (v.trim().length > 0 ? undefined : 'Enter at least one user'),
+        }),
+      ) as string;
+
+      allowFrom = raw.split(',').map((s) => s.trim()).filter(Boolean);
+
+      // Offer to resolve Telegram usernames to numeric IDs
+      if (channelId === 'telegram') {
+        const token = typeof credentials.token === 'string' ? credentials.token : null;
+        if (token && allowFrom.some((u) => u.startsWith('@') || /^[a-zA-Z]/.test(u))) {
+          const resolve = guardCancel(
+            await clack.confirm({
+              message: 'Resolve @usernames to numeric IDs via Telegram API?',
+              initialValue: true,
+            }),
+          );
+          if (resolve) {
+            const resolved: string[] = [];
+            for (const entry of allowFrom) {
+              if (entry.startsWith('@') || /^[a-zA-Z]/.test(entry)) {
+                const numericId = await resolveTelegramUsername(token, entry);
+                if (numericId) {
+                  clack.log.info(`${entry} → ${numericId}`);
+                  resolved.push(numericId);
+                } else {
+                  clack.log.warn(`Could not resolve ${entry}, keeping as-is`);
+                  resolved.push(entry);
+                }
+              } else {
+                resolved.push(entry);
+              }
+            }
+            allowFrom = resolved;
+          }
+        }
+      }
+    }
+
+    setups.push({
+      id: channelId,
+      credentials,
+      ...(allowFrom && allowFrom.length > 0 ? { allowFrom } : {}),
+    });
   }
 
   return setups;

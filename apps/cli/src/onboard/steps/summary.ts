@@ -5,17 +5,17 @@ import { buildConfig, type BuildConfigParams } from '../config-builder.js';
 export function getChannelInstructions(channelId: string): string {
   switch (channelId) {
     case 'telegram':
-      return 'Telegram: Message @BotFather → /newbot → copy token → set webhook or use polling';
+      return 'Telegram: CereWorker uses polling automatically. Message your bot to start chatting.';
     case 'discord':
-      return 'Discord: Create app at discord.com/developers → Bot tab → copy token → enable Message Content intent';
+      return 'Discord: Invite your bot using the OAuth2 URL from the Developer Portal.';
     case 'slack':
-      return 'Slack: Create app at api.slack.com/apps → OAuth → install to workspace → copy Bot Token';
+      return 'Slack: Socket Mode is enabled — no webhook or public URL needed. Just start CereWorker.';
     case 'matrix':
-      return 'Matrix: Create account on homeserver → get access token from Element settings';
+      return 'Matrix: Invite the bot to any room you want it to join.';
     case 'feishu':
-      return 'Feishu: Open platform → create bot → Event Subscriptions → copy App ID/Secret';
+      return 'Feishu: Approve the bot in your admin console before messaging it.';
     case 'wechat':
-      return 'WeChat: Register at mp.weixin.qq.com → get AppID/AppSecret → set server URL';
+      return 'WeChat: Start CereWorker and scan the QR code to link the bot.';
     default:
       return `${channelId}: See documentation for setup instructions`;
   }

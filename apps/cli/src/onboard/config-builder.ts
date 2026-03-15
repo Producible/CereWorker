@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import type { CerebrumResult } from './steps/cerebrum.js';
 import type { CerebellumResult } from './steps/cerebellum.js';
 import type { ChannelSetup } from './steps/channels.js';
@@ -9,6 +11,18 @@ export interface BuildConfigParams {
   channels: ChannelSetup[];
   gateway?: GatewayResult;
   existingConfig?: Record<string, unknown> | null;
+}
+
+function findComposeFileFromCwd(): string | null {
+  let dir = process.cwd();
+  for (let i = 0; i < 10; i++) {
+    const candidate = join(dir, 'docker-compose.yml');
+    if (existsSync(candidate)) return resolve(candidate);
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
 }
 
 function resolveCredentialValue(value: string | { envRef: string }): string {
@@ -74,9 +88,17 @@ export function buildConfig(params: BuildConfigParams): Record<string, unknown> 
       cerebellum.finetune = params.cerebellum.finetune;
     }
 
-    cerebellum.docker = {
+    const docker: Record<string, unknown> = {
       autoStart: params.cerebellum.dockerAutoStart ?? true,
     };
+
+    // Detect and store docker-compose.yml path so auto-start works from any cwd
+    const composeFile = findComposeFileFromCwd();
+    if (composeFile) {
+      docker.composeFile = composeFile;
+    }
+
+    cerebellum.docker = docker;
 
     config.cerebellum = cerebellum;
   } else {
@@ -92,6 +114,10 @@ export function buildConfig(params: BuildConfigParams): Record<string, unknown> 
 
       for (const [key, value] of Object.entries(ch.credentials)) {
         channelConfig[key] = resolveCredentialValue(value);
+      }
+
+      if (ch.allowFrom && ch.allowFrom.length > 0) {
+        channelConfig.allowFrom = ch.allowFrom;
       }
 
       channels[ch.id] = channelConfig;

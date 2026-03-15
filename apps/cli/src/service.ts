@@ -1,7 +1,8 @@
 import { execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Orchestrator, ConversationStore, createLogger } from '@cereworker/core';
 import { CerebellumClient } from '@cereworker/cerebellum-client';
 import type { ToolDefinition } from '@cereworker/core';
@@ -195,14 +196,37 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
   let gatewayClient: GatewayNodeClient | null = null;
 
   function findComposeFile(): string | null {
-    let dir = process.cwd();
-    for (let i = 0; i < 10; i++) {
-      const candidate = join(dir, 'docker-compose.yml');
-      if (existsSync(candidate)) return candidate;
-      const parent = dirname(dir);
-      if (parent === dir) break;
-      dir = parent;
+    // 1. Check config (saved during onboarding)
+    if (config.cerebellum.docker.composeFile) {
+      const configured = resolve(config.cerebellum.docker.composeFile);
+      if (existsSync(configured)) return configured;
     }
+
+    // 2. Walk up from cwd
+    const searchUp = (start: string): string | null => {
+      let dir = start;
+      for (let i = 0; i < 10; i++) {
+        const candidate = join(dir, 'docker-compose.yml');
+        if (existsSync(candidate)) return candidate;
+        const parent = dirname(dir);
+        if (parent === dir) break;
+        dir = parent;
+      }
+      return null;
+    };
+
+    const fromCwd = searchUp(process.cwd());
+    if (fromCwd) return fromCwd;
+
+    // 3. Walk up from the module's own location (works when cwd differs from project root)
+    try {
+      const moduleDir = dirname(fileURLToPath(import.meta.url));
+      const fromModule = searchUp(moduleDir);
+      if (fromModule) return fromModule;
+    } catch {
+      // import.meta.url unavailable in some bundled environments
+    }
+
     return null;
   }
 
