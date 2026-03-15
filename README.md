@@ -68,13 +68,25 @@ The **SubAgentManager** enables the Cerebrum to spawn independent workers for pa
 
 ## Quick Start
 
-### Prerequisites
+### One-Line Install
 
-- Node.js 22+
-- pnpm 9+ (for development)
-- Docker (for Cerebellum, optional)
+**Linux / macOS:**
 
-### Install from npm
+```bash
+curl -fsSL https://raw.githubusercontent.com/Producible/CereWorker/main/install.sh | bash
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/Producible/CereWorker/main/install.ps1 | iex
+```
+
+The installer detects your OS, installs Node.js if missing, installs CereWorker via npm, sets up optional dependencies (Docker, build tools), and launches the onboarding wizard.
+
+### Manual Install
+
+**Prerequisites:** Node.js 20+, Docker (optional, for Cerebellum)
 
 ```bash
 npm install -g @cereworker/cli

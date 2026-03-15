@@ -55,6 +55,11 @@ detect_os() {
       OS="macos"
       DISTRO="macos"
       ;;
+    MINGW*|MSYS*|CYGWIN*)
+      echo "Windows detected. Use the PowerShell installer instead:"
+      echo "  irm https://raw.githubusercontent.com/Producible/CereWorker/main/install.ps1 | iex"
+      exit 1
+      ;;
     *)
       echo "Unsupported OS: $(uname -s)"
       exit 1
