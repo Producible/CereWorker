@@ -27,7 +27,7 @@ export const configSchema = z.object({
           local: providerConfigSchema
             .extend({
               baseUrl: z.string().default('http://localhost:11434'),
-              model: z.string().default('llama3'),
+              model: z.string().default('llama3.3'),
             })
             .optional(),
         })

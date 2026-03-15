@@ -15,18 +15,27 @@ export interface CerebrumResult {
 
 const PROVIDER_MODELS: Record<string, { value: string; label: string; hint?: string }[]> = {
   anthropic: [
-    { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', hint: 'default, great balance' },
-    { value: 'claude-opus-4-6', label: 'Claude Opus 4.6', hint: 'most capable' },
+    { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', hint: 'default, best balance of speed and intelligence' },
+    { value: 'claude-opus-4-6', label: 'Claude Opus 4.6', hint: 'most capable, best for agents and coding' },
     { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5', hint: 'fastest, cheapest' },
+    { value: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5', hint: 'previous gen, proven' },
+    { value: 'claude-opus-4-5', label: 'Claude Opus 4.5', hint: 'previous gen Opus' },
   ],
   openai: [
-    { value: 'gpt-4o', label: 'GPT-4o', hint: 'default' },
-    { value: 'gpt-4o-mini', label: 'GPT-4o Mini', hint: 'faster, cheaper' },
-    { value: 'o3-mini', label: 'o3-mini', hint: 'reasoning model' },
+    { value: 'gpt-5.4', label: 'GPT-5.4', hint: 'default, frontier intelligence, 1M context' },
+    { value: 'gpt-5-mini', label: 'GPT-5 Mini', hint: 'fast, cost efficient, 400K context' },
+    { value: 'o3', label: 'o3', hint: 'most powerful reasoning model' },
+    { value: 'o4-mini', label: 'o4-mini', hint: 'efficient reasoning, half the cost of o3' },
+    { value: 'gpt-4.1', label: 'GPT-4.1', hint: '1M context, strong coding' },
+    { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini', hint: '1M context, fast' },
+    { value: 'gpt-4.1-nano', label: 'GPT-4.1 Nano', hint: '1M context, cheapest' },
   ],
   google: [
-    { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', hint: 'most capable' },
-    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', hint: 'faster' },
+    { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', hint: 'default, deep reasoning' },
+    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', hint: 'best price-performance, 1M context' },
+    { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite', hint: 'fastest, cheapest' },
+    { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro (Preview)', hint: 'next gen, advanced agentic' },
+    { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash (Preview)', hint: 'next gen, frontier-class' },
   ],
 };
 
@@ -176,8 +185,8 @@ export async function cerebrumStep(): Promise<CerebrumResult> {
     model = guardCancel(
       await clack.text({
         message: 'Model name',
-        initialValue: 'llama3',
-        placeholder: 'e.g., llama3, codellama, mistral',
+        initialValue: 'llama3.3',
+        placeholder: 'e.g., llama3.3, qwen3, codellama, mistral',
       }),
     ) as string;
   } else {
