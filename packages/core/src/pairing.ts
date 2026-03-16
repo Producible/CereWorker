@@ -61,18 +61,32 @@ export function normalizeCode(input: string): string {
   return input.replace(/[-\s]/g, '').toUpperCase();
 }
 
+function tryOpenDb(dbPath: string): SqliteDb | null {
+  try {
+    const Database = require('better-sqlite3');
+    return new Database(dbPath) as SqliteDb;
+  } catch {
+    return null;
+  }
+}
+
 export class PairingStore {
-  private db: SqliteDb;
+  private db: SqliteDb | null;
 
   constructor(dbPath?: string) {
-    const Database = require('better-sqlite3');
-    this.db = new Database(dbPath ?? DEFAULT_DB_PATH) as SqliteDb;
-    this.db.pragma('journal_mode = WAL');
-    this.ensureSchema();
+    const path = dbPath ?? DEFAULT_DB_PATH;
+    this.db = tryOpenDb(path);
+    if (this.db) {
+      this.db.pragma('journal_mode = WAL');
+      this.ensureSchema();
+      log.info('Opened pairing database', { path });
+    } else {
+      log.warn('better-sqlite3 not available — pairing will be disabled. Run "cereworker onboard" to install build tools.');
+    }
   }
 
   private ensureSchema(): void {
-    this.db.exec(`
+    this.db!.exec(`
       CREATE TABLE IF NOT EXISTS pairing_requests (
         code TEXT PRIMARY KEY,
         channelId TEXT NOT NULL,
@@ -98,6 +112,7 @@ export class PairingStore {
   }
 
   createPairingCode(channelId: string, senderId: string, senderName?: string): string | null {
+    if (!this.db) return null;
     this.expireStale();
 
     // Check for existing pending code for this sender+channel
@@ -144,6 +159,7 @@ export class PairingStore {
   }
 
   getPendingByCode(code: string): PairingRequest | null {
+    if (!this.db) return null;
     const normalized = normalizeCode(code);
     const row = this.db.prepare(
       `SELECT * FROM pairing_requests WHERE code = ? AND status = 'pending' AND expiresAt > ?`,
@@ -152,12 +168,14 @@ export class PairingStore {
   }
 
   listPending(): PairingRequest[] {
+    if (!this.db) return [];
     return this.db.prepare(
       `SELECT * FROM pairing_requests WHERE status = 'pending' AND expiresAt > ? ORDER BY createdAt DESC`,
     ).all(Date.now()) as PairingRequest[];
   }
 
   approveCode(code: string): ApprovalResult {
+    if (!this.db) return { ok: false, error: 'Pairing unavailable (database not available)' };
     const normalized = normalizeCode(code);
     this.expireStale();
 
@@ -195,6 +213,7 @@ export class PairingStore {
   }
 
   isApproved(channelId: string, senderId: string): boolean {
+    if (!this.db) return true;
     const row = this.db.prepare(
       `SELECT 1 FROM approved_users WHERE channelId = ? AND senderId = ?`,
     ).get(channelId, senderId);
@@ -202,6 +221,7 @@ export class PairingStore {
   }
 
   expireStale(): number {
+    if (!this.db) return 0;
     const result = this.db.prepare(
       `UPDATE pairing_requests SET status = 'expired' WHERE status = 'pending' AND expiresAt <= ?`,
     ).run(Date.now());
@@ -209,6 +229,7 @@ export class PairingStore {
   }
 
   addConfigUser(channelId: string, senderId: string): void {
+    if (!this.db) return;
     this.db.prepare(
       `INSERT OR IGNORE INTO approved_users (channelId, senderId, approvedAt, approvedVia)
        VALUES (?, ?, ?, 'config')`,
@@ -216,6 +237,6 @@ export class PairingStore {
   }
 
   close(): void {
-    this.db.close();
+    this.db?.close();
   }
 }

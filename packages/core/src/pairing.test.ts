@@ -190,4 +190,49 @@ describe('PairingStore', () => {
       expect(store.listPending()).toHaveLength(0);
     });
   });
+
+  describe('fallback when database unavailable', () => {
+    let noDbStore: PairingStore;
+
+    beforeEach(() => {
+      noDbStore = new PairingStore('/nonexistent/impossible/path.db');
+      // Force db to null to simulate missing better-sqlite3
+      (noDbStore as any).db = null;
+    });
+
+    afterEach(() => {
+      noDbStore.close();
+    });
+
+    it('isApproved returns true (fail open)', () => {
+      expect(noDbStore.isApproved('telegram', '12345')).toBe(true);
+    });
+
+    it('createPairingCode returns null', () => {
+      expect(noDbStore.createPairingCode('telegram', '12345')).toBeNull();
+    });
+
+    it('approveCode returns error', () => {
+      const result = noDbStore.approveCode('ABCD-1234');
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain('unavailable');
+    });
+
+    it('listPending returns empty array', () => {
+      expect(noDbStore.listPending()).toEqual([]);
+    });
+
+    it('getPendingByCode returns null', () => {
+      expect(noDbStore.getPendingByCode('ABCD-1234')).toBeNull();
+    });
+
+    it('expireStale returns 0', () => {
+      expect(noDbStore.expireStale()).toBe(0);
+    });
+
+    it('addConfigUser is a no-op', () => {
+      noDbStore.addConfigUser('telegram', '12345');
+      // Just verify it doesn't throw
+    });
+  });
 });
