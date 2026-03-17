@@ -72,17 +72,6 @@ function detectHardware(): HardwareInfo {
 }
 
 export async function cerebellumStep(): Promise<CerebellumResult> {
-  const enabled = guardCancel(
-    await clack.confirm({
-      message: 'Enable Cerebellum (local AI co-processor)?',
-      initialValue: true,
-    }),
-  );
-
-  if (!enabled) {
-    return { enabled: false };
-  }
-
   // Detect hardware
   const hw = detectHardware();
 
