@@ -1,8 +1,9 @@
 import { execSync } from 'node:child_process';
-import { totalmem } from 'node:os';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { totalmem, tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { clack, guardCancel } from '../prompter.js';
 
 const require = createRequire(import.meta.url);
@@ -229,9 +230,9 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
         execSync(`bash "${setupScript}" --build-tools`, { stdio: 'inherit' });
         clack.log.info('Rebuilding native modules...');
         execSync('npm rebuild better-sqlite3 -g', { stdio: 'inherit' });
-        // Re-check
+        // Re-check via child process (Node caches failed requires in the current process)
         try {
-          require('better-sqlite3');
+          execSync("node -e \"require('better-sqlite3')\"", { stdio: 'pipe' });
           hw.hasSqlite = true;
           clack.log.success('SQLite module rebuilt successfully.');
         } catch {
@@ -242,6 +243,51 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
       }
     } else {
       clack.log.warn('Skipped. You can run "cereworker setup --build-tools" later.');
+    }
+  }
+
+  // Build Cerebellum Docker image
+  if (hw.hasDocker) {
+    let hasImage = false;
+    try {
+      const out = execSync('docker images -q cereworker-cerebellum:latest', { stdio: 'pipe' }).toString().trim();
+      hasImage = !!out;
+    } catch {}
+
+    if (!hasImage) {
+      const buildImage = guardCancel(
+        await clack.confirm({
+          message: 'Build Cerebellum Docker image now? (takes a few minutes)',
+          initialValue: true,
+        }),
+      );
+
+      if (buildImage) {
+        const tmpDir = mkdtempSync(join(tmpdir(), 'cereworker-build-'));
+        try {
+          clack.log.info('Downloading Cerebellum source from GitHub...');
+          execSync(
+            `curl -sL https://github.com/Producible/CereWorker/archive/refs/heads/main.tar.gz | tar xz -C "${tmpDir}" --strip-components=1`,
+            { stdio: 'pipe', timeout: 120_000 },
+          );
+          clack.log.info('Building Docker image (this may take several minutes)...');
+          execSync(
+            `DOCKER_BUILDKIT=1 docker build -t cereworker-cerebellum:latest ` +
+            `--build-context proto="${tmpDir}/proto" ` +
+            `-f "${tmpDir}/cerebellum/Dockerfile" "${tmpDir}/cerebellum"`,
+            { stdio: 'inherit', timeout: 600_000 },
+          );
+          clack.log.success('Cerebellum Docker image built.');
+        } catch {
+          clack.log.warn('Failed to build image. You can retry with "cereworker onboard".');
+        } finally {
+          rmSync(tmpDir, { recursive: true, force: true });
+        }
+      } else {
+        clack.log.warn('Skipped. Run "cereworker onboard" later to build the image.');
+      }
+    } else {
+      clack.log.info('Cerebellum Docker image already exists.');
     }
   }
 

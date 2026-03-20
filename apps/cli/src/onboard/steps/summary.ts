@@ -69,16 +69,19 @@ export async function summaryStep(params: BuildConfigParams): Promise<void> {
 
   clack.note(lines.join('\n'), 'Summary');
 
-  const confirm = guardCancel(
-    await clack.confirm({
-      message: 'Write this config?',
-      initialValue: true,
-    }),
-  );
+  // Only ask for confirmation when updating existing config
+  if (params.existingConfig) {
+    const confirm = guardCancel(
+      await clack.confirm({
+        message: 'Overwrite existing config?',
+        initialValue: true,
+      }),
+    );
 
-  if (!confirm) {
-    clack.outro('Config not written. Run `cereworker onboard` again to restart.');
-    process.exit(0);
+    if (!confirm) {
+      clack.outro('Config not written. Run `cereworker onboard` again to restart.');
+      process.exit(0);
+    }
   }
 
   const config = buildConfig(params);

@@ -291,8 +291,6 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     }
   }
 
-  const GHCR_IMAGE = 'ghcr.io/producible/cereworker-cerebellum:latest';
-
   function ensureImageExists(): boolean {
     const image = config.cerebellum.docker.image;
     try {
@@ -300,17 +298,6 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
       if (exists) return true;
     } catch {
       return false;
-    }
-
-    // Image doesn't exist — try to pull from registry first (works for npm-installed CLI)
-    log.info('Pulling Cerebellum Docker image (first run, this may take a few minutes)...');
-    try {
-      execSync(`${dockerPrefix}docker pull ${GHCR_IMAGE}`, { stdio: 'pipe', timeout: 600_000 });
-      execSync(`${dockerPrefix}docker tag ${GHCR_IMAGE} ${image}`, { stdio: 'pipe' });
-      log.info('Cerebellum image pulled from registry');
-      return true;
-    } catch {
-      log.info('Registry pull failed, trying local build...');
     }
 
     // Fall back to building from compose file (works in source repo checkout)
@@ -330,7 +317,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
       }
     }
 
-    log.warn(`Could not pull or build Cerebellum image. Run: docker pull ${GHCR_IMAGE}`);
+    log.warn('Cerebellum image not found. Run "cereworker onboard" to build it.');
     return false;
   }
 
