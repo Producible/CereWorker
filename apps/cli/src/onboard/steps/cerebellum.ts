@@ -277,9 +277,17 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
 
   // Build Cerebellum Docker image
   if (hw.hasDocker) {
+    // Detect if docker requires sudo (user not in docker group / rootless not configured)
+    let dockerPrefix = '';
+    try {
+      execSync('docker info', { stdio: 'pipe', timeout: 10_000 });
+    } catch {
+      dockerPrefix = 'sudo ';
+    }
+
     let hasImage = false;
     try {
-      const out = execSync('docker images -q cereworker-cerebellum:latest', { stdio: 'pipe' }).toString().trim();
+      const out = execSync(`${dockerPrefix}docker images -q cereworker-cerebellum:latest`, { stdio: 'pipe' }).toString().trim();
       hasImage = !!out;
     } catch {}
 
@@ -292,6 +300,9 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
       );
 
       if (buildImage) {
+        if (dockerPrefix) {
+          clack.log.info('Docker requires elevated privileges. You may be prompted for your password.');
+        }
         const tmpDir = mkdtempSync(join(tmpdir(), 'cereworker-build-'));
         try {
           clack.log.info('Downloading Cerebellum source from GitHub...');
@@ -301,7 +312,7 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
           );
           clack.log.info('Building Docker image (this may take several minutes)...');
           execSync(
-            `DOCKER_BUILDKIT=1 docker build -t cereworker-cerebellum:latest ` +
+            `${dockerPrefix}DOCKER_BUILDKIT=1 docker build -t cereworker-cerebellum:latest ` +
             `--build-context proto="${tmpDir}/proto" ` +
             `-f "${tmpDir}/cerebellum/Dockerfile" "${tmpDir}/cerebellum"`,
             { stdio: 'inherit', timeout: 600_000 },
