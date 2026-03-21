@@ -45,7 +45,11 @@ function detectHardware(): HardwareInfo {
 
   let hasSqlite = false;
   try {
-    require('better-sqlite3');
+    // better-sqlite3 is a dependency of @cereworker/core, not cli.
+    // Resolve from core's location so pnpm strict mode doesn't block it.
+    const corePath = require.resolve('@cereworker/core');
+    const coreRequire = createRequire(corePath);
+    coreRequire('better-sqlite3');
     hasSqlite = true;
   } catch {}
 
@@ -229,10 +233,35 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
       try {
         execSync(`bash "${setupScript}" --build-tools`, { stdio: 'inherit' });
         clack.log.info('Rebuilding native modules...');
-        execSync('npm rebuild better-sqlite3 -g', { stdio: 'inherit' });
+
+        // Find the actual better-sqlite3 location (works for pnpm, npm global, npm local)
+        let sqliteDir: string | null = null;
+        try {
+          const corePath = require.resolve('@cereworker/core');
+          const coreRequire = createRequire(corePath);
+          const sqlitePath = coreRequire.resolve('better-sqlite3');
+          // Walk up to the package root (contains package.json)
+          let dir = dirname(sqlitePath);
+          for (let i = 0; i < 10; i++) {
+            try {
+              require('node:fs').accessSync(join(dir, 'package.json'));
+              sqliteDir = dir;
+              break;
+            } catch { dir = dirname(dir); }
+          }
+        } catch {}
+
+        if (sqliteDir) {
+          execSync(`cd "${sqliteDir}" && npx --yes node-gyp rebuild`, { stdio: 'inherit', timeout: 120_000 });
+        } else {
+          // Fallback: try global rebuild
+          execSync('npm rebuild better-sqlite3 -g', { stdio: 'inherit' });
+        }
+
         // Re-check via child process (Node caches failed requires in the current process)
         try {
-          execSync("node -e \"require('better-sqlite3')\"", { stdio: 'pipe' });
+          const corePath = require.resolve('@cereworker/core');
+          execSync(`node -e "const {createRequire}=require('module'); createRequire('${corePath}')('better-sqlite3')"`, { stdio: 'pipe' });
           hw.hasSqlite = true;
           clack.log.success('SQLite module rebuilt successfully.');
         } catch {
