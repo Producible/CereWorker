@@ -2,14 +2,23 @@
 import React from 'react';
 import { render, Text, Box } from 'ink';
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { loadConfig } from '@cereworker/config';
 import { App } from './app.js';
 
+const require = createRequire(import.meta.url);
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 async function main() {
+  // --version / -v
+  if (process.argv.includes('--version') || process.argv.includes('-v')) {
+    const { version } = require('../package.json');
+    console.log(version);
+    return;
+  }
+
   // Parse --debug flag from any position
   const debugFlag = process.argv.includes('--debug') || process.argv.includes('-d');
   if (debugFlag) {
