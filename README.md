@@ -157,6 +157,15 @@ pnpm start
 
 ### Start the Cerebellum (optional)
 
+The onboarding wizard (`cereworker onboard`) automatically pulls the Cerebellum Docker image. To start it manually:
+
+```bash
+docker pull cereworker/cerebellum
+docker run -d --name cereworker-cerebellum -p 50051:50051 cereworker/cerebellum
+```
+
+Or from source:
+
 ```bash
 docker compose up -d cerebellum
 ```
