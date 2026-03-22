@@ -1,4 +1,4 @@
-name: Test Cerebellum Image Build
+name: Cerebellum Image
 
 on:
   push:
@@ -14,16 +14,22 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-test:
+  build-push:
     runs-on: ubuntu-latest
 
     steps:
       - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - uses: docker/build-push-action@v5
         with:
           context: ./cerebellum
           file: ./cerebellum/Dockerfile
           build-contexts: proto=./proto
-          push: false
-          tags: cereworker-cerebellum:latest
+          push: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+          tags: producible/cereworker-cerebellum:latest

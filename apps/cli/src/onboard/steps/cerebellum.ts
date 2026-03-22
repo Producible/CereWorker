@@ -1,6 +1,5 @@
 import { execSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { totalmem, tmpdir } from 'node:os';
+import { totalmem } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
@@ -292,39 +291,33 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
     } catch {}
 
     if (!hasImage) {
-      const buildImage = guardCancel(
+      const pullImage = guardCancel(
         await clack.confirm({
-          message: 'Build Cerebellum Docker image now? (takes a few minutes)',
+          message: 'Download Cerebellum Docker image now?',
           initialValue: true,
         }),
       );
 
-      if (buildImage) {
+      if (pullImage) {
         if (dockerPrefix) {
           clack.log.info('Docker requires elevated privileges. You may be prompted for your password.');
         }
-        const tmpDir = mkdtempSync(join(tmpdir(), 'cereworker-build-'));
         try {
-          clack.log.info('Downloading Cerebellum source from GitHub...');
+          clack.log.info('Pulling Cerebellum image from Docker Hub...');
           execSync(
-            `curl -sL https://github.com/Producible/CereWorker/archive/refs/heads/main.tar.gz | tar xz -C "${tmpDir}" --strip-components=1`,
-            { stdio: 'pipe', timeout: 120_000 },
+            `${dockerPrefix}docker pull producible/cereworker-cerebellum:latest`,
+            { stdio: 'inherit', timeout: 300_000 },
           );
-          clack.log.info('Building Docker image (this may take several minutes)...');
           execSync(
-            `${dockerPrefix}DOCKER_BUILDKIT=1 docker build -t cereworker-cerebellum:latest ` +
-            `--build-context proto="${tmpDir}/proto" ` +
-            `-f "${tmpDir}/cerebellum/Dockerfile" "${tmpDir}/cerebellum"`,
-            { stdio: 'inherit', timeout: 600_000 },
+            `${dockerPrefix}docker tag producible/cereworker-cerebellum:latest cereworker-cerebellum:latest`,
+            { stdio: 'pipe' },
           );
-          clack.log.success('Cerebellum Docker image built.');
+          clack.log.success('Cerebellum image ready.');
         } catch {
-          clack.log.warn('Failed to build image. You can retry with "cereworker onboard".');
-        } finally {
-          rmSync(tmpDir, { recursive: true, force: true });
+          clack.log.warn('Failed to pull image. You can retry with "cereworker onboard".');
         }
       } else {
-        clack.log.warn('Skipped. Run "cereworker onboard" later to build the image.');
+        clack.log.warn('Skipped. Run "cereworker onboard" later to download the image.');
       }
     } else {
       clack.log.info('Cerebellum Docker image already exists.');
