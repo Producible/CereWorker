@@ -302,10 +302,10 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
           clack.log.info('Docker requires elevated privileges. You may be prompted for your password.');
         }
         try {
-          clack.log.info('Pulling Cerebellum image from Docker Hub...');
+          clack.log.info('Pulling Cerebellum image from Docker Hub (this may take a minute)...');
           execSync(
             `${dockerPrefix}docker pull cereworker/cerebellum:latest`,
-            { stdio: 'inherit', timeout: 300_000 },
+            { stdio: 'pipe', timeout: 3_600_000 },
           );
           execSync(
             `${dockerPrefix}docker tag cereworker/cerebellum:latest cereworker-cerebellum:latest`,
@@ -313,7 +313,18 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
           );
           clack.log.success('Cerebellum image ready.');
         } catch {
-          clack.log.warn('Failed to pull image. You can retry with "cereworker onboard".');
+          // Pull may have succeeded despite error (e.g. tag race) — check before reporting failure
+          try {
+            const pulled = execSync(`${dockerPrefix}docker images -q cereworker/cerebellum:latest`, { stdio: 'pipe' }).toString().trim();
+            if (pulled) {
+              execSync(`${dockerPrefix}docker tag cereworker/cerebellum:latest cereworker-cerebellum:latest`, { stdio: 'pipe' });
+              clack.log.success('Cerebellum image ready.');
+            } else {
+              clack.log.warn('Failed to pull image. You can retry with "cereworker onboard".');
+            }
+          } catch {
+            clack.log.warn('Failed to pull image. You can retry with "cereworker onboard".');
+          }
         }
       } else {
         clack.log.warn('Skipped. Run "cereworker onboard" later to download the image.');
