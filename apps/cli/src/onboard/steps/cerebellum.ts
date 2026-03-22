@@ -231,30 +231,29 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
       clack.log.info('Installing build tools...');
       try {
         execSync(`bash "${setupScript}" --build-tools`, { stdio: 'inherit' });
-        clack.log.info('Rebuilding native modules...');
+        clack.log.info('Installing SQLite native module...');
 
-        // Find the actual better-sqlite3 location (works for pnpm, npm global, npm local)
-        let sqliteDir: string | null = null;
+        // better-sqlite3 is an optionalDependency of @cereworker/core.
+        // If build tools were missing during initial install, npm skips it entirely
+        // (no files on disk). We need to install it, not just rebuild.
+        let corePkgDir: string | null = null;
         try {
           const corePath = require.resolve('@cereworker/core');
-          const coreRequire = createRequire(corePath);
-          const sqlitePath = coreRequire.resolve('better-sqlite3');
-          // Walk up to the package root (contains package.json)
-          let dir = dirname(sqlitePath);
+          let dir = dirname(corePath);
           for (let i = 0; i < 10; i++) {
             try {
               require('node:fs').accessSync(join(dir, 'package.json'));
-              sqliteDir = dir;
+              corePkgDir = dir;
               break;
             } catch { dir = dirname(dir); }
           }
         } catch {}
 
-        if (sqliteDir) {
-          execSync(`cd "${sqliteDir}" && npx --yes node-gyp rebuild`, { stdio: 'inherit', timeout: 120_000 });
+        if (corePkgDir) {
+          execSync(`cd "${corePkgDir}" && npm install better-sqlite3`, { stdio: 'inherit', timeout: 120_000 });
         } else {
-          // Fallback: try global rebuild
-          execSync('npm rebuild better-sqlite3 -g', { stdio: 'inherit' });
+          // Fallback: reinstall CLI package (triggers optional dep install with build tools now present)
+          execSync('npm install -g @cereworker/cli', { stdio: 'inherit', timeout: 120_000 });
         }
 
         // Re-check via child process (Node caches failed requires in the current process)
