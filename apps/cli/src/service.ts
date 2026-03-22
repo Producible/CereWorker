@@ -303,8 +303,8 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     // Try pulling from Docker Hub
     try {
       log.info('Pulling Cerebellum image from Docker Hub...');
-      execSync(`${dockerPrefix}docker pull producible/cereworker-cerebellum:latest`, { stdio: 'pipe', timeout: 300_000 });
-      execSync(`${dockerPrefix}docker tag producible/cereworker-cerebellum:latest ${image}`, { stdio: 'pipe' });
+      execSync(`${dockerPrefix}docker pull cereworker/cerebellum:latest`, { stdio: 'pipe', timeout: 300_000 });
+      execSync(`${dockerPrefix}docker tag cereworker/cerebellum:latest ${image}`, { stdio: 'pipe' });
       log.info('Cerebellum image pulled from Docker Hub');
       return true;
     } catch (err) {

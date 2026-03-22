@@ -305,11 +305,11 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
         try {
           clack.log.info('Pulling Cerebellum image from Docker Hub...');
           execSync(
-            `${dockerPrefix}docker pull producible/cereworker-cerebellum:latest`,
+            `${dockerPrefix}docker pull cereworker/cerebellum:latest`,
             { stdio: 'inherit', timeout: 300_000 },
           );
           execSync(
-            `${dockerPrefix}docker tag producible/cereworker-cerebellum:latest cereworker-cerebellum:latest`,
+            `${dockerPrefix}docker tag cereworker/cerebellum:latest cereworker-cerebellum:latest`,
             { stdio: 'pipe' },
           );
           clack.log.success('Cerebellum image ready.');

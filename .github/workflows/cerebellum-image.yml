@@ -32,4 +32,4 @@ jobs:
           file: ./cerebellum/Dockerfile
           build-contexts: proto=./proto
           push: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
-          tags: producible/cereworker-cerebellum:latest
+          tags: cereworker/cerebellum:latest
