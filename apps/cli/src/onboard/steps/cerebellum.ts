@@ -285,7 +285,7 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
 
     let hasImage = false;
     try {
-      const out = execSync(`${dockerPrefix}docker images -q cereworker-cerebellum:latest`, { stdio: 'pipe' }).toString().trim();
+      const out = execSync(`${dockerPrefix}docker images -q cereworker/cerebellum:latest`, { stdio: 'pipe' }).toString().trim();
       hasImage = !!out;
     } catch {}
 
@@ -307,17 +307,12 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
             `${dockerPrefix}docker pull cereworker/cerebellum:latest`,
             { stdio: 'pipe', timeout: 3_600_000 },
           );
-          execSync(
-            `${dockerPrefix}docker tag cereworker/cerebellum:latest cereworker-cerebellum:latest`,
-            { stdio: 'pipe' },
-          );
           clack.log.success('Cerebellum image ready.');
         } catch {
-          // Pull may have succeeded despite error (e.g. tag race) — check before reporting failure
+          // Pull may have succeeded despite error — check before reporting failure
           try {
             const pulled = execSync(`${dockerPrefix}docker images -q cereworker/cerebellum:latest`, { stdio: 'pipe' }).toString().trim();
             if (pulled) {
-              execSync(`${dockerPrefix}docker tag cereworker/cerebellum:latest cereworker-cerebellum:latest`, { stdio: 'pipe' });
               clack.log.success('Cerebellum image ready.');
             } else {
               clack.log.warn('Failed to pull image. You can retry with "cereworker onboard".');
