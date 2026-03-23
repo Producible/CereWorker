@@ -1,6 +1,9 @@
 /**
  * Thin wrappers around @mariozechner/pi-ai OAuth login & refresh functions.
  * Converts pi-ai credential format to CereWorker OAuthTokens.
+ *
+ * @mariozechner/pi-ai is not bundled — install it to use OAuth:
+ *   npm install -g @mariozechner/pi-ai
  */
 import type { OAuthTokens } from './types.js';
 
@@ -17,6 +20,18 @@ function toTokens(creds: PiCreds): OAuthTokens {
   };
 }
 
+const PI_AI_MODULE = '@mariozechner/pi-ai/oauth';
+const INSTALL_HINT = 'OAuth requires @mariozechner/pi-ai. Install it:\n  npm install -g @mariozechner/pi-ai';
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function loadPiAuth(): Promise<any> {
+  try {
+    return await import(PI_AI_MODULE);
+  } catch {
+    throw new Error(INSTALL_HINT);
+  }
+}
+
 export interface PiAuthCallbacks {
   onAuth: (url: string, instructions?: string) => void;
   onPrompt?: (message: string) => Promise<string>;
@@ -25,10 +40,10 @@ export interface PiAuthCallbacks {
 }
 
 export async function loginOpenAI(callbacks: PiAuthCallbacks): Promise<OAuthTokens> {
-  const { loginOpenAICodex } = await import('@mariozechner/pi-ai/oauth');
+  const { loginOpenAICodex } = await loadPiAuth();
   const creds = await loginOpenAICodex({
-    onAuth: (info) => callbacks.onAuth(info.url, info.instructions),
-    onPrompt: async (prompt) => {
+    onAuth: (info: { url: string; instructions?: string }) => callbacks.onAuth(info.url, info.instructions),
+    onPrompt: async (prompt: { message: string }) => {
       if (!callbacks.onPrompt) throw new Error('Manual input required but no prompt handler');
       return callbacks.onPrompt(prompt.message);
     },
@@ -39,9 +54,9 @@ export async function loginOpenAI(callbacks: PiAuthCallbacks): Promise<OAuthToke
 }
 
 export async function loginGoogle(callbacks: PiAuthCallbacks): Promise<OAuthTokens> {
-  const { loginGeminiCli } = await import('@mariozechner/pi-ai/oauth');
+  const { loginGeminiCli } = await loadPiAuth();
   const creds = await loginGeminiCli(
-    (info) => callbacks.onAuth(info.url, info.instructions),
+    (info: { url: string; instructions?: string }) => callbacks.onAuth(info.url, info.instructions),
     callbacks.onProgress,
     callbacks.onManualCodeInput,
   );
@@ -49,7 +64,7 @@ export async function loginGoogle(callbacks: PiAuthCallbacks): Promise<OAuthToke
 }
 
 export async function refreshOpenAIToken(refreshToken: string): Promise<OAuthTokens> {
-  const { refreshOpenAICodexToken } = await import('@mariozechner/pi-ai/oauth');
+  const { refreshOpenAICodexToken } = await loadPiAuth();
   return toTokens(await refreshOpenAICodexToken(refreshToken));
 }
 
@@ -57,6 +72,6 @@ export async function refreshGoogleToken(
   refreshToken: string,
   projectId: string,
 ): Promise<OAuthTokens> {
-  const { refreshGoogleCloudToken } = await import('@mariozechner/pi-ai/oauth');
+  const { refreshGoogleCloudToken } = await loadPiAuth();
   return toTokens(await refreshGoogleCloudToken(refreshToken, projectId));
 }
