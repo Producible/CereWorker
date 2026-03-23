@@ -1,6 +1,6 @@
 {
   "name": "@cereworker/cli",
-  "version": "26.323.4",
+  "version": "26.323.5",
   "type": "module",
   "bin": {
     "cereworker": "dist/index.js"
@@ -27,15 +27,15 @@
     "generate:logo": "tsx scripts/generate-logo.ts"
   },
   "dependencies": {
-    "@cereworker/core": "26.323.4",
-    "@cereworker/config": "26.323.4",
-    "@cereworker/cerebrum": "26.323.4",
-    "@cereworker/cerebellum-client": "26.323.4",
-    "@cereworker/skills": "26.323.4",
-    "@cereworker/channels": "26.323.4",
-    "@cereworker/browser": "26.323.4",
-    "@cereworker/hippocampus": "26.323.4",
-    "@cereworker/gateway": "26.323.4",
+    "@cereworker/core": "26.323.5",
+    "@cereworker/config": "26.323.5",
+    "@cereworker/cerebrum": "26.323.5",
+    "@cereworker/cerebellum-client": "26.323.5",
+    "@cereworker/skills": "26.323.5",
+    "@cereworker/channels": "26.323.5",
+    "@cereworker/browser": "26.323.5",
+    "@cereworker/hippocampus": "26.323.5",
+    "@cereworker/gateway": "26.323.5",
     "@clack/prompts": "^0.9.1",
     "ink": "^5.1.0",
     "@inkjs/ui": "^2.0.0",

@@ -163,10 +163,8 @@ export class CerebrumProvider {
     // execution, verification, and persistence in one place.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const convertedTools: Record<string, any> = {};
-    const externalToolNames = new Set<string>();
 
     for (const [name, def] of Object.entries(externalTools)) {
-      externalToolNames.add(name);
       const schema = isZodSchema(def.parameters)
         ? (def.parameters as unknown as z.ZodTypeAny)
         : z.record(z.unknown());
@@ -206,15 +204,9 @@ export class CerebrumProvider {
               callbacks.onChunk(part.text);
               break;
             case 'tool-call':
-              // External tools already call onToolCall via their execute function,
-              // so only fire onToolCall here for builtin tools.
-              if (!externalToolNames.has(part.toolName)) {
-                await callbacks.onToolCall({
-                  id: part.toolCallId,
-                  name: part.toolName,
-                  args: part.input as Record<string, unknown>,
-                });
-              }
+              // External tools call onToolCall via their execute function.
+              // Builtin tools are executed by the AI SDK directly via their
+              // execute function — do not fire onToolCall for them.
               break;
             case 'error':
               callbacks.onError(
