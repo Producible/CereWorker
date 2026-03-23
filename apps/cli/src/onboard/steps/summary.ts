@@ -24,6 +24,16 @@ export function getChannelInstructions(channelId: string): string {
 export async function summaryStep(params: BuildConfigParams): Promise<void> {
   const lines: string[] = [];
 
+  // Profile
+  if (params.profile) {
+    lines.push(`Name:         ${params.profile.name}`);
+    lines.push(`Role:         ${params.profile.role}`);
+    if (params.profile.traits.length > 0) {
+      lines.push(`Traits:       ${params.profile.traits.join(', ')}`);
+    }
+    lines.push('');
+  }
+
   // Cerebrum
   lines.push(`Provider:     ${params.cerebrum.provider}`);
   lines.push(`Model:        ${params.cerebrum.model}`);

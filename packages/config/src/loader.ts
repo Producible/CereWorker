@@ -91,4 +91,8 @@ export function loadConfig(overrides?: Partial<CereWorkerConfig>): CereWorkerCon
   return configSchema.parse(interpolated);
 }
 
+export function loadRawConfig(): Record<string, unknown> {
+  return loadYaml(GLOBAL_CONFIG);
+}
+
 export { CONFIG_DIR, GLOBAL_CONFIG };

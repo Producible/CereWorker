@@ -5,13 +5,30 @@ export interface SystemPromptOptions {
   gatewayMode: 'standalone' | 'gateway' | 'node';
   connectedNodes?: number;
   gatewayUrl?: string;
+  profile?: { name: string; role: string; traits: string[] };
 }
 
 export function buildSystemPrompt(options: SystemPromptOptions): string {
   const sections: string[] = [];
 
   // Identity
-  sections.push('You are the Cerebrum of CereWorker, a dual-LLM autonomous agent.');
+  if (options.profile?.name && options.profile.name !== 'Cere') {
+    sections.push(`You are ${options.profile.name}, the Cerebrum of CereWorker, a dual-LLM autonomous agent.`);
+  } else {
+    sections.push('You are the Cerebrum of CereWorker, a dual-LLM autonomous agent.');
+  }
+
+  // Profile
+  const profileLines: string[] = [];
+  if (options.profile?.role && options.profile.role !== 'general-purpose assistant') {
+    profileLines.push(`Your primary role is: ${options.profile.role}.`);
+  }
+  if (options.profile?.traits?.length) {
+    profileLines.push(`Your communication style: ${options.profile.traits.join(', ')}.`);
+  }
+  if (profileLines.length > 0) {
+    sections.push(`## Profile\n${profileLines.join('\n')}`);
+  }
 
   // Architecture
   const cerebellumStatus = options.cerebellumConnected ? 'connected' : 'offline';

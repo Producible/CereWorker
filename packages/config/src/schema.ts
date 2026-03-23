@@ -15,6 +15,14 @@ const providerConfigSchema = z.object({
 });
 
 export const configSchema = z.object({
+  profile: z
+    .object({
+      name: z.string().default('Cere'),
+      role: z.string().default('general-purpose assistant'),
+      traits: z.array(z.string()).default([]),
+    })
+    .default({}),
+
   cerebrum: z
     .object({
       defaultProvider: z.string().default('anthropic'),

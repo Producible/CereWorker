@@ -1,11 +1,13 @@
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import type { ProfileResult } from './steps/profile.js';
 import type { CerebrumResult } from './steps/cerebrum.js';
 import type { CerebellumResult } from './steps/cerebellum.js';
 import type { ChannelSetup } from './steps/channels.js';
 import type { GatewayResult } from './steps/gateway.js';
 
 export interface BuildConfigParams {
+  profile?: ProfileResult;
   cerebrum: CerebrumResult;
   cerebellum: CerebellumResult;
   channels: ChannelSetup[];
@@ -33,6 +35,15 @@ function resolveCredentialValue(value: string | { envRef: string }): string {
 
 export function buildConfig(params: BuildConfigParams): Record<string, unknown> {
   const config: Record<string, unknown> = {};
+
+  // Profile
+  if (params.profile) {
+    config.profile = {
+      name: params.profile.name,
+      role: params.profile.role,
+      ...(params.profile.traits.length > 0 ? { traits: params.profile.traits } : {}),
+    };
+  }
 
   // Cerebrum
   const cerebrum: Record<string, unknown> = {

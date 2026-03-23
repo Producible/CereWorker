@@ -157,11 +157,46 @@ install_cereworker() {
   ok "CereWorker installed"
 }
 
-# --- Optional: Docker & build tools ---
+# --- Docker ---
 
-run_setup() {
-  info "Setting up optional dependencies (Docker, build tools)..."
-  cereworker setup --all || warn "Optional setup had issues — you can re-run with: cereworker setup"
+install_docker_linux() {
+  info "Installing Docker via get.docker.com..."
+  curl -fsSL https://get.docker.com | $SUDO sh
+  if [ -n "${SUDO_USER:-}" ]; then
+    $SUDO usermod -aG docker "$SUDO_USER"
+  elif [ "$(id -u)" -ne 0 ]; then
+    $SUDO usermod -aG docker "$USER"
+  fi
+  warn "You may need to log out and back in for the docker group to take effect."
+}
+
+install_docker_macos() {
+  if command -v brew >/dev/null 2>&1; then
+    info "Installing Docker Desktop via Homebrew..."
+    brew install --cask docker
+    info "Open Docker Desktop from Applications to finish setup."
+  else
+    warn "Install Docker Desktop manually: https://docs.docker.com/desktop/install/mac-install/"
+  fi
+}
+
+ensure_docker() {
+  if command -v docker >/dev/null 2>&1; then
+    ok "Docker found"
+    return
+  fi
+
+  info "Docker not found — installing for Cerebellum..."
+  case "$OS" in
+    linux) install_docker_linux ;;
+    macos) install_docker_macos ;;
+  esac
+
+  if command -v docker >/dev/null 2>&1; then
+    ok "Docker installed"
+  else
+    warn "Docker installation failed. Install manually: https://docs.docker.com/get-docker/"
+  fi
 }
 
 # --- Main ---
@@ -172,7 +207,7 @@ main() {
 
   ensure_node
   install_cereworker
-  run_setup
+  ensure_docker
 
   printf "\n${GREEN}${BOLD}CereWorker is ready!${RESET}\n\n"
   printf "  Run ${CYAN}cereworker onboard${RESET} to configure your first setup.\n"

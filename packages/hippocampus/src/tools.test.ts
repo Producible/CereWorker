@@ -33,11 +33,13 @@ describe('createMemoryTools', () => {
       expect(result).toBe('my notes');
     });
 
-    it('shows guidance when no files exist', async () => {
+    it('initializes MEMORY.md when no files exist', async () => {
       const tools = setup();
       const result = await tools.executeMemoryRead({ file: 'MEMORY.md' });
-      expect(result).toContain('No memory files found');
-      expect(result).toContain('memory_write');
+      expect(result).toContain('# Memory');
+      // Should be readable on second call too
+      const result2 = await tools.executeMemoryRead({ file: 'MEMORY.md' });
+      expect(result2).toBe(result);
     });
 
     it('lists available files when file not found', async () => {

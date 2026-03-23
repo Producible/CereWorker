@@ -1,10 +1,6 @@
 import { execSync } from 'node:child_process';
 import { totalmem } from 'node:os';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
 import { clack, guardCancel } from '../prompter.js';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export interface CerebellumResult {
   enabled: boolean;
@@ -180,10 +176,14 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
     );
 
     if (installDocker) {
-      const setupScript = resolve(__dirname, '..', '..', '..', 'scripts', 'setup.sh');
       clack.log.info('Installing Docker...');
       try {
-        execSync(`bash "${setupScript}" --docker`, { stdio: 'inherit' });
+        const platform = process.platform;
+        if (platform === 'darwin') {
+          execSync('brew install --cask docker', { stdio: 'inherit' });
+        } else {
+          execSync('curl -fsSL https://get.docker.com | sudo sh', { stdio: 'inherit' });
+        }
         // Re-check after install
         try {
           execSync('which docker', { stdio: 'pipe' });

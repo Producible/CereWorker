@@ -28,7 +28,9 @@ export function createMemoryTools(store: HippocampusStore) {
       if (content === null) {
         const files = store.listAll();
         if (files.length === 0) {
-          return 'No memory files found. Use memory_write to create MEMORY.md or memory_log to start a daily log.';
+          const starter = '# Memory\n\n_No memories yet. Use memory_write to save context here._\n';
+          store.writeMemory(starter);
+          return starter;
         }
         return `File "${args.file}" not found. Available files: ${files.join(', ')}`;
       }

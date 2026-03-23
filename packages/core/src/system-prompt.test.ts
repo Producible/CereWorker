@@ -82,6 +82,43 @@ describe('buildSystemPrompt', () => {
     expect(result).toContain('Node connected to gateway at unknown');
   });
 
+  it('uses custom name when profile provided', () => {
+    const result = buildSystemPrompt(makeOptions({
+      profile: { name: 'Jarvis', role: 'backend engineer', traits: ['concise'] },
+    }));
+    expect(result).toContain('You are Jarvis, the Cerebrum of CereWorker');
+    expect(result).not.toContain('You are the Cerebrum of CereWorker, a dual');
+  });
+
+  it('uses default identity when profile name is Cere', () => {
+    const result = buildSystemPrompt(makeOptions({
+      profile: { name: 'Cere', role: 'general-purpose assistant', traits: [] },
+    }));
+    expect(result).toContain('You are the Cerebrum of CereWorker, a dual-LLM');
+    expect(result).not.toContain('You are Cere,');
+  });
+
+  it('includes profile section with role and traits', () => {
+    const result = buildSystemPrompt(makeOptions({
+      profile: { name: 'Friday', role: 'devops / sre', traits: ['concise', 'cautious'] },
+    }));
+    expect(result).toContain('## Profile');
+    expect(result).toContain('Your primary role is: devops / sre.');
+    expect(result).toContain('Your communication style: concise, cautious.');
+  });
+
+  it('omits profile section when defaults', () => {
+    const result = buildSystemPrompt(makeOptions({
+      profile: { name: 'Cere', role: 'general-purpose assistant', traits: [] },
+    }));
+    expect(result).not.toContain('## Profile');
+  });
+
+  it('omits profile section when no profile', () => {
+    const result = buildSystemPrompt(makeOptions());
+    expect(result).not.toContain('## Profile');
+  });
+
   it('includes guidelines section', () => {
     const result = buildSystemPrompt(makeOptions());
     expect(result).toContain('## Guidelines');

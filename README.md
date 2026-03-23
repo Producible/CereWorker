@@ -82,11 +82,11 @@ curl -fsSL https://raw.githubusercontent.com/Producible/CereWorker/main/install.
 irm https://raw.githubusercontent.com/Producible/CereWorker/main/install.ps1 | iex
 ```
 
-The installer detects your OS, installs Node.js if missing, installs CereWorker via npm, sets up optional dependencies (Docker, build tools), and launches the onboarding wizard.
+The installer detects your OS, installs Node.js if missing, installs CereWorker via npm, sets up Docker for Cerebellum, and launches the onboarding wizard.
 
 ### Manual Install
 
-**Prerequisites:** Node.js 20+, Docker (optional, for Cerebellum)
+**Prerequisites:** Node.js 22.5.1+, Docker (optional, for Cerebellum)
 
 ```bash
 npm install -g @cereworker/cli
@@ -103,11 +103,18 @@ cereworker onboard
 ```
 
 The wizard walks you through:
+- **Worker profile** -- name, role, and personality traits for your agent
 - **LLM provider** -- Anthropic, OpenAI, Google, or local (Ollama/vLLM)
 - **Cerebellum model** -- choose from Qwen3, SmolLM2, Phi-4 Mini, or a custom checkpoint, with hardware-aware recommendations
 - **Fine-tuning** -- method (Auto/LoRA/QLoRA/Full) and schedule, with GPU/RAM detection
 - **Messaging channels** -- enable Slack, Discord, Telegram, Matrix, Feishu, or WeChat
 - **Config output** -- writes `~/.cereworker/config.yaml` with env var references for secrets
+
+To update your worker profile after onboarding:
+
+```bash
+cereworker configure profile
+```
 
 After onboarding, start the agent:
 
@@ -379,9 +386,11 @@ Other agents get more expensive as they get smarter (longer prompts, more retrie
 
 ## Built-in Tools
 
-**Shell & File Operations** -- Execute commands, read/write files, list directories. Shell execution is governed by the exec policy: safe binaries (ls, git, node, etc.) auto-execute, destructive patterns are blocked, and unknown commands prompt for approval in supervised mode
+**Shell & File Operations** -- Execute commands, read/write files, edit files by exact match, list directories, search file contents (grep/ripgrep), find files by glob pattern. Shell execution is governed by the exec policy: safe binaries (ls, git, node, etc.) auto-execute, destructive patterns are blocked, and unknown commands prompt for approval in supervised mode
 
-**Browser Automation** -- Navigate, screenshot, click, type, evaluate JS, wait for elements
+**Browser Automation** -- Navigate, screenshot, click, type, evaluate JS, wait for elements. Supports both launching a new browser and connecting to an existing Chrome via CDP (`--remote-debugging-port`)
+
+**HTTP & Web Search** -- Fetch URLs (`httpFetch`) with timeout and private-IP blocking. Search the web (`webSearch`) via DuckDuckGo, no API key required
 
 **Memory (Hippocampus)** -- Read/write MEMORY.md, append daily logs, search across memory files
 
@@ -453,6 +462,11 @@ Config is loaded with cascading precedence:
 Full config example:
 
 ```yaml
+profile:
+  name: Cere
+  role: full-stack developer
+  traits: [concise, proactive]
+
 cerebrum:
   defaultProvider: anthropic
   defaultModel: claude-sonnet-4-6

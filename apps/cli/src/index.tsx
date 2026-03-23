@@ -4,25 +4,23 @@
 const _origEmit = process.emit;
 // @ts-expect-error — filtering warning events before they reach stderr
 process.emit = function (event: string, ...args: unknown[]) {
-  if (event === 'warning' && typeof args[0] === 'object' && args[0] !== null &&
-      (args[0] as { name?: string }).name === 'ExperimentalWarning' &&
-      String((args[0] as { message?: string }).message).includes('SQLite')) {
-    return false;
+  if (event === 'warning' && typeof args[0] === 'object' && args[0] !== null) {
+    const w = args[0] as { name?: string; message?: string };
+    // Suppress node:sqlite ExperimentalWarning (stable API, flag removed in Node 22.13+)
+    if (w.name === 'ExperimentalWarning' && String(w.message).includes('SQLite')) return false;
+    // Suppress punycode deprecation from transitive dependencies
+    if (w.name === 'DeprecationWarning' && String(w.message).includes('punycode')) return false;
   }
   return _origEmit.apply(this, [event, ...args] as Parameters<typeof _origEmit>);
 };
 
 import React from 'react';
 import { render, Text, Box } from 'ink';
-import { execFileSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
 import { loadConfig } from '@cereworker/config';
 import { App } from './app.js';
 
 const require = createRequire(import.meta.url);
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 async function main() {
   // --version / -v
@@ -54,15 +52,15 @@ async function main() {
     return;
   }
 
-  if (subcommand === 'setup') {
-    const scriptPath = resolve(__dirname, '..', 'scripts', 'setup.sh');
-    const args = process.argv.slice(3);
-    try {
-      execFileSync('bash', [scriptPath, ...args], { stdio: 'inherit' });
-    } catch (err) {
-      process.exit(1);
+  if (subcommand === 'configure') {
+    const target = process.argv[3];
+    if (target === 'profile') {
+      const { runConfigureProfile } = await import('./configure.js');
+      await runConfigureProfile();
+      return;
     }
-    return;
+    console.error('Usage: cereworker configure <profile>');
+    process.exit(1);
   }
 
   if (subcommand === 'auth') {

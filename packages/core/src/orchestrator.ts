@@ -114,6 +114,7 @@ export class Orchestrator extends TypedEventEmitter {
   private gatewayMode: 'standalone' | 'gateway' | 'node' = 'standalone';
   private connectedNodes = 0;
   private gatewayUrl: string | undefined;
+  private profile: { name: string; role: string; traits: string[] } | undefined;
   private compactionConfig: CompactionConfig = {
     enabled: true,
     threshold: 0.8,
@@ -197,6 +198,10 @@ export class Orchestrator extends TypedEventEmitter {
 
   unregisterTool(name: string): boolean {
     return this.tools.delete(name);
+  }
+
+  setProfile(profile: { name: string; role: string; traits: string[] }): void {
+    this.profile = profile;
   }
 
   setAutoMode(enabled: boolean): void {
@@ -389,6 +394,7 @@ export class Orchestrator extends TypedEventEmitter {
       gatewayMode: this.gatewayMode,
       connectedNodes: this.connectedNodes,
       gatewayUrl: this.gatewayUrl,
+      profile: this.profile,
     });
     const systemParts = [basePrompt];
     if (this.systemContext) systemParts.push(this.systemContext);

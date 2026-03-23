@@ -1,4 +1,5 @@
 import { welcomeStep } from './steps/welcome.js';
+import { profileStep } from './steps/profile.js';
 import { cerebrumStep } from './steps/cerebrum.js';
 import { cerebellumStep } from './steps/cerebellum.js';
 import { channelsStep } from './steps/channels.js';
@@ -8,6 +9,7 @@ import { clack, guardCancel } from './prompter.js';
 
 export async function runOnboardingWizard(): Promise<void> {
   const welcome = await welcomeStep();
+  const profile = await profileStep();
   const cerebrum = await cerebrumStep();
   const cerebellum = await cerebellumStep();
 
@@ -32,6 +34,7 @@ export async function runOnboardingWizard(): Promise<void> {
     : { mode: 'standalone' as const };
 
   await summaryStep({
+    profile,
     cerebrum,
     cerebellum,
     channels: channelsResult.channels,

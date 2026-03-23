@@ -78,6 +78,9 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
   // Set initial auto mode on orchestrator
   orchestrator.setAutoMode(config.tools.shell.autoMode);
 
+  // Set worker profile
+  orchestrator.setProfile(config.profile);
+
   // Bridge CerebrumProvider to Orchestrator's CerebrumAdapter interface
   orchestrator.setCerebrum({
     stream: async (messages, tools, callbacks) => {
