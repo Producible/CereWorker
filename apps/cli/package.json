@@ -1,6 +1,6 @@
 {
   "name": "@cereworker/cli",
-  "version": "26.323.7",
+  "version": "26.323.8",
   "type": "module",
   "bin": {
     "cereworker": "dist/index.js"

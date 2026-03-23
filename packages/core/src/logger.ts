@@ -48,8 +48,8 @@ function writeLog(level: LogLevel, name: string, msg: string, data?: Record<stri
   if (writeStream) {
     writeStream.write(entry + '\n');
   }
-  // Also write to stderr (all levels in headless mode, warn/error only in TUI mode)
-  if (stderrAll || level === 'error' || level === 'warn') {
+  // Write to stderr only in headless mode (stderrAll), not in TUI mode
+  if (stderrAll) {
     process.stderr.write(entry + '\n');
   }
 }

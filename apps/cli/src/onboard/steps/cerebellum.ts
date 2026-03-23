@@ -229,10 +229,10 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
           clack.log.info('Docker requires elevated privileges. You may be prompted for your password.');
         }
         try {
-          clack.log.info('Pulling Cerebellum image from Docker Hub (this may take a minute)...');
+          clack.log.info('Pulling Cerebellum image from Docker Hub...');
           execSync(
             `${dockerPrefix}docker pull cereworker/cerebellum:latest`,
-            { stdio: 'pipe', timeout: 3_600_000 },
+            { stdio: 'inherit', timeout: 3_600_000 },
           );
           clack.log.success('Cerebellum image ready.');
         } catch {

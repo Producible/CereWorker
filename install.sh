@@ -180,23 +180,41 @@ install_docker_macos() {
   fi
 }
 
-ensure_docker() {
-  if command -v docker >/dev/null 2>&1; then
-    ok "Docker found"
+ensure_docker_group() {
+  # Only relevant on Linux — macOS Docker Desktop handles permissions via its own socket
+  [ "$OS" != "linux" ] && return
+  command -v docker >/dev/null 2>&1 || return
+
+  # Check if user is already in docker group
+  local target_user="${SUDO_USER:-$USER}"
+  if id -nG "$target_user" 2>/dev/null | grep -qw docker; then
     return
   fi
 
-  info "Docker not found — installing for Cerebellum..."
-  case "$OS" in
-    linux) install_docker_linux ;;
-    macos) install_docker_macos ;;
-  esac
+  info "Adding $target_user to docker group..."
+  $SUDO usermod -aG docker "$target_user"
+  ok "Added $target_user to docker group (log out and back in to take effect)"
+}
 
+ensure_docker() {
   if command -v docker >/dev/null 2>&1; then
-    ok "Docker installed"
+    ok "Docker found"
   else
-    warn "Docker installation failed. Install manually: https://docs.docker.com/get-docker/"
+    info "Docker not found — installing for Cerebellum..."
+    case "$OS" in
+      linux) install_docker_linux ;;
+      macos) install_docker_macos ;;
+    esac
+
+    if command -v docker >/dev/null 2>&1; then
+      ok "Docker installed"
+    else
+      warn "Docker installation failed. Install manually: https://docs.docker.com/get-docker/"
+      return
+    fi
   fi
+
+  ensure_docker_group
 }
 
 # --- Main ---

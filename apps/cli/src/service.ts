@@ -297,17 +297,19 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
         log.info('Using sudo for Docker commands (add user to docker group to avoid this)');
         return true;
       } catch {
-        // Check if daemon is actually running via systemctl
-        try {
-          const status = execSync('systemctl is-active docker', { stdio: 'pipe' }).toString().trim();
-          if (status === 'active') {
-            log.warn('Docker daemon is running but permission denied. Run: sudo usermod -aG docker $USER && newgrp docker');
-          } else {
-            log.warn('Docker daemon is not running. Start it with: sudo systemctl start docker');
+        // Permission denied even with sudo — try to fix docker group membership
+        const user = process.env.USER || process.env.LOGNAME;
+        if (user) {
+          try {
+            execSync(`sudo -n usermod -aG docker ${user}`, { stdio: 'pipe' });
+            dockerPrefix = 'sudo ';
+            log.info('Added user to docker group. Using sudo for this session — re-login to use Docker without sudo.');
+            return true;
+          } catch {
+            // sudo needs password — can't auto-fix
           }
-        } catch {
-          log.warn('Docker daemon is not running. Start it with: sudo systemctl start docker');
         }
+        log.warn('Docker permission denied. Run: sudo usermod -aG docker $USER && newgrp docker');
         return false;
       }
     }

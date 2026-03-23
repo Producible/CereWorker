@@ -23,19 +23,15 @@ describe('Logger', () => {
     expect(log.error).toBeInstanceOf(Function);
   });
 
-  it('writes warn and error to stderr', () => {
+  it('does not write to stderr in TUI mode (default)', () => {
     const log = createLogger('test');
     log.warn('warning message');
-    expect(stderrSpy).toHaveBeenCalledTimes(1);
-
-    const output = stderrSpy.mock.calls[0][0] as string;
-    const parsed = JSON.parse(output.trim());
-    expect(parsed.level).toBe('warn');
-    expect(parsed.name).toBe('test');
-    expect(parsed.msg).toBe('warning message');
+    log.error('error message');
+    expect(stderrSpy).not.toHaveBeenCalled();
   });
 
-  it('includes data in log entries', () => {
+  it('includes data in log entries when stderr enabled', () => {
+    configureLogger({ level: 'info', stderr: true });
     const log = createLogger('test');
     log.error('failed', { code: 42, reason: 'timeout' });
 
@@ -82,6 +78,7 @@ describe('Logger', () => {
   });
 
   it('child logger includes parent name', () => {
+    configureLogger({ level: 'info', stderr: true });
     const parent = createLogger('parent');
     const child = parent.child('child');
     child.error('child error');
