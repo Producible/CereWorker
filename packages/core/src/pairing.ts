@@ -1,24 +1,10 @@
+import { DatabaseSync } from 'node:sqlite';
 import { randomInt } from 'node:crypto';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
-import { createRequire } from 'node:module';
 import { createLogger } from './logger.js';
 
 const log = createLogger('pairing');
-const require = createRequire(import.meta.url);
-
-interface SqliteDb {
-  pragma(source: string): unknown;
-  exec(source: string): void;
-  prepare(source: string): SqliteStatement;
-  close(): void;
-}
-
-interface SqliteStatement {
-  run(...params: unknown[]): { changes: number };
-  get(...params: unknown[]): unknown;
-  all(...params: unknown[]): unknown[];
-}
 
 const DEFAULT_DB_PATH = join(homedir(), '.cereworker', 'conversations.db');
 
@@ -61,32 +47,19 @@ export function normalizeCode(input: string): string {
   return input.replace(/[-\s]/g, '').toUpperCase();
 }
 
-function tryOpenDb(dbPath: string): SqliteDb | null {
-  try {
-    const Database = require('better-sqlite3');
-    return new Database(dbPath) as SqliteDb;
-  } catch {
-    return null;
-  }
-}
-
 export class PairingStore {
-  private db: SqliteDb | null;
+  private db: DatabaseSync;
 
   constructor(dbPath?: string) {
     const path = dbPath ?? DEFAULT_DB_PATH;
-    this.db = tryOpenDb(path);
-    if (this.db) {
-      this.db.pragma('journal_mode = WAL');
-      this.ensureSchema();
-      log.info('Opened pairing database', { path });
-    } else {
-      log.warn('better-sqlite3 not available — pairing will be disabled. Run "cereworker onboard" to install build tools.');
-    }
+    this.db = new DatabaseSync(path);
+    this.db.exec('PRAGMA journal_mode = WAL');
+    this.ensureSchema();
+    log.info('Opened pairing database', { path });
   }
 
   private ensureSchema(): void {
-    this.db!.exec(`
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS pairing_requests (
         code TEXT PRIMARY KEY,
         channelId TEXT NOT NULL,
@@ -112,7 +85,6 @@ export class PairingStore {
   }
 
   createPairingCode(channelId: string, senderId: string, senderName?: string): string | null {
-    if (!this.db) return null;
     this.expireStale();
 
     // Check for existing pending code for this sender+channel
@@ -159,7 +131,6 @@ export class PairingStore {
   }
 
   getPendingByCode(code: string): PairingRequest | null {
-    if (!this.db) return null;
     const normalized = normalizeCode(code);
     const row = this.db.prepare(
       `SELECT * FROM pairing_requests WHERE code = ? AND status = 'pending' AND expiresAt > ?`,
@@ -168,14 +139,12 @@ export class PairingStore {
   }
 
   listPending(): PairingRequest[] {
-    if (!this.db) return [];
     return this.db.prepare(
       `SELECT * FROM pairing_requests WHERE status = 'pending' AND expiresAt > ? ORDER BY createdAt DESC`,
-    ).all(Date.now()) as PairingRequest[];
+    ).all(Date.now()) as unknown as PairingRequest[];
   }
 
   approveCode(code: string): ApprovalResult {
-    if (!this.db) return { ok: false, error: 'Pairing unavailable (database not available)' };
     const normalized = normalizeCode(code);
     this.expireStale();
 
@@ -213,7 +182,6 @@ export class PairingStore {
   }
 
   isApproved(channelId: string, senderId: string): boolean {
-    if (!this.db) return true;
     const row = this.db.prepare(
       `SELECT 1 FROM approved_users WHERE channelId = ? AND senderId = ?`,
     ).get(channelId, senderId);
@@ -221,15 +189,13 @@ export class PairingStore {
   }
 
   expireStale(): number {
-    if (!this.db) return 0;
     const result = this.db.prepare(
       `UPDATE pairing_requests SET status = 'expired' WHERE status = 'pending' AND expiresAt <= ?`,
     ).run(Date.now());
-    return result.changes;
+    return Number(result.changes);
   }
 
   addConfigUser(channelId: string, senderId: string): void {
-    if (!this.db) return;
     this.db.prepare(
       `INSERT OR IGNORE INTO approved_users (channelId, senderId, approvedAt, approvedVia)
        VALUES (?, ?, ?, 'config')`,
@@ -237,6 +203,6 @@ export class PairingStore {
   }
 
   close(): void {
-    this.db?.close();
+    this.db.close();
   }
 }

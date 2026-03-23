@@ -1,6 +1,6 @@
 {
   "name": "@cereworker/core",
-  "version": "26.322.6",
+  "version": "26.323.1",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -22,14 +22,10 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@cereworker/config": "26.322.6",
+    "@cereworker/config": "26.323.1",
     "nanoid": "^5.0.9"
   },
-  "optionalDependencies": {
-    "better-sqlite3": "^11.7.0"
-  },
   "devDependencies": {
-    "@types/better-sqlite3": "^7.6.12",
     "typescript": "^5.7.3"
   }
 }

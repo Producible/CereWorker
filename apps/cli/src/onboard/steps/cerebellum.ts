@@ -1,11 +1,8 @@
 import { execSync } from 'node:child_process';
 import { totalmem } from 'node:os';
 import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { clack, guardCancel } from '../prompter.js';
-
-const require = createRequire(import.meta.url);
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -27,7 +24,6 @@ export interface CerebellumResult {
 interface HardwareInfo {
   totalRamGB: number;
   hasDocker: boolean;
-  hasSqlite: boolean;
   hasGpu: boolean;
   gpuVramGB: number | null;
   gpuName: string | null;
@@ -40,16 +36,6 @@ function detectHardware(): HardwareInfo {
   try {
     execSync('which docker', { stdio: 'pipe' });
     hasDocker = true;
-  } catch {}
-
-  let hasSqlite = false;
-  try {
-    // better-sqlite3 is a dependency of @cereworker/core, not cli.
-    // Resolve from core's location so pnpm strict mode doesn't block it.
-    const corePath = require.resolve('@cereworker/core');
-    const coreRequire = createRequire(corePath);
-    coreRequire('better-sqlite3');
-    hasSqlite = true;
   } catch {}
 
   let hasGpu = false;
@@ -72,7 +58,7 @@ function detectHardware(): HardwareInfo {
     }
   } catch {}
 
-  return { totalRamGB, hasDocker, hasSqlite, hasGpu, gpuVramGB, gpuName };
+  return { totalRamGB, hasDocker, hasGpu, gpuVramGB, gpuName };
 }
 
 export async function cerebellumStep(): Promise<CerebellumResult> {
@@ -83,7 +69,6 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
     `RAM: ${hw.totalRamGB} GB`,
     hw.hasGpu ? `GPU: ${hw.gpuName} (${hw.gpuVramGB} GB VRAM)` : 'GPU: not detected',
     hw.hasDocker ? 'Docker: installed' : 'Docker: not found',
-    hw.hasSqlite ? 'SQLite: OK' : 'SQLite: not available',
   ].join('  |  ');
 
   clack.log.info(`Hardware: ${hwSummary}`);
@@ -212,64 +197,6 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
       }
     } else {
       clack.log.warn('Skipped. Install Docker manually to use the Cerebellum container.');
-    }
-  }
-
-  // SQLite native module check
-  if (!hw.hasSqlite) {
-    clack.log.warn('SQLite native module (better-sqlite3) is not available.\n  Conversation history and pairing authorization require it.');
-
-    const installBuildTools = guardCancel(
-      await clack.confirm({
-        message: 'Install build tools and rebuild SQLite module?',
-        initialValue: true,
-      }),
-    );
-
-    if (installBuildTools) {
-      const setupScript = resolve(__dirname, '..', '..', '..', 'scripts', 'setup.sh');
-      clack.log.info('Installing build tools...');
-      try {
-        execSync(`bash "${setupScript}" --build-tools`, { stdio: 'inherit' });
-        clack.log.info('Installing SQLite native module...');
-
-        // better-sqlite3 is an optionalDependency of @cereworker/core.
-        // If build tools were missing during initial install, npm skips it entirely
-        // (no files on disk). We need to install it, not just rebuild.
-        let corePkgDir: string | null = null;
-        try {
-          const corePath = require.resolve('@cereworker/core');
-          let dir = dirname(corePath);
-          for (let i = 0; i < 10; i++) {
-            try {
-              require('node:fs').accessSync(join(dir, 'package.json'));
-              corePkgDir = dir;
-              break;
-            } catch { dir = dirname(dir); }
-          }
-        } catch {}
-
-        if (corePkgDir) {
-          execSync(`cd "${corePkgDir}" && npm install better-sqlite3`, { stdio: 'inherit', timeout: 120_000 });
-        } else {
-          // Fallback: reinstall CLI package (triggers optional dep install with build tools now present)
-          execSync('npm install -g @cereworker/cli', { stdio: 'inherit', timeout: 120_000 });
-        }
-
-        // Re-check via child process (Node caches failed requires in the current process)
-        try {
-          const corePath = require.resolve('@cereworker/core');
-          execSync(`node -e "const {createRequire}=require('module'); createRequire('${corePath}')('better-sqlite3')"`, { stdio: 'pipe' });
-          hw.hasSqlite = true;
-          clack.log.success('SQLite module rebuilt successfully.');
-        } catch {
-          clack.log.warn('Rebuild completed but module still not loadable. Conversation history will use JSON fallback.');
-        }
-      } catch {
-        clack.log.warn('Build tools installation failed. Conversation history will use JSON fallback.');
-      }
-    } else {
-      clack.log.warn('Skipped. You can run "cereworker setup --build-tools" later.');
     }
   }
 

@@ -1,6 +1,6 @@
 {
   "name": "@cereworker/hippocampus",
-  "version": "26.322.6",
+  "version": "26.323.1",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -22,8 +22,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@cereworker/core": "26.322.6",
-    "@cereworker/config": "26.322.6",
+    "@cereworker/core": "26.323.1",
+    "@cereworker/config": "26.323.1",
     "zod": "^3.24.0"
   },
   "devDependencies": {

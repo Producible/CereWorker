@@ -1,6 +1,6 @@
 {
   "name": "@cereworker/cerebrum",
-  "version": "26.322.6",
+  "version": "26.323.1",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -25,8 +25,8 @@
     "@ai-sdk/anthropic": "^3.0.63",
     "@ai-sdk/google": "^3.0.52",
     "@ai-sdk/openai": "^3.0.47",
-    "@cereworker/config": "26.322.6",
-    "@cereworker/core": "26.322.6",
+    "@cereworker/config": "26.323.1",
+    "@cereworker/core": "26.323.1",
     "@mariozechner/pi-ai": "^0.57.1",
     "ai": "^6.0.134",
     "zod": "^3.24.0"

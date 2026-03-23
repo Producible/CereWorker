@@ -1,4 +1,17 @@
 #!/usr/bin/env node
+
+// Suppress node:sqlite ExperimentalWarning (stable API, flag removed in Node 22.13+)
+const _origEmit = process.emit;
+// @ts-expect-error — filtering warning events before they reach stderr
+process.emit = function (event: string, ...args: unknown[]) {
+  if (event === 'warning' && typeof args[0] === 'object' && args[0] !== null &&
+      (args[0] as { name?: string }).name === 'ExperimentalWarning' &&
+      String((args[0] as { message?: string }).message).includes('SQLite')) {
+    return false;
+  }
+  return _origEmit.apply(this, [event, ...args] as Parameters<typeof _origEmit>);
+};
+
 import React from 'react';
 import { render, Text, Box } from 'ink';
 import { execFileSync } from 'node:child_process';

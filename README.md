@@ -92,20 +92,7 @@ The installer detects your OS, installs Node.js if missing, installs CereWorker 
 npm install -g @cereworker/cli
 ```
 
-CereWorker uses SQLite for conversation persistence via `better-sqlite3`, which requires native build tools to compile. If you see a `gyp ERR!` warning during install, CereWorker will still work using a JSON file fallback. To enable SQLite (recommended for better performance), install build tools first:
-
-```bash
-# Ubuntu/Debian
-sudo apt install build-essential
-
-# macOS
-xcode-select --install
-
-# Windows
-npm install --global windows-build-tools
-```
-
-Then reinstall: `npm install -g @cereworker/cli`. Any conversations stored in the JSON fallback will be automatically migrated to SQLite on the next launch.
+CereWorker uses Node.js built-in SQLite (`node:sqlite`) for conversation persistence. Node.js 22.5.1 or later is required.
 
 ### Setup
 
