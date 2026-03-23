@@ -1,6 +1,6 @@
 {
   "name": "@cereworker/skills",
-  "version": "26.323.1",
+  "version": "26.323.2",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -22,8 +22,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@cereworker/core": "26.323.1",
-    "@cereworker/config": "26.323.1",
+    "@cereworker/core": "26.323.2",
+    "@cereworker/config": "26.323.2",
     "gray-matter": "^4.0.3"
   },
   "devDependencies": {

@@ -1,6 +1,6 @@
 {
   "name": "@cereworker/channels",
-  "version": "26.323.1",
+  "version": "26.323.2",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -22,16 +22,13 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@cereworker/core": "26.323.1",
-    "@cereworker/config": "26.323.1",
+    "@cereworker/core": "26.323.2",
+    "@cereworker/config": "26.323.2",
     "@slack/bolt": "^4.2.0",
     "discord.js": "^14.18.0",
     "telegraf": "^4.16.0",
     "matrix-js-sdk": "^36.0.0",
     "@larksuiteoapi/node-sdk": "^1.39.0"
-  },
-  "optionalDependencies": {
-    "wechaty": "^1.20.0"
   },
   "devDependencies": {
     "typescript": "^5.7.3"

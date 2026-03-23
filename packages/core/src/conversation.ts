@@ -1,4 +1,4 @@
-import { DatabaseSync } from 'node:sqlite';
+import { createRequire } from 'node:module';
 import { nanoid } from 'nanoid';
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -6,12 +6,21 @@ import { homedir } from 'node:os';
 import type { Conversation, Message, MessageRole } from './types.js';
 import { createLogger } from './logger.js';
 
+const require = createRequire(import.meta.url);
+
+// Lazy-load node:sqlite to defer ExperimentalWarning until after CLI suppresses it
+function openDatabase(path: string) {
+  const { DatabaseSync } = require('node:sqlite');
+  return new DatabaseSync(path);
+}
+
 const log = createLogger('conversation');
 
 const DEFAULT_DB_PATH = join(homedir(), '.cereworker', 'conversations.db');
 
 export class ConversationStore {
-  private db: DatabaseSync;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private db: any;
 
   constructor(dbPath?: string) {
     const path = dbPath ?? DEFAULT_DB_PATH;
@@ -23,7 +32,7 @@ export class ConversationStore {
       }
     }
 
-    this.db = new DatabaseSync(path);
+    this.db = openDatabase(path);
     this.db.exec('PRAGMA journal_mode = WAL');
     this.ensureSchema();
     log.info('Opened conversation database', { path });
