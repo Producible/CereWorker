@@ -1,3 +1,4 @@
+import { execSync } from 'node:child_process';
 import { clack, guardCancel } from '../prompter.js';
 
 export interface ChannelSetup {
@@ -410,6 +411,17 @@ export async function channelsStep(): Promise<ChannelsResult> {
           ? `Verified: ${validation.display}`
           : `Warning: ${validation.error} (continuing anyway)`,
     );
+
+    // Install wechaty if WeChat was selected
+    if (channelId === 'wechat') {
+      clack.log.info('Installing wechaty packages (required for WeChat)...');
+      try {
+        execSync('npm install -g wechaty wechaty-puppet-wechat4u', { stdio: 'pipe', timeout: 300_000 });
+        clack.log.success('wechaty installed.');
+      } catch {
+        clack.log.warn('Failed to install wechaty. Install manually:\n  npm install -g wechaty wechaty-puppet-wechat4u');
+      }
+    }
 
     // Allowlist prompt
     let allowFrom: string[] | undefined;

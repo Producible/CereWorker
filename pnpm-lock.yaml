@@ -33,32 +33,32 @@ importers:
   apps/cli:
     dependencies:
       '@cereworker/browser':
-        specifier: 26.323.2
-        version: 26.323.2(typescript@5.9.3)
+        specifier: 26.323.3
+        version: 26.323.3(typescript@5.9.3)
       '@cereworker/cerebellum-client':
-        specifier: 26.323.2
-        version: 26.323.2
+        specifier: 26.323.3
+        version: 26.323.3
       '@cereworker/cerebrum':
-        specifier: 26.323.2
-        version: 26.323.2
+        specifier: 26.323.3
+        version: 26.323.3
       '@cereworker/channels':
-        specifier: 26.323.2
-        version: 26.323.2(@types/express@5.0.6)
+        specifier: 26.323.3
+        version: 26.323.3(@types/express@5.0.6)
       '@cereworker/config':
-        specifier: 26.323.2
-        version: 26.323.2
+        specifier: 26.323.3
+        version: 26.323.3
       '@cereworker/core':
-        specifier: 26.323.2
-        version: 26.323.2
+        specifier: 26.323.3
+        version: 26.323.3
       '@cereworker/gateway':
-        specifier: 26.323.2
-        version: 26.323.2
+        specifier: 26.323.3
+        version: 26.323.3
       '@cereworker/hippocampus':
-        specifier: 26.323.2
-        version: 26.323.2
+        specifier: 26.323.3
+        version: 26.323.3
       '@cereworker/skills':
-        specifier: 26.323.2
-        version: 26.323.2
+        specifier: 26.323.3
+        version: 26.323.3
       '@clack/prompts':
         specifier: ^0.9.1
         version: 0.9.1
@@ -88,11 +88,11 @@ importers:
   packages/browser:
     dependencies:
       '@cereworker/config':
-        specifier: 26.323.2
-        version: 26.323.2
+        specifier: 26.323.3
+        version: 26.323.3
       '@cereworker/core':
-        specifier: 26.323.2
-        version: 26.323.2
+        specifier: 26.323.3
+        version: 26.323.3
       puppeteer:
         specifier: ^24.0.0
         version: 24.40.0(typescript@5.9.3)
@@ -107,8 +107,8 @@ importers:
   packages/cerebellum-client:
     dependencies:
       '@cereworker/core':
-        specifier: 26.323.2
-        version: 26.323.2
+        specifier: 26.323.3
+        version: 26.323.3
       '@grpc/grpc-js':
         specifier: ^1.12.0
         version: 1.14.3
@@ -132,11 +132,11 @@ importers:
         specifier: ^3.0.47
         version: 3.0.47(zod@3.25.76)
       '@cereworker/config':
-        specifier: 26.323.2
-        version: 26.323.2
+        specifier: 26.323.3
+        version: 26.323.3
       '@cereworker/core':
-        specifier: 26.323.2
-        version: 26.323.2
+        specifier: 26.323.3
+        version: 26.323.3
       '@mariozechner/pi-ai':
         specifier: ^0.57.1
         version: 0.57.1(ws@8.20.0)(zod@3.25.76)
@@ -154,11 +154,11 @@ importers:
   packages/channels:
     dependencies:
       '@cereworker/config':
-        specifier: 26.323.2
-        version: 26.323.2
+        specifier: 26.323.3
+        version: 26.323.3
       '@cereworker/core':
-        specifier: 26.323.2
-        version: 26.323.2
+        specifier: 26.323.3
+        version: 26.323.3
       '@larksuiteoapi/node-sdk':
         specifier: ^1.39.0
         version: 1.59.0
@@ -195,8 +195,8 @@ importers:
   packages/core:
     dependencies:
       '@cereworker/config':
-        specifier: 26.323.2
-        version: 26.323.2
+        specifier: 26.323.3
+        version: 26.323.3
       nanoid:
         specifier: ^5.0.9
         version: 5.1.7
@@ -208,8 +208,8 @@ importers:
   packages/gateway:
     dependencies:
       '@cereworker/core':
-        specifier: 26.323.2
-        version: 26.323.2
+        specifier: 26.323.3
+        version: 26.323.3
       nanoid:
         specifier: ^5.0.9
         version: 5.1.7
@@ -227,11 +227,11 @@ importers:
   packages/hippocampus:
     dependencies:
       '@cereworker/config':
-        specifier: 26.323.2
-        version: 26.323.2
+        specifier: 26.323.3
+        version: 26.323.3
       '@cereworker/core':
-        specifier: 26.323.2
-        version: 26.323.2
+        specifier: 26.323.3
+        version: 26.323.3
       zod:
         specifier: ^3.24.0
         version: 3.25.76
@@ -243,11 +243,11 @@ importers:
   packages/skills:
     dependencies:
       '@cereworker/config':
-        specifier: 26.323.2
-        version: 26.323.2
+        specifier: 26.323.3
+        version: 26.323.3
       '@cereworker/core':
-        specifier: 26.323.2
-        version: 26.323.2
+        specifier: 26.323.3
+        version: 26.323.3
       gray-matter:
         specifier: ^4.0.3
         version: 4.0.3
@@ -467,32 +467,32 @@ packages:
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
 
-  '@cereworker/browser@26.323.2':
-    resolution: {integrity: sha512-48nwr4Wh0lZ03brOahkScK8SoHDkwaODOMDsdKfQIizECAw0NoQSmobUBebGmnY3UnF91zINmf24b2YI4yR4yQ==}
+  '@cereworker/browser@26.323.3':
+    resolution: {integrity: sha512-JSLxnXW5Yd7cC9RYyFbpvcE4PKrHkWGMfItzJdnMrS+ZdvgL1Ni8GN+fq3I5ZCHU2/LXqtSQcZgugvdeAZZwOQ==}
 
-  '@cereworker/cerebellum-client@26.323.2':
-    resolution: {integrity: sha512-2Mv5JbTCsWlUGB8oGlwjLuMPDWTvwbmTFze9APmxctmWrvs85C0VIoXxaZA0rKSO4D3TtuoDgHY3dA5vLgbO+Q==}
+  '@cereworker/cerebellum-client@26.323.3':
+    resolution: {integrity: sha512-clY2U1NEwM7Zy2S+I7AkYPTbiJ9CVhbSAJRNuL1ujBXFhCSH0muTgfOPRXA5WL820f+gz9Va7Qexlhc5C6kDHQ==}
 
-  '@cereworker/cerebrum@26.323.2':
-    resolution: {integrity: sha512-5c0vVgBWC9alN+NHLHNtE+ssDx+l1qaXFQRshPjE6MM0UuXGlctPRn4i80Hp9MgmbR00sx5nr+9fXCwOdRxGxw==}
+  '@cereworker/cerebrum@26.323.3':
+    resolution: {integrity: sha512-8/YaESJQBTLJTZEqyiIuP1IA27d1s+oj/5o0i6glQpdTWaIKeBUAALNsm/VXpXrLvgcSFzc+HN6ppxNdKovnZA==}
 
-  '@cereworker/channels@26.323.2':
-    resolution: {integrity: sha512-tTSarqXqQx4UzqTajbAtsoniU4fMHJEmguMWnedYiumj8aYj27vcloRGCe46CGRRTLfejgDY+3ftV2C5M/oomw==}
+  '@cereworker/channels@26.323.3':
+    resolution: {integrity: sha512-rA23ouXy8BuFr+je+hCcphTwuoBenwfR/u0IfZxy9LnyPEN6v/x8Q5bso8229tU2VlL9+PGy7MxChKi7u44LFQ==}
 
-  '@cereworker/config@26.323.2':
-    resolution: {integrity: sha512-Ci9uag8tugkAN9qNr/qOofgVE/xiC5CI4uCC2dffwKH3dTn5ThuWaLOs8jrs0H0m8C3VkFo8b7uV7r5rFlinHQ==}
+  '@cereworker/config@26.323.3':
+    resolution: {integrity: sha512-9wYI2q995SogYoO4jQ7NgN3w8AT9ls5iZdydJ/1tsnP20rdJnSy7nGJZ6UpqyYkq6pgNCv2AMp9kG5PYWB0CzQ==}
 
-  '@cereworker/core@26.323.2':
-    resolution: {integrity: sha512-XIt3JyD+XJ9Y6EmMlMHBuchR+P2QylWqATNj3F8vNey0wtsh1J6u835ciluqiAPz9ox7RlqKo34Plo4Q0C+Ofw==}
+  '@cereworker/core@26.323.3':
+    resolution: {integrity: sha512-QtGQq8hcAhsdBBpJd7QXsr3gJJfSQaKI2/TQw8sAUNfVylOd3o6VhFUyziF2S8lXp0g7P0duZDcnf18ZpkcvHg==}
 
-  '@cereworker/gateway@26.323.2':
-    resolution: {integrity: sha512-VlPsS5Hh0Wf7fz4DMcg1yKJ3lQ1/JDOYpmX+mjAuEgeY/2sWO5jw9RFcZN4juBwcONnuZr5qHxPifenFzsoRwA==}
+  '@cereworker/gateway@26.323.3':
+    resolution: {integrity: sha512-I4hX4JzNvi8BKO0PGoEOzlVlX0a5xVbbCxt9+hR7rdJVSEWydICNNz/aJoKoKsUQyB+Tet3iCCfByvLB68pHWw==}
 
-  '@cereworker/hippocampus@26.323.2':
-    resolution: {integrity: sha512-FTNbiux7q7QVXx1ElMuwZ/hTwrH+bZftVfpLLTKNIhPqExfogpEUCQ6Z+qBka+KIsgOflQTC9pKdZrhwQ+5KFQ==}
+  '@cereworker/hippocampus@26.323.3':
+    resolution: {integrity: sha512-AqRdLDQ+vBtoCA2UoRrW6z+x/WE3f00rFeObd3IGZop/EA/D5xwwqMTVHYZTkf5vfegHAmuMtboX1B3a6DL+Kw==}
 
-  '@cereworker/skills@26.323.2':
-    resolution: {integrity: sha512-BTRvhZpNwwOJ6qOfg6xb9Pat4ikh7P6vy/dUeeGJpUjCtaDwM39+8zZo4ao+hnM20DXz4L6ZEE/GTm8zx8s6cw==}
+  '@cereworker/skills@26.323.3':
+    resolution: {integrity: sha512-b3tswEzPQRMWDFVWxOI1MGvXluigvita0rh07I8g3O2qyFbbC/5B2KVGzsO2syBxtSpVYE1EXOnSKlPucaao3g==}
 
   '@clack/core@0.4.1':
     resolution: {integrity: sha512-Pxhij4UXg8KSr7rPek6Zowm+5M22rbd2g1nfojHJkxp5YkFqiZ2+YLEM/XGVIzvGOcM0nqjIFxrpDwWRZYWYjA==}
@@ -3670,10 +3670,10 @@ snapshots:
 
   '@bcoe/v8-coverage@1.0.2': {}
 
-  '@cereworker/browser@26.323.2(typescript@5.9.3)':
+  '@cereworker/browser@26.323.3(typescript@5.9.3)':
     dependencies:
-      '@cereworker/config': 26.323.2
-      '@cereworker/core': 26.323.2
+      '@cereworker/config': 26.323.3
+      '@cereworker/core': 26.323.3
       puppeteer: 24.40.0(typescript@5.9.3)
       zod: 3.25.76
     transitivePeerDependencies:
@@ -3685,19 +3685,19 @@ snapshots:
       - typescript
       - utf-8-validate
 
-  '@cereworker/cerebellum-client@26.323.2':
+  '@cereworker/cerebellum-client@26.323.3':
     dependencies:
-      '@cereworker/core': 26.323.2
+      '@cereworker/core': 26.323.3
       '@grpc/grpc-js': 1.14.3
       '@grpc/proto-loader': 0.7.15
 
-  '@cereworker/cerebrum@26.323.2':
+  '@cereworker/cerebrum@26.323.3':
     dependencies:
       '@ai-sdk/anthropic': 3.0.63(zod@3.25.76)
       '@ai-sdk/google': 3.0.52(zod@3.25.76)
       '@ai-sdk/openai': 3.0.47(zod@3.25.76)
-      '@cereworker/config': 26.323.2
-      '@cereworker/core': 26.323.2
+      '@cereworker/config': 26.323.3
+      '@cereworker/core': 26.323.3
       '@mariozechner/pi-ai': 0.57.1(ws@8.20.0)(zod@3.25.76)
       ai: 6.0.134(zod@3.25.76)
       zod: 3.25.76
@@ -3709,10 +3709,10 @@ snapshots:
       - utf-8-validate
       - ws
 
-  '@cereworker/channels@26.323.2(@types/express@5.0.6)':
+  '@cereworker/channels@26.323.3(@types/express@5.0.6)':
     dependencies:
-      '@cereworker/config': 26.323.2
-      '@cereworker/core': 26.323.2
+      '@cereworker/config': 26.323.3
+      '@cereworker/core': 26.323.3
       '@larksuiteoapi/node-sdk': 1.59.0
       '@slack/bolt': 4.6.0(@types/express@5.0.6)
       discord.js: 14.25.1
@@ -3726,35 +3726,35 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@cereworker/config@26.323.2':
+  '@cereworker/config@26.323.3':
     dependencies:
       yaml: 2.8.3
       zod: 3.25.76
 
-  '@cereworker/core@26.323.2':
+  '@cereworker/core@26.323.3':
     dependencies:
-      '@cereworker/config': 26.323.2
+      '@cereworker/config': 26.323.3
       nanoid: 5.1.7
 
-  '@cereworker/gateway@26.323.2':
+  '@cereworker/gateway@26.323.3':
     dependencies:
-      '@cereworker/core': 26.323.2
+      '@cereworker/core': 26.323.3
       nanoid: 5.1.7
       ws: 8.20.0
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
 
-  '@cereworker/hippocampus@26.323.2':
+  '@cereworker/hippocampus@26.323.3':
     dependencies:
-      '@cereworker/config': 26.323.2
-      '@cereworker/core': 26.323.2
+      '@cereworker/config': 26.323.3
+      '@cereworker/core': 26.323.3
       zod: 3.25.76
 
-  '@cereworker/skills@26.323.2':
+  '@cereworker/skills@26.323.3':
     dependencies:
-      '@cereworker/config': 26.323.2
-      '@cereworker/core': 26.323.2
+      '@cereworker/config': 26.323.3
+      '@cereworker/core': 26.323.3
       gray-matter: 4.0.3
 
   '@clack/core@0.4.1':

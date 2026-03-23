@@ -18,7 +18,9 @@ export function createWeChatChannel(config: WeChatChannelConfig): ChannelPlugin 
     meta: { name: 'WeChat', emoji: 'W' },
 
     async start(handler: MessageHandler) {
-      const wechaty = await import('wechaty').catch(() => null);
+      const mod = 'wechaty';
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const wechaty: any = await import(mod).catch(() => null);
       if (!wechaty) {
         throw new Error(
           'WeChat requires the wechaty package. Install it:\n  npm install -g wechaty wechaty-puppet-wechat4u',

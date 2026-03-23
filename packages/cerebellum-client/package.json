@@ -1,6 +1,6 @@
 {
   "name": "@cereworker/cerebellum-client",
-  "version": "26.323.2",
+  "version": "26.323.3",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -23,7 +23,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@cereworker/core": "26.323.2",
+    "@cereworker/core": "26.323.3",
     "@grpc/grpc-js": "^1.12.0",
     "@grpc/proto-loader": "^0.7.0"
   },
