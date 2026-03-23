@@ -1,4 +1,4 @@
-import { streamText, generateText, tool, type CoreMessage, type LanguageModel } from 'ai';
+import { streamText, generateText, tool, type ModelMessage, type LanguageModel } from 'ai';
 import { z } from 'zod';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
@@ -112,29 +112,29 @@ export class CerebrumProvider {
     }
   }
 
-  private convertMessages(messages: Message[]): CoreMessage[] {
+  private convertMessages(messages: Message[]): ModelMessage[] {
     return messages
       .filter((m) => m.role !== 'system' && m.role !== 'cerebellum')
-      .map((m) => {
+      .map((m): ModelMessage => {
         switch (m.role) {
           case 'user':
-            return { role: 'user' as const, content: m.content };
+            return { role: 'user', content: m.content } as ModelMessage;
           case 'cerebrum':
-            return { role: 'assistant' as const, content: m.content };
+            return { role: 'assistant', content: m.content } as ModelMessage;
           case 'tool':
             return {
-              role: 'tool' as const,
+              role: 'tool',
               content: [
                 {
-                  type: 'tool-result' as const,
+                  type: 'tool-result',
                   toolCallId: m.toolResult?.callId ?? '',
                   toolName: m.metadata?.toolName as string ?? 'unknown',
                   result: m.content,
                 },
               ],
-            };
+            } as unknown as ModelMessage;
           default:
-            return { role: 'user' as const, content: m.content };
+            return { role: 'user', content: m.content } as ModelMessage;
         }
       });
   }
@@ -173,7 +173,7 @@ export class CerebrumProvider {
 
       convertedTools[name] = tool({
         description: def.description,
-        parameters: schema,
+        inputSchema: schema,
         execute: async (args, { toolCallId }) => {
           const result = await callbacks.onToolCall({
             id: toolCallId,
@@ -193,7 +193,6 @@ export class CerebrumProvider {
           model,
           messages: coreMessages,
           tools: allTools,
-          maxSteps: options?.maxSteps ?? this.config.maxSteps,
           temperature: this.config.temperature,
           ...(systemPrompt ? { system: systemPrompt } : {}),
         });
@@ -203,8 +202,8 @@ export class CerebrumProvider {
         for await (const part of result.fullStream) {
           switch (part.type) {
             case 'text-delta':
-              fullContent += part.textDelta;
-              callbacks.onChunk(part.textDelta);
+              fullContent += part.text;
+              callbacks.onChunk(part.text);
               break;
             case 'tool-call':
               // External tools already call onToolCall via their execute function,
@@ -213,7 +212,7 @@ export class CerebrumProvider {
                 await callbacks.onToolCall({
                   id: part.toolCallId,
                   name: part.toolName,
-                  args: part.args as Record<string, unknown>,
+                  args: part.input as Record<string, unknown>,
                 });
               }
               break;

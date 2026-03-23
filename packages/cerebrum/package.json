@@ -1,6 +1,6 @@
 {
   "name": "@cereworker/cerebrum",
-  "version": "26.322.4",
+  "version": "26.322.5",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -22,13 +22,13 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^1.2.0",
-    "@ai-sdk/google": "^1.2.0",
-    "@ai-sdk/openai": "^1.2.0",
-    "@cereworker/config": "26.322.4",
-    "@cereworker/core": "26.322.4",
+    "@ai-sdk/anthropic": "^3.0.63",
+    "@ai-sdk/google": "^3.0.52",
+    "@ai-sdk/openai": "^3.0.47",
+    "@cereworker/config": "26.322.5",
+    "@cereworker/core": "26.322.5",
     "@mariozechner/pi-ai": "^0.57.1",
-    "ai": "^4.1.0",
+    "ai": "^6.0.134",
     "zod": "^3.24.0"
   },
   "devDependencies": {

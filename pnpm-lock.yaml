@@ -33,32 +33,32 @@ importers:
   apps/cli:
     dependencies:
       '@cereworker/browser':
-        specifier: workspace:*
-        version: link:../../packages/browser
+        specifier: 26.322.4
+        version: 26.322.4(typescript@5.9.3)
       '@cereworker/cerebellum-client':
-        specifier: workspace:*
-        version: link:../../packages/cerebellum-client
+        specifier: 26.322.4
+        version: 26.322.4
       '@cereworker/cerebrum':
-        specifier: workspace:*
-        version: link:../../packages/cerebrum
+        specifier: 26.322.4
+        version: 26.322.4(react@18.3.1)
       '@cereworker/channels':
-        specifier: workspace:*
-        version: link:../../packages/channels
+        specifier: 26.322.4
+        version: 26.322.4(@types/express@5.0.6)
       '@cereworker/config':
-        specifier: workspace:*
-        version: link:../../packages/config
+        specifier: 26.322.4
+        version: 26.322.4
       '@cereworker/core':
-        specifier: workspace:*
-        version: link:../../packages/core
+        specifier: 26.322.4
+        version: 26.322.4
       '@cereworker/gateway':
-        specifier: workspace:*
-        version: link:../../packages/gateway
+        specifier: 26.322.4
+        version: 26.322.4
       '@cereworker/hippocampus':
-        specifier: workspace:*
-        version: link:../../packages/hippocampus
+        specifier: 26.322.4
+        version: 26.322.4
       '@cereworker/skills':
-        specifier: workspace:*
-        version: link:../../packages/skills
+        specifier: 26.322.4
+        version: 26.322.4
       '@clack/prompts':
         specifier: ^0.9.1
         version: 0.9.1
@@ -88,11 +88,11 @@ importers:
   packages/browser:
     dependencies:
       '@cereworker/config':
-        specifier: workspace:*
-        version: link:../config
+        specifier: 26.322.4
+        version: 26.322.4
       '@cereworker/core':
-        specifier: workspace:*
-        version: link:../core
+        specifier: 26.322.4
+        version: 26.322.4
       puppeteer:
         specifier: ^24.0.0
         version: 24.38.0(typescript@5.9.3)
@@ -107,8 +107,8 @@ importers:
   packages/cerebellum-client:
     dependencies:
       '@cereworker/core':
-        specifier: workspace:*
-        version: link:../core
+        specifier: 26.322.4
+        version: 26.322.4
       '@grpc/grpc-js':
         specifier: ^1.12.0
         version: 1.14.3
@@ -123,26 +123,26 @@ importers:
   packages/cerebrum:
     dependencies:
       '@ai-sdk/anthropic':
-        specifier: ^1.2.0
-        version: 1.2.12(zod@3.25.76)
+        specifier: ^3.0.63
+        version: 3.0.63(zod@3.25.76)
       '@ai-sdk/google':
-        specifier: ^1.2.0
-        version: 1.2.22(zod@3.25.76)
+        specifier: ^3.0.52
+        version: 3.0.52(zod@3.25.76)
       '@ai-sdk/openai':
-        specifier: ^1.2.0
-        version: 1.3.24(zod@3.25.76)
+        specifier: ^3.0.47
+        version: 3.0.47(zod@3.25.76)
       '@cereworker/config':
-        specifier: workspace:*
-        version: link:../config
+        specifier: 26.322.4
+        version: 26.322.4
       '@cereworker/core':
-        specifier: workspace:*
-        version: link:../core
+        specifier: 26.322.4
+        version: 26.322.4
       '@mariozechner/pi-ai':
         specifier: ^0.57.1
         version: 0.57.1(ws@8.19.0)(zod@3.25.76)
       ai:
-        specifier: ^4.1.0
-        version: 4.3.19(react@18.3.1)(zod@3.25.76)
+        specifier: ^6.0.134
+        version: 6.0.134(zod@3.25.76)
       zod:
         specifier: ^3.24.0
         version: 3.25.76
@@ -154,11 +154,11 @@ importers:
   packages/channels:
     dependencies:
       '@cereworker/config':
-        specifier: workspace:*
-        version: link:../config
+        specifier: 26.322.4
+        version: 26.322.4
       '@cereworker/core':
-        specifier: workspace:*
-        version: link:../core
+        specifier: 26.322.4
+        version: 26.322.4
       '@larksuiteoapi/node-sdk':
         specifier: ^1.39.0
         version: 1.59.0
@@ -198,8 +198,8 @@ importers:
   packages/core:
     dependencies:
       '@cereworker/config':
-        specifier: workspace:*
-        version: link:../config
+        specifier: 26.322.4
+        version: 26.322.4
       nanoid:
         specifier: ^5.0.9
         version: 5.1.6
@@ -218,8 +218,8 @@ importers:
   packages/gateway:
     dependencies:
       '@cereworker/core':
-        specifier: workspace:*
-        version: link:../core
+        specifier: 26.322.4
+        version: 26.322.4
       nanoid:
         specifier: ^5.0.9
         version: 5.1.6
@@ -237,11 +237,11 @@ importers:
   packages/hippocampus:
     dependencies:
       '@cereworker/config':
-        specifier: workspace:*
-        version: link:../config
+        specifier: 26.322.4
+        version: 26.322.4
       '@cereworker/core':
-        specifier: workspace:*
-        version: link:../core
+        specifier: 26.322.4
+        version: 26.322.4
       zod:
         specifier: ^3.24.0
         version: 3.25.76
@@ -253,11 +253,11 @@ importers:
   packages/skills:
     dependencies:
       '@cereworker/config':
-        specifier: workspace:*
-        version: link:../config
+        specifier: 26.322.4
+        version: 26.322.4
       '@cereworker/core':
-        specifier: workspace:*
-        version: link:../core
+        specifier: 26.322.4
+        version: 26.322.4
       gray-matter:
         specifier: ^4.0.3
         version: 4.0.3
@@ -274,11 +274,29 @@ packages:
     peerDependencies:
       zod: ^3.0.0
 
+  '@ai-sdk/anthropic@3.0.63':
+    resolution: {integrity: sha512-SiLosFr0FfKfrNpAAj8mD/i3S5YBB/z5orb1DH3pN1yATuBNjjPMLnRE4P3Dn7Y5cQsro0uzw5g5117hkShWoQ==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
+  '@ai-sdk/gateway@3.0.77':
+    resolution: {integrity: sha512-UdwIG2H2YMuntJQ5L+EmED5XiwnlvDT3HOmKfVFxR4Nq/RSLFA/HcchhwfNXHZ5UJjyuL2VO0huLbWSZ9ijemQ==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
   '@ai-sdk/google@1.2.22':
     resolution: {integrity: sha512-Ppxu3DIieF1G9pyQ5O1Z646GYR0gkC57YdBqXJ82qvCdhEhZHu0TWhmnOoeIWe2olSbuDeoOY+MfJrW8dzS3Hw==}
     engines: {node: '>=18'}
     peerDependencies:
       zod: ^3.0.0
+
+  '@ai-sdk/google@3.0.52':
+    resolution: {integrity: sha512-HiFB4VlHnv55k9xIbgQW9tHw5OsLXzbAghnDUqrnk/S94QpQuyrDwLSDsk/tUkxJeT00B+wvhL1y6/SARdLeXw==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
 
   '@ai-sdk/openai@1.3.24':
     resolution: {integrity: sha512-GYXnGJTHRTZc4gJMSmFRgEQudjqd4PUN0ZjQhPwOAYH1yOAvQoG/Ikqs+HyISRbLPCrhbZnPKCNHuRU4OfpW0Q==}
@@ -286,14 +304,30 @@ packages:
     peerDependencies:
       zod: ^3.0.0
 
+  '@ai-sdk/openai@3.0.47':
+    resolution: {integrity: sha512-bRsb2sDN5u+pKO3Kdr0flpxtL+cPwQ2uCo/pVyzIbj2I4AkKAokJHhw5JWLVOeEwdlYzWfmv+hzaiGarzUcTFQ==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
   '@ai-sdk/provider-utils@2.2.8':
     resolution: {integrity: sha512-fqhG+4sCVv8x7nFzYnFo19ryhAa3w096Kmc3hWxMQfW/TubPOmt3A6tYZhl4mUfQWWQMsuSkLrtjlWuXBVSGQA==}
     engines: {node: '>=18'}
     peerDependencies:
       zod: ^3.23.8
 
+  '@ai-sdk/provider-utils@4.0.21':
+    resolution: {integrity: sha512-MtFUYI1/8mgDvRmaBDjbLJPFFrMG777AvSgyIFQtZHIMzm88R/12vYBBpnk7pfiWLFE1DSZzY4WDYzGbKAcmiw==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
+
   '@ai-sdk/provider@1.1.3':
     resolution: {integrity: sha512-qZMxYJ0qqX/RfnuIaab+zp8UAeJn/ygXXAffR5I4N0n1IrvA6qBsjc8hXLmBiMV2zoXlifkacF7sEFnYnjBcqg==}
+    engines: {node: '>=18'}
+
+  '@ai-sdk/provider@3.0.8':
+    resolution: {integrity: sha512-oGMAgGoQdBXbZqNG0Ze56CHjDZ1IDYOwGYxYjO5KLSlz5HiNQ9udIXsPZ61VWaHGZ5XW/jyjmr6t2xz2jGVwbQ==}
     engines: {node: '>=18'}
 
   '@ai-sdk/react@1.2.12':
@@ -490,6 +524,33 @@ packages:
   '@bcoe/v8-coverage@1.0.2':
     resolution: {integrity: sha512-6zABk/ECA/QYSCQ1NGiVwwbQerUCZ+TQbp64Q3AgmfNvurHH0j8TtXa1qbShXA6qqkpAj4V5W8pP6mLe1mcMqA==}
     engines: {node: '>=18'}
+
+  '@cereworker/browser@26.322.4':
+    resolution: {integrity: sha512-omiQGfcYGI4PrTozoYoMot+5i8A/E5FI/abcxhM9j4MFK/3nMjjjLNJaGUnCyQh94UOBouFHzmUOqPNHh6HSRA==}
+
+  '@cereworker/cerebellum-client@26.322.4':
+    resolution: {integrity: sha512-VqjF+zsfets8J5RwAqCKsNrrznXUKo0tjmAvkc1WQv03i+KpmAu7wdKZ+JaxfSf9G99Z/pPfJ6vXT1alCqKbxQ==}
+
+  '@cereworker/cerebrum@26.322.4':
+    resolution: {integrity: sha512-2w5ZiE9r/4UzncaUNJ/yDJcVrroW4Inues5q7uWRwPTKPG3kNlTUSC0n7mlacXPEG61RzHNb5a6eOdvPfbxdGg==}
+
+  '@cereworker/channels@26.322.4':
+    resolution: {integrity: sha512-AMX7RflAHVbxn8zkF3MXun2qKeTRy3kUCwHJ5KeVM4pTLc3VzLsYXb4MZFNOXMrpRcM7b3ga0xyDb3ja8ndALw==}
+
+  '@cereworker/config@26.322.4':
+    resolution: {integrity: sha512-uEPAHGXCpfG242NzqydaX1MeMV5GAr+hw0+hZ46C1hBAmVTsSBaNploDNDylIQKvZMczxW1+QchoAdTdogDy2Q==}
+
+  '@cereworker/core@26.322.4':
+    resolution: {integrity: sha512-lLJ4j1qDxCCaGghWhvwukMqxK7gNpFNYYYC2IY8tkOxcly3tyAVouHrGSDu0lpkKQ6LcfPAJEvbGctM+Sf9HUg==}
+
+  '@cereworker/gateway@26.322.4':
+    resolution: {integrity: sha512-LBquyuLfDFLN6E+qPaD4w734zuwDAHe5F2VWE58rWS+tohgT8HeciZ1MDqCVoH/q0h6Svq2S04vEbbCXHibvqg==}
+
+  '@cereworker/hippocampus@26.322.4':
+    resolution: {integrity: sha512-aIvZL5BfxurbGuqb2r3G0otJWhf22nrZzwb3VAIoSixy0prgkMn0Ax8WFHYdn8UUXerdKsAnw1JyJoh+f4b0Tg==}
+
+  '@cereworker/skills@26.322.4':
+    resolution: {integrity: sha512-ctjSRL6nDNLK8YmxyDOwBKqbB+G5XBCXIMPbrDrxAGjwLN2ztBXNSO9EGxnkKjm0PhRh24mSXevGZ67Rbdj49Q==}
 
   '@clack/core@0.4.1':
     resolution: {integrity: sha512-Pxhij4UXg8KSr7rPek6Zowm+5M22rbd2g1nfojHJkxp5YkFqiZ2+YLEM/XGVIzvGOcM0nqjIFxrpDwWRZYWYjA==}
@@ -1642,6 +1703,10 @@ packages:
   '@types/yauzl@2.10.3':
     resolution: {integrity: sha512-oJoftv0LSuaDZE3Le4DbKX+KS9G36NzOeSap90UIK0yMA/NhKJhqlSGtNDORNRaIbQfzjXDrQa0ytJ6mNRGz/Q==}
 
+  '@vercel/oidc@3.1.0':
+    resolution: {integrity: sha512-Fw28YZpRnA3cAHHDlkt7xQHiJ0fcL+NRcIqsocZQUSmbzeIKRpwttJjik5ZGanXP+vlA4SbTg+AbA3bP363l+w==}
+    engines: {node: '>= 20'}
+
   '@vitest/coverage-v8@4.0.18':
     resolution: {integrity: sha512-7i+N2i0+ME+2JFZhfuz7Tg/FqKtilHjGyGvoHYQ6iLV0zahbsJ9sljC9OcFcPDbhYKCet+sG8SsVqlyGvPflZg==}
     peerDependencies:
@@ -1720,6 +1785,12 @@ packages:
     peerDependenciesMeta:
       react:
         optional: true
+
+  ai@6.0.134:
+    resolution: {integrity: sha512-YalNEaavld/kE444gOcsMKXdVVRGEe0SK77fAFcWYcqLg+a7xKnEet8bdfrEAJTfnMjj01rhgrIL10903w1a5Q==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      zod: ^3.25.76 || ^4.1.8
 
   ajv-formats@3.0.1:
     resolution: {integrity: sha512-8iUql50EUR+uUcdRQ3HDqa6EVyo3docL8g5WJ3FNcWmu62IbkGUue/pEyLBW8VGKKucTPgqeks4fIU1DA4yowQ==}
@@ -2397,6 +2468,10 @@ packages:
   events@3.3.0:
     resolution: {integrity: sha512-mQw+2fkQbALzQ7V0MY0IqdnXNOeTtP4r0lN9z7AAawCXgqea7bDii20AYrIBrFd/Hx0M2Ocz6S111CaFkUcb0Q==}
     engines: {node: '>=0.8.x'}
+
+  eventsource-parser@3.0.6:
+    resolution: {integrity: sha512-Vo1ab+QXPzZ4tCa8SwIHJFaSzy4R6SHf7BY79rFBDf0idraZWAkYrDjDj8uWaSm3S2TK+hJ7/t1CEmZ7jXw+pg==}
+    engines: {node: '>=18.0.0'}
 
   exif-parser@0.1.12:
     resolution: {integrity: sha512-c2bQfLNbMzLPmzQuOr8fy0csy84WmwnER81W88DzTp9CYNPJ6yzOj2EZAh9pywYpqHnshVLHQJ8WzldAyfY+Iw==}
@@ -4375,16 +4450,41 @@ snapshots:
       '@ai-sdk/provider-utils': 2.2.8(zod@3.25.76)
       zod: 3.25.76
 
+  '@ai-sdk/anthropic@3.0.63(zod@3.25.76)':
+    dependencies:
+      '@ai-sdk/provider': 3.0.8
+      '@ai-sdk/provider-utils': 4.0.21(zod@3.25.76)
+      zod: 3.25.76
+
+  '@ai-sdk/gateway@3.0.77(zod@3.25.76)':
+    dependencies:
+      '@ai-sdk/provider': 3.0.8
+      '@ai-sdk/provider-utils': 4.0.21(zod@3.25.76)
+      '@vercel/oidc': 3.1.0
+      zod: 3.25.76
+
   '@ai-sdk/google@1.2.22(zod@3.25.76)':
     dependencies:
       '@ai-sdk/provider': 1.1.3
       '@ai-sdk/provider-utils': 2.2.8(zod@3.25.76)
       zod: 3.25.76
 
+  '@ai-sdk/google@3.0.52(zod@3.25.76)':
+    dependencies:
+      '@ai-sdk/provider': 3.0.8
+      '@ai-sdk/provider-utils': 4.0.21(zod@3.25.76)
+      zod: 3.25.76
+
   '@ai-sdk/openai@1.3.24(zod@3.25.76)':
     dependencies:
       '@ai-sdk/provider': 1.1.3
       '@ai-sdk/provider-utils': 2.2.8(zod@3.25.76)
+      zod: 3.25.76
+
+  '@ai-sdk/openai@3.0.47(zod@3.25.76)':
+    dependencies:
+      '@ai-sdk/provider': 3.0.8
+      '@ai-sdk/provider-utils': 4.0.21(zod@3.25.76)
       zod: 3.25.76
 
   '@ai-sdk/provider-utils@2.2.8(zod@3.25.76)':
@@ -4394,7 +4494,18 @@ snapshots:
       secure-json-parse: 2.7.0
       zod: 3.25.76
 
+  '@ai-sdk/provider-utils@4.0.21(zod@3.25.76)':
+    dependencies:
+      '@ai-sdk/provider': 3.0.8
+      '@standard-schema/spec': 1.1.0
+      eventsource-parser: 3.0.6
+      zod: 3.25.76
+
   '@ai-sdk/provider@1.1.3':
+    dependencies:
+      json-schema: 0.4.0
+
+  '@ai-sdk/provider@3.0.8':
     dependencies:
       json-schema: 0.4.0
 
@@ -4826,6 +4937,101 @@ snapshots:
       '@babel/helper-validator-identifier': 7.28.5
 
   '@bcoe/v8-coverage@1.0.2': {}
+
+  '@cereworker/browser@26.322.4(typescript@5.9.3)':
+    dependencies:
+      '@cereworker/config': 26.322.4
+      '@cereworker/core': 26.322.4
+      puppeteer: 24.38.0(typescript@5.9.3)
+      zod: 3.25.76
+    transitivePeerDependencies:
+      - bare-abort-controller
+      - bare-buffer
+      - bufferutil
+      - react-native-b4a
+      - supports-color
+      - typescript
+      - utf-8-validate
+
+  '@cereworker/cerebellum-client@26.322.4':
+    dependencies:
+      '@cereworker/core': 26.322.4
+      '@grpc/grpc-js': 1.14.3
+      '@grpc/proto-loader': 0.7.15
+
+  '@cereworker/cerebrum@26.322.4(react@18.3.1)':
+    dependencies:
+      '@ai-sdk/anthropic': 1.2.12(zod@3.25.76)
+      '@ai-sdk/google': 1.2.22(zod@3.25.76)
+      '@ai-sdk/openai': 1.3.24(zod@3.25.76)
+      '@cereworker/config': 26.322.4
+      '@cereworker/core': 26.322.4
+      '@mariozechner/pi-ai': 0.57.1(ws@8.19.0)(zod@3.25.76)
+      ai: 4.3.19(react@18.3.1)(zod@3.25.76)
+      zod: 3.25.76
+    transitivePeerDependencies:
+      - '@modelcontextprotocol/sdk'
+      - aws-crt
+      - bufferutil
+      - react
+      - supports-color
+      - utf-8-validate
+      - ws
+
+  '@cereworker/channels@26.322.4(@types/express@5.0.6)':
+    dependencies:
+      '@cereworker/config': 26.322.4
+      '@cereworker/core': 26.322.4
+      '@larksuiteoapi/node-sdk': 1.59.0
+      '@slack/bolt': 4.6.0(@types/express@5.0.6)
+      discord.js: 14.25.1
+      matrix-js-sdk: 36.2.0
+      telegraf: 4.16.3
+      wechaty: 1.20.2
+    transitivePeerDependencies:
+      - '@swc/core'
+      - '@types/express'
+      - brolog
+      - bufferutil
+      - debug
+      - encoding
+      - redux
+      - rxjs
+      - supports-color
+      - utf-8-validate
+
+  '@cereworker/config@26.322.4':
+    dependencies:
+      yaml: 2.8.2
+      zod: 3.25.76
+
+  '@cereworker/core@26.322.4':
+    dependencies:
+      '@cereworker/config': 26.322.4
+      nanoid: 5.1.6
+    optionalDependencies:
+      better-sqlite3: 11.10.0
+
+  '@cereworker/gateway@26.322.4':
+    dependencies:
+      '@cereworker/core': 26.322.4
+      nanoid: 5.1.6
+      ws: 8.19.0
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
+
+  '@cereworker/hippocampus@26.322.4':
+    dependencies:
+      '@cereworker/config': 26.322.4
+      '@cereworker/core': 26.322.4
+      zod: 3.25.76
+
+  '@cereworker/skills@26.322.4':
+    dependencies:
+      '@cereworker/config': 26.322.4
+      '@cereworker/core': 26.322.4
+      gray-matter: 4.0.3
 
   '@clack/core@0.4.1':
     dependencies:
@@ -6110,6 +6316,8 @@ snapshots:
       '@types/node': 22.19.15
     optional: true
 
+  '@vercel/oidc@3.1.0': {}
+
   '@vitest/coverage-v8@4.0.18(vitest@4.0.18(@opentelemetry/api@1.9.0)(@types/node@22.19.15)(tsx@4.21.0)(yaml@2.8.2))':
     dependencies:
       '@bcoe/v8-coverage': 1.0.2
@@ -6202,6 +6410,14 @@ snapshots:
       zod: 3.25.76
     optionalDependencies:
       react: 18.3.1
+
+  ai@6.0.134(zod@3.25.76):
+    dependencies:
+      '@ai-sdk/gateway': 3.0.77(zod@3.25.76)
+      '@ai-sdk/provider': 3.0.8
+      '@ai-sdk/provider-utils': 4.0.21(zod@3.25.76)
+      '@opentelemetry/api': 1.9.0
+      zod: 3.25.76
 
   ajv-formats@3.0.1(ajv@8.18.0):
     optionalDependencies:
@@ -6703,6 +6919,11 @@ snapshots:
       redux: 4.2.1
       redux-observable: 2.0.0(redux@4.2.1)
 
+  ducks@1.0.2(redux-observable@2.0.0)(redux@4.2.1):
+    dependencies:
+      redux: 4.2.1
+      redux-observable: 2.0.0(redux@4.2.1)
+
   dunder-proto@1.0.1:
     dependencies:
       call-bind-apply-helpers: 1.0.2
@@ -6904,6 +7125,8 @@ snapshots:
       - bare-abort-controller
 
   events@3.3.0: {}
+
+  eventsource-parser@3.0.6: {}
 
   exif-parser@0.1.12: {}
 
@@ -8912,6 +9135,29 @@ snapshots:
       - supports-color
       - wechaty
 
+  wechaty-puppet-service@1.19.9(wechaty-puppet@1.20.2)(wechaty@1.20.2):
+    dependencies:
+      clone-class: 1.1.3
+      ducks: 1.0.2(redux-observable@2.0.0)(redux@4.2.1)
+      file-box: 1.5.5
+      flash-store: 1.3.5
+      gerror: 1.0.16
+      redux-observable: 2.0.0(redux@4.2.1)
+      rxjs: 7.8.2
+      semver: 7.7.4
+      stronger-typed-streams: 0.2.0
+      uuid: 8.3.2
+      wechaty-grpc: 1.5.2
+      wechaty-puppet: 1.20.2(rxjs@7.8.2)
+      wechaty-redux: 1.20.2(wechaty-puppet@1.20.2)(wechaty@1.20.2)
+      wechaty-token: 1.1.2
+    transitivePeerDependencies:
+      - brolog
+      - debug
+      - redux
+      - supports-color
+      - wechaty
+
   wechaty-puppet-wechat4u@1.14.14(@swc/core@1.15.18)(wechaty-puppet@1.20.2(rxjs@7.8.2)):
     dependencies:
       '@alloc/quick-lru': 5.2.0
@@ -8959,6 +9205,23 @@ snapshots:
     transitivePeerDependencies:
       - brolog
 
+  wechaty-redux@1.20.2(wechaty-puppet@1.20.2)(wechaty@1.20.2):
+    dependencies:
+      ducks: 1.0.2(redux-observable@2.0.0)(redux@4.2.1)
+      gerror: 1.0.16
+      redux: 4.2.1
+      redux-observable: 2.0.0(redux@4.2.1)
+      rxjs: 7.8.2
+      state-switch: 1.6.3(brolog@1.14.2)(gerror@1.0.16)(rxjs@7.8.2)
+      typed-emitter: 1.5.0-from-event
+      typesafe-actions: 5.1.0
+      utility-types: 3.11.0
+      uuid: 8.3.2
+      wechaty: 1.20.2
+      wechaty-puppet: 1.20.2(rxjs@7.8.2)
+    transitivePeerDependencies:
+      - brolog
+
   wechaty-token@1.1.2:
     dependencies:
       brolog: 1.14.2
@@ -8967,6 +9230,38 @@ snapshots:
       uuid: 8.3.2
     transitivePeerDependencies:
       - supports-color
+
+  wechaty@1.20.2:
+    dependencies:
+      clone-class: 1.1.3
+      cmd-ts: 0.10.2
+      cockatiel: 2.0.2
+      cross-spawn: 7.0.6
+      dotenv: 16.6.1
+      file-box: 1.4.15
+      fp-ts: 2.16.11
+      gerror: 1.0.16
+      get-port: 6.1.2
+      json-rpc-peer: 0.17.0
+      memory-card: 1.1.2
+      open-graph: 0.2.6
+      rx-queue: 1.0.5
+      state-switch: 1.6.3(brolog@1.14.2)(gerror@1.0.16)(rxjs@7.8.2)
+      uuid: 8.3.2
+      wechaty-puppet: 1.20.2(rxjs@7.8.2)
+      wechaty-puppet-service: 1.19.9(wechaty-puppet@1.20.2)(wechaty@1.20.2)
+      wechaty-puppet-wechat4u: 1.14.14(@swc/core@1.15.18)(wechaty-puppet@1.20.2(rxjs@7.8.2))
+      wechaty-token: 1.1.2
+      ws: 8.19.0
+    transitivePeerDependencies:
+      - '@swc/core'
+      - brolog
+      - bufferutil
+      - debug
+      - redux
+      - rxjs
+      - supports-color
+      - utf-8-validate
 
   wechaty@1.20.2(@swc/core@1.15.18)(brolog@1.14.2)(redux@4.2.1)(rxjs@7.8.2):
     dependencies:
