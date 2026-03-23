@@ -37,3 +37,5 @@ export { buildSystemPrompt } from './system-prompt.js';
 export type { SystemPromptOptions } from './system-prompt.js';
 export { PairingStore, formatCode, normalizeCode } from './pairing.js';
 export type { PairingRequest, ApprovalResult } from './pairing.js';
+export { createHttpTools } from './http-tools.js';
+export type { HttpToolConfig } from './http-tools.js';

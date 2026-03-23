@@ -1,4 +1,5 @@
 import puppeteer, { type Browser, type Page } from 'puppeteer';
+import { connectCdp, disconnectCdp, getCdpSession, type CdpConnectionOptions } from './cdp.js';
 
 export interface BrowserSession {
   browser: Browser;
@@ -6,6 +7,26 @@ export interface BrowserSession {
 }
 
 let session: BrowserSession | null = null;
+let mode: 'launch' | 'connect' = 'launch';
+let cdpOptions: CdpConnectionOptions = {};
+
+export function setMode(m: 'launch' | 'connect', options?: CdpConnectionOptions): void {
+  mode = m;
+  cdpOptions = options ?? {};
+}
+
+export function getMode(): 'launch' | 'connect' {
+  return mode;
+}
+
+async function getOrCreateSession(): Promise<BrowserSession> {
+  if (mode === 'connect') {
+    const existing = getCdpSession();
+    if (existing) return existing;
+    return connectCdp(cdpOptions);
+  }
+  return launchBrowser();
+}
 
 export async function launchBrowser(headless = true): Promise<BrowserSession> {
   if (session) return session;
@@ -23,6 +44,10 @@ export async function launchBrowser(headless = true): Promise<BrowserSession> {
 }
 
 export async function closeBrowser(): Promise<void> {
+  if (mode === 'connect') {
+    await disconnectCdp();
+    return;
+  }
   if (session) {
     await session.browser.close();
     session = null;
@@ -30,17 +55,18 @@ export async function closeBrowser(): Promise<void> {
 }
 
 export function getSession(): BrowserSession | null {
+  if (mode === 'connect') return getCdpSession();
   return session;
 }
 
 export async function navigateTo(url: string): Promise<string> {
-  const s = await launchBrowser();
+  const s = await getOrCreateSession();
   await s.page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
   return `Navigated to ${s.page.url()} - Title: ${await s.page.title()}`;
 }
 
 export async function getPageText(): Promise<string> {
-  const s = await launchBrowser();
+  const s = await getOrCreateSession();
   const text = await s.page.evaluate(() => document.body.innerText);
   // Truncate to avoid massive output
   const maxLen = 10000;
@@ -51,14 +77,14 @@ export async function getPageText(): Promise<string> {
 }
 
 export async function screenshot(path?: string): Promise<string> {
-  const s = await launchBrowser();
+  const s = await getOrCreateSession();
   const filePath = path ?? `/tmp/cereworker-screenshot-${Date.now()}.png`;
   await s.page.screenshot({ path: filePath, fullPage: false });
   return `Screenshot saved to ${filePath}`;
 }
 
 export async function clickElement(selector: string): Promise<string> {
-  const s = await launchBrowser();
+  const s = await getOrCreateSession();
   try {
     await s.page.click(selector);
     return `Clicked: ${selector}`;
@@ -68,7 +94,7 @@ export async function clickElement(selector: string): Promise<string> {
 }
 
 export async function typeText(selector: string, text: string): Promise<string> {
-  const s = await launchBrowser();
+  const s = await getOrCreateSession();
   try {
     await s.page.type(selector, text);
     return `Typed into: ${selector}`;
@@ -78,7 +104,7 @@ export async function typeText(selector: string, text: string): Promise<string> 
 }
 
 export async function evaluateJs(code: string): Promise<string> {
-  const s = await launchBrowser();
+  const s = await getOrCreateSession();
   try {
     const result = await s.page.evaluate(code);
     return String(result ?? '(no result)');
@@ -88,7 +114,7 @@ export async function evaluateJs(code: string): Promise<string> {
 }
 
 export async function waitForSelector(selector: string, timeoutMs = 5000): Promise<string> {
-  const s = await launchBrowser();
+  const s = await getOrCreateSession();
   try {
     await s.page.waitForSelector(selector, { timeout: timeoutMs });
     return `Found: ${selector}`;
@@ -98,6 +124,6 @@ export async function waitForSelector(selector: string, timeoutMs = 5000): Promi
 }
 
 export async function getPageUrl(): Promise<string> {
-  const s = await launchBrowser();
+  const s = await getOrCreateSession();
   return s.page.url();
 }

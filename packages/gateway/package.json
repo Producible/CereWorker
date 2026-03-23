@@ -1,6 +1,6 @@
 {
   "name": "@cereworker/gateway",
-  "version": "26.323.5",
+  "version": "26.323.6",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -22,7 +22,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@cereworker/core": "26.323.5",
+    "@cereworker/core": "workspace:*",
     "nanoid": "^5.0.9",
     "ws": "^8.18.0"
   },

@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Orchestrator, ConversationStore, PairingStore, createLogger } from '@cereworker/core';
+import { Orchestrator, ConversationStore, PairingStore, createLogger, createHttpTools } from '@cereworker/core';
 import { CerebellumClient } from '@cereworker/cerebellum-client';
 import type { ToolDefinition } from '@cereworker/core';
 import { CerebrumProvider } from '@cereworker/cerebrum';
@@ -166,6 +166,25 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
       maxConcurrent: config.subAgents.maxConcurrent,
       monitorIntervalMs: config.subAgents.monitorIntervalSeconds * 1000,
     });
+  }
+
+  // Register HTTP and web search tools
+  if (config.tools.http?.enabled !== false) {
+    const httpTools = createHttpTools({
+      timeout: config.tools.http?.timeout,
+      maxResponseSize: config.tools.http?.maxResponseSize,
+      allowPrivate: config.tools.http?.allowPrivate,
+    });
+    if (config.tools.web?.enabled !== false) {
+      orchestrator.registerTools(httpTools);
+    } else {
+      // Register httpFetch only, skip webSearch
+      orchestrator.registerTool('httpFetch', httpTools.httpFetch);
+    }
+  } else if (config.tools.web?.enabled !== false) {
+    // HTTP disabled but web search enabled
+    const httpTools = createHttpTools();
+    orchestrator.registerTool('webSearch', httpTools.webSearch);
   }
 
   // Register browser tools with orchestrator

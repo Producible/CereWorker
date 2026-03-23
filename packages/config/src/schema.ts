@@ -97,6 +97,27 @@ export const configSchema = z.object({
           rootDir: z.string().optional(),
         })
         .default({}),
+      http: z
+        .object({
+          enabled: z.boolean().default(true),
+          timeout: z.number().default(30000),
+          maxResponseSize: z.number().default(102400),
+          allowPrivate: z.boolean().default(false),
+        })
+        .default({}),
+      web: z
+        .object({
+          enabled: z.boolean().default(true),
+        })
+        .default({}),
+      browser: z
+        .object({
+          enabled: z.boolean().default(true),
+          mode: z.enum(['launch', 'connect']).default('launch'),
+          cdpPort: z.number().default(9222),
+          headless: z.boolean().default(true),
+        })
+        .default({}),
     })
     .default({}),
 

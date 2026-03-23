@@ -9,7 +9,10 @@ import {
   waitForSelector,
   getPageUrl,
   closeBrowser,
+  setMode,
+  getMode,
 } from './puppeteer.js';
+import { connectCdp, disconnectCdp } from './cdp.js';
 
 export const browserToolDefinitions = {
   browserNavigate: {
@@ -67,12 +70,43 @@ export const browserToolDefinitions = {
     parameters: z.object({}),
     execute: async () => getPageUrl(),
   },
+  browserConnect: {
+    description:
+      'Connect to an existing Chrome browser via CDP (Chrome DevTools Protocol). Chrome must be running with --remote-debugging-port.',
+    parameters: z.object({
+      port: z.number().optional().default(9222).describe('Chrome remote debugging port'),
+      wsEndpoint: z.string().optional().describe('Direct WebSocket endpoint URL (overrides port)'),
+    }),
+    execute: async (args: { port?: number; wsEndpoint?: string }) => {
+      try {
+        setMode('connect', { port: args.port, wsEndpoint: args.wsEndpoint });
+        const s = await connectCdp({ port: args.port, wsEndpoint: args.wsEndpoint });
+        const url = s.page.url();
+        return `Connected to Chrome via CDP. Current page: ${url}`;
+      } catch (err) {
+        setMode('launch');
+        return `Failed to connect: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    },
+  },
+  browserDisconnect: {
+    description: 'Disconnect from Chrome without closing it (CDP mode only)',
+    parameters: z.object({}),
+    execute: async () => {
+      if (getMode() !== 'connect') {
+        return 'Not in CDP mode. Use browserClose to close a launched browser.';
+      }
+      await disconnectCdp();
+      setMode('launch');
+      return 'Disconnected from Chrome';
+    },
+  },
   browserClose: {
-    description: 'Close the browser',
+    description: 'Close the browser (launch mode) or disconnect (CDP mode)',
     parameters: z.object({}),
     execute: async () => {
       await closeBrowser();
-      return 'Browser closed';
+      return getMode() === 'connect' ? 'Disconnected from Chrome' : 'Browser closed';
     },
   },
 };
