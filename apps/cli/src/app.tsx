@@ -54,7 +54,17 @@ export function App({ config, resumeConversationId }: AppProps) {
   // Start cerebellum in background
   useEffect(() => {
     if (config.cerebellum.enabled) {
-      service.startCerebellum();
+      service.startCerebellum().then((ok) => {
+        if (!ok) {
+          setStickyMessage(true);
+          setSystemMessage(
+            'Cerebellum failed to start. This is a core feature — tool verification and scheduling are unavailable.\n' +
+            '  Check that Docker is running: docker ps\n' +
+            '  Check the container: docker logs cereworker-cerebellum\n' +
+            '  Re-run onboarding: cereworker onboard',
+          );
+        }
+      });
     }
   }, [service]);
 
@@ -310,11 +320,83 @@ export function App({ config, resumeConversationId }: AppProps) {
           break;
         }
 
-        case 'finetune':
-          orchestrator.triggerFineTune()
-            .then(() => setSystemMessage('Fine-tuning started.'))
-            .catch((err: Error) => setSystemMessage(`Fine-tune error: ${err.message}`));
+        case 'finetune': {
+          const ftArgs = args.trim().split(/\s+/);
+          const ftSub = ftArgs[0] || '';
+
+          if (ftSub === 'start') {
+            orchestrator.triggerFineTune()
+              .then(() => setSystemMessage('Fine-tuning started.'))
+              .catch((err: Error) => setSystemMessage(`Fine-tune error: ${err.message}`));
+          } else if (ftSub === 'status' || ftSub === '') {
+            orchestrator.getFineTuneStatus().then((st) => {
+              const lines = [
+                `Status: ${st.status}`,
+                st.jobId ? `Job: ${st.jobId}` : null,
+                st.status === 'running' ? `Progress: ${Math.round(st.progress * 100)}% (step ${st.currentStep}/${st.totalSteps})` : null,
+                st.currentLoss ? `Loss: ${st.currentLoss.toFixed(4)}` : null,
+                st.checkpointPath ? `Checkpoint: ${st.checkpointPath}` : null,
+                st.error ? `Error: ${st.error}` : null,
+                st.startedAt ? `Started: ${new Date(st.startedAt * 1000).toLocaleString()}` : null,
+                st.completedAt && st.status !== 'running' ? `Completed: ${new Date(st.completedAt * 1000).toLocaleString()}` : null,
+              ].filter(Boolean);
+              setSystemMessage(`Fine-Tuning Status:\n  ${lines.join('\n  ')}`);
+            }).catch((err: Error) => setSystemMessage(`Fine-tune status error: ${err.message}`));
+          } else if (ftSub === 'config') {
+            const configKey = ftArgs[1] || '';
+            const configVal = ftArgs[2] || '';
+
+            if (configKey === 'method' && configVal) {
+              const valid = ['auto', 'lora', 'qlora', 'full'];
+              if (valid.includes(configVal)) {
+                orchestrator.setFineTuneMethod(configVal);
+                setSystemMessage(`Fine-tune method set to: ${configVal}`);
+              } else {
+                setSystemMessage(`Invalid method. Valid: ${valid.join(', ')}`);
+              }
+            } else if (configKey === 'schedule' && configVal) {
+              const valid = ['auto', 'hourly', 'daily', 'weekly'];
+              if (valid.includes(configVal)) {
+                orchestrator.setFineTuneSchedule(configVal);
+                setSystemMessage(`Fine-tune schedule set to: ${configVal}`);
+              } else {
+                setSystemMessage(`Invalid schedule. Valid: ${valid.join(', ')}`);
+              }
+            } else {
+              setSystemMessage(
+                `Fine-Tune Config:\n` +
+                `  Method: ${orchestrator.getFineTuneMethod()}\n` +
+                `  Schedule: ${orchestrator.getFineTuneSchedule()}\n` +
+                `  Enabled: ${config.cerebellum.finetune?.enabled ?? false}\n\n` +
+                `Usage:\n` +
+                `  /finetune config method <auto|lora|qlora|full>\n` +
+                `  /finetune config schedule <auto|hourly|daily|weekly>`,
+              );
+            }
+          } else if (ftSub === 'history') {
+            const history = orchestrator.getFineTuneHistory();
+            if (history.length === 0) {
+              setSystemMessage('No fine-tune history yet.');
+            } else {
+              const lines = history.slice(-10).map((h) => {
+                const date = new Date(h.completedAt).toLocaleString();
+                return `  ${h.jobId} | ${h.status} | loss: ${h.loss.toFixed(4)} | ${date}`;
+              });
+              setStickyMessage(true);
+              setSystemMessage(`Fine-Tune History (last ${lines.length}):\n${lines.join('\n')}`);
+            }
+          } else {
+            setSystemMessage(
+              'Usage: /finetune [start|status|config|history]\n' +
+              '  /finetune           Show current status\n' +
+              '  /finetune start     Start a fine-tune run\n' +
+              '  /finetune status    Detailed status info\n' +
+              '  /finetune config    Show/change config\n' +
+              '  /finetune history   Show past jobs',
+            );
+          }
           break;
+        }
 
         case 'stop':
           orchestrator.emergencyStop();
@@ -372,7 +454,7 @@ export function App({ config, resumeConversationId }: AppProps) {
   /pairing              List pending pairing requests
   /auto [on|off]        Toggle auto mode (skip command approval)
   /auth [provider]      OAuth authentication instructions
-  /finetune             Manually trigger fine-tuning
+  /finetune [sub]       Fine-tuning: start, status, config, history
   /stop                 Emergency stop (works during streaming)
   /clear                Start a new conversation
   /help                 Show this help

@@ -182,7 +182,8 @@ export class HippocampusCurator {
       return parsed
         .filter((item: Record<string, unknown>) => {
           if (typeof item !== 'object' || !item) return false;
-          return typeof item.instruction === 'string' && typeof item.response === 'string';
+          if (typeof item.instruction !== 'string' || typeof item.response !== 'string') return false;
+          return (item.instruction as string).trim().length >= 10 && (item.response as string).trim().length >= 10;
         })
         .map((item: Record<string, unknown>) => ({
           instruction: item.instruction as string,
@@ -197,8 +198,19 @@ export class HippocampusCurator {
   }
 
   private appendPending(pairs: TrainingPair[]): void {
+    // Deduplicate against existing pending pairs
+    const existing = this.getPendingPairs();
+    const seen = new Set(existing.map((p) => p.instruction.trim().toLowerCase()));
+    const unique = pairs.filter((p) => {
+      const key = p.instruction.trim().toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    if (unique.length === 0) return;
+
     const path = join(this.store.finetuneDir, PENDING_FILE);
-    const lines = pairs.map((p) => JSON.stringify(p)).join('\n') + '\n';
+    const lines = unique.map((p) => JSON.stringify(p)).join('\n') + '\n';
     writeFileSync(path, lines, { flag: 'a' });
   }
 

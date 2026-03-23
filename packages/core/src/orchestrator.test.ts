@@ -315,6 +315,9 @@ describe('Orchestrator', () => {
       const cerebellum = createMockCerebellum();
       orch.setCerebellum(cerebellum);
 
+      const pairs = [{ instruction: 'q', response: 'a', source: 'test', createdAt: Date.now() }];
+      orch.setFineTuneDataProvider(async () => pairs);
+
       const handler = vi.fn();
       orch.on('finetune:start', handler);
       await orch.triggerFineTune();
@@ -331,24 +334,40 @@ describe('Orchestrator', () => {
       });
       orch.setCerebellum(cerebellum);
 
+      const pairs = [{ instruction: 'q', response: 'a', source: 'test', createdAt: Date.now() }];
+      orch.setFineTuneDataProvider(async () => pairs);
+
       await expect(orch.triggerFineTune()).rejects.toThrow('GPU busy');
     });
 
-    it('triggerFineTune skips ingestion when no data provider', async () => {
+    it('triggerFineTune defers when not enough training data', async () => {
+      const cerebellum = createMockCerebellum();
+      (cerebellum.ingestTrainingData as ReturnType<typeof vi.fn>).mockResolvedValue(2);
+      orch.setCerebellum(cerebellum);
+
+      const pairs = [{ instruction: 'q', response: 'a', source: 'test', createdAt: Date.now() }];
+      orch.setFineTuneDataProvider(async () => pairs);
+
+      await expect(orch.triggerFineTune()).rejects.toThrow('Not enough training data');
+      expect(cerebellum.ingestTrainingData).toHaveBeenCalled();
+      expect(cerebellum.startFineTune).not.toHaveBeenCalled();
+    });
+
+    it('triggerFineTune skips ingestion when no data provider but defers', async () => {
       const cerebellum = createMockCerebellum();
       orch.setCerebellum(cerebellum);
-      // No setFineTuneDataProvider call
+      // No setFineTuneDataProvider call — totalPending = 0
 
-      await orch.triggerFineTune();
-
+      await expect(orch.triggerFineTune()).rejects.toThrow('Not enough training data');
       expect(cerebellum.ingestTrainingData).not.toHaveBeenCalled();
-      expect(cerebellum.startFineTune).toHaveBeenCalled();
+      expect(cerebellum.startFineTune).not.toHaveBeenCalled();
     });
 
     it('setFineTuneDataProvider accepts custom method', async () => {
       const cerebellum = createMockCerebellum();
       orch.setCerebellum(cerebellum);
-      orch.setFineTuneDataProvider(async () => [], 'lora');
+      const pairs = [{ instruction: 'q', response: 'a', source: 'test', createdAt: Date.now() }];
+      orch.setFineTuneDataProvider(async () => pairs, 'lora');
       await orch.triggerFineTune();
 
       expect(cerebellum.startFineTune).toHaveBeenCalledWith({ method: 'lora' });

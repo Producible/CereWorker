@@ -26,7 +26,8 @@ describe('buildSystemPrompt', () => {
   it('shows cerebellum offline status', () => {
     const result = buildSystemPrompt(makeOptions({ cerebellumConnected: false }));
     expect(result).toContain('Status: offline');
-    expect(result).toContain('your tool results are not independently verified.');
+    expect(result).toContain('OFFLINE');
+    expect(result).toContain('critical problem');
   });
 
   it('lists tools when present', () => {
@@ -130,5 +131,50 @@ describe('buildSystemPrompt', () => {
     expect(result).toContain('\n\n## Architecture');
     expect(result).toContain('\n\n## Operating Mode');
     expect(result).toContain('\n\n## Guidelines');
+  });
+
+  it('shows fine-tune section when enabled and idle', () => {
+    const result = buildSystemPrompt(makeOptions({
+      finetuneStatus: { enabled: true, status: 'idle' },
+    }));
+    expect(result).toContain('## Fine-Tuning (Instinct)');
+    expect(result).toContain('Status: idle');
+    expect(result).toContain('No training has run yet');
+  });
+
+  it('shows fine-tune running with progress', () => {
+    const result = buildSystemPrompt(makeOptions({
+      finetuneStatus: { enabled: true, status: 'running', progress: 0.42, lastJobId: 'ft-123' },
+    }));
+    expect(result).toContain('Status: running');
+    expect(result).toContain('42%');
+  });
+
+  it('shows fine-tune completed', () => {
+    const result = buildSystemPrompt(makeOptions({
+      finetuneStatus: { enabled: true, status: 'completed', lastJobId: 'ft-456' },
+    }));
+    expect(result).toContain('completed successfully');
+    expect(result).toContain('ft-456');
+  });
+
+  it('shows fine-tune failed', () => {
+    const result = buildSystemPrompt(makeOptions({
+      finetuneStatus: { enabled: true, status: 'failed', lastJobId: 'ft-789' },
+    }));
+    expect(result).toContain('failed');
+    expect(result).toContain('/finetune start');
+  });
+
+  it('omits fine-tune section when disabled', () => {
+    const result = buildSystemPrompt(makeOptions({
+      finetuneStatus: { enabled: false, status: 'idle' },
+    }));
+    expect(result).not.toContain('## Fine-Tuning');
+  });
+
+  it('omits fine-tune section when not provided', () => {
+    const result = buildSystemPrompt(makeOptions());
+    expect(result).not.toContain('## Fine-Tuning');
   });
 });

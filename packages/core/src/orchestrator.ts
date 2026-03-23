@@ -111,6 +111,13 @@ export class Orchestrator extends TypedEventEmitter {
   private fineTunePoller: ReturnType<typeof setInterval> | null = null;
   private fineTuneDataProvider: (() => Promise<TrainingPair[]>) | null = null;
   private fineTuneMethod = 'auto';
+  private fineTuneSchedule = 'auto';
+  private fineTuneStatus: FineTuneStatus = {
+    status: 'idle', jobId: '', progress: 0, currentStep: 0,
+    totalSteps: 0, currentLoss: 0, error: '', checkpointPath: '',
+    startedAt: 0, completedAt: 0,
+  };
+  private _fineTuneHistory: Array<{ jobId: string; status: string; completedAt: number; loss: number }> = [];
   private gatewayMode: 'standalone' | 'gateway' | 'node' = 'standalone';
   private connectedNodes = 0;
   private gatewayUrl: string | undefined;
@@ -246,6 +253,45 @@ export class Orchestrator extends TypedEventEmitter {
     this.fineTuneMethod = method;
   }
 
+  getFineTuneMethod(): string {
+    return this.fineTuneMethod;
+  }
+
+  setFineTuneMethod(method: string): void {
+    this.fineTuneMethod = method;
+  }
+
+  getFineTuneSchedule(): string {
+    return this.fineTuneSchedule;
+  }
+
+  setFineTuneSchedule(schedule: string): void {
+    this.fineTuneSchedule = schedule;
+  }
+
+  /** Get current fine-tune status from Cerebellum (or cached local state). */
+  async getFineTuneStatus(): Promise<FineTuneStatus> {
+    if (this.cerebellum?.getFineTuneStatus) {
+      try {
+        const remote = await this.cerebellum.getFineTuneStatus();
+        if (remote) {
+          this.fineTuneStatus = remote;
+          return remote;
+        }
+      } catch {
+        // Fall back to local cache
+      }
+    }
+    return this.fineTuneStatus;
+  }
+
+  getFineTuneHistory(): Array<{ jobId: string; status: string; completedAt: number; loss: number }> {
+    return this._fineTuneHistory;
+  }
+
+  /** Minimum training pairs required before starting a fine-tune run. */
+  static readonly MIN_TRAINING_PAIRS = 5;
+
   /** Trigger a fine-tuning run: collect training data, send to cerebellum, start training, poll progress. */
   async triggerFineTune(): Promise<void> {
     if (!this.cerebellum?.ingestTrainingData || !this.cerebellum?.startFineTune) {
@@ -259,26 +305,42 @@ export class Orchestrator extends TypedEventEmitter {
     }
 
     // 2. Ingest training data
+    let totalPending = 0;
     if (pairs.length > 0) {
-      const totalPending = await this.cerebellum.ingestTrainingData(pairs);
+      totalPending = await this.cerebellum.ingestTrainingData(pairs);
       log.info('Training data ingested', { newPairs: pairs.length, totalPending });
     }
 
-    // 3. Start fine-tuning
+    // 3. Check minimum threshold
+    if (totalPending < Orchestrator.MIN_TRAINING_PAIRS) {
+      log.info('Not enough training data, deferring fine-tune', {
+        totalPending,
+        threshold: Orchestrator.MIN_TRAINING_PAIRS,
+      });
+      throw new Error(
+        `Not enough training data (${totalPending}/${Orchestrator.MIN_TRAINING_PAIRS} pairs). ` +
+        'Data has been saved — training will start automatically when enough accumulates.',
+      );
+    }
+
+    // 4. Start fine-tuning
     const result = await this.cerebellum.startFineTune({ method: this.fineTuneMethod });
     if (!result.started) {
       throw new Error(result.error || 'Failed to start fine-tuning');
     }
 
+    this.fineTuneStatus = { ...this.fineTuneStatus, status: 'running', jobId: result.jobId, startedAt: Date.now() };
     this.emit({ type: 'finetune:start', jobId: result.jobId });
     log.info('Fine-tuning started', { jobId: result.jobId });
 
-    // 4. Poll for progress
+    // 5. Poll for progress
     this.stopFineTunePoller();
     this.fineTunePoller = setInterval(async () => {
       try {
         const status = await this.cerebellum!.getFineTuneStatus!();
         if (!status) return;
+
+        this.fineTuneStatus = status;
 
         if (status.status === 'running') {
           this.emit({
@@ -288,6 +350,12 @@ export class Orchestrator extends TypedEventEmitter {
             loss: status.currentLoss,
           });
         } else if (status.status === 'completed') {
+          this._fineTuneHistory.push({
+            jobId: status.jobId,
+            status: 'completed',
+            completedAt: status.completedAt || Date.now(),
+            loss: status.currentLoss,
+          });
           this.emit({
             type: 'finetune:complete',
             jobId: status.jobId,
@@ -296,6 +364,12 @@ export class Orchestrator extends TypedEventEmitter {
           log.info('Fine-tuning completed', { jobId: status.jobId, checkpoint: status.checkpointPath });
           this.stopFineTunePoller();
         } else if (status.status === 'failed') {
+          this._fineTuneHistory.push({
+            jobId: status.jobId,
+            status: 'failed',
+            completedAt: Date.now(),
+            loss: status.currentLoss,
+          });
           this.emit({
             type: 'finetune:error',
             jobId: status.jobId,
@@ -395,6 +469,12 @@ export class Orchestrator extends TypedEventEmitter {
       connectedNodes: this.connectedNodes,
       gatewayUrl: this.gatewayUrl,
       profile: this.profile,
+      finetuneStatus: {
+        enabled: !!this.fineTuneDataProvider,
+        status: this.fineTuneStatus.status,
+        progress: this.fineTuneStatus.progress,
+        lastJobId: this.fineTuneStatus.jobId || undefined,
+      },
     });
     const systemParts = [basePrompt];
     if (this.systemContext) systemParts.push(this.systemContext);

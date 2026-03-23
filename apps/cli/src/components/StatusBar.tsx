@@ -37,8 +37,8 @@ export function StatusBar({
     <Box borderStyle="single" borderColor="gray" paddingX={1} justifyContent="space-between">
       <Box gap={2}>
         <Text color="cyan">Cerebrum: {provider}/{model}</Text>
-        <Text color={cerebellumStatus?.healthy ? 'green' : 'yellow'}>
-          Cerebellum: {cerebellumStatus?.healthy ? 'connected' : 'offline'}
+        <Text color={cerebellumStatus?.healthy ? 'green' : 'red'} bold={!cerebellumStatus?.healthy}>
+          Cerebellum: {cerebellumStatus?.healthy ? 'connected' : 'OFFLINE'}
           {cerebellumStatus?.tasksRegistered ? ` (${cerebellumStatus.tasksRegistered} tasks)` : ''}
         </Text>
         {channelCount > 0 && (

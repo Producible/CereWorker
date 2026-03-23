@@ -14,6 +14,7 @@ import { loadSkills, filterEligibleSkills, SkillRegistry } from '@cereworker/ski
 import {
   HippocampusStore,
   HippocampusCurator,
+  ConversationExtractor,
   createMemoryTools,
   memoryReadParameters,
   memoryWriteParameters,
@@ -137,30 +138,44 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
   }
 
   // Setup fine-tune data provider (Instinct pillar)
-  if (config.hippocampus.enabled && config.cerebellum.finetune?.enabled) {
-    const curator = new HippocampusCurator(
-      hippocampusStore!,
-      { generate: (prompt: string) => cerebrum.generate(prompt) },
-    );
+  const scheduleMap: Record<string, string> = {
+    auto: 'when idle',
+    hourly: 'every hour',
+    daily: 'every day',
+    weekly: 'every week',
+  };
+  let finetuneScheduleHint = scheduleMap[config.cerebellum.finetune?.schedule ?? 'auto'] ?? 'when idle';
 
-    const scheduleMap: Record<string, string> = {
-      auto: 'when idle',
-      hourly: 'every hour',
-      daily: 'every day',
-      weekly: 'every week',
-    };
-    const scheduleHint = scheduleMap[config.cerebellum.finetune.schedule] ?? 'when idle';
+  if (config.cerebellum.finetune?.enabled) {
+    const conversationExtractor = new ConversationExtractor(conversationStore);
+
+    // Memory-based curator (requires hippocampus)
+    const curator = config.hippocampus.enabled
+      ? new HippocampusCurator(
+          hippocampusStore!,
+          { generate: (prompt: string) => cerebrum.generate(prompt) },
+        )
+      : null;
 
     orchestrator.setFineTuneDataProvider(async () => {
-      await curator.curate();
-      const pairs = curator.getPendingPairs();
-      if (pairs.length > 0) {
-        curator.markConsumed();
+      // Source 1: Curated memories
+      let memoryPairs: import('@cereworker/hippocampus').TrainingPair[] = [];
+      if (curator) {
+        await curator.curate();
+        memoryPairs = curator.getPendingPairs();
+        if (memoryPairs.length > 0) {
+          curator.markConsumed();
+        }
       }
-      return pairs;
+
+      // Source 2: Conversation history
+      const convPairs = conversationExtractor.extractPairs();
+
+      return [...memoryPairs, ...convPairs];
     }, config.cerebellum.finetune.method);
 
-    log.info('Fine-tune data provider configured', { schedule: scheduleHint });
+    orchestrator.setFineTuneSchedule(config.cerebellum.finetune.schedule);
+    log.info('Fine-tune data provider configured', { schedule: finetuneScheduleHint });
   }
 
   // Setup sub-agents
@@ -479,6 +494,40 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
       }
     } catch {
       // Non-blocking
+    }
+
+    // Register fine-tune heartbeat task for automatic scheduling
+    if (config.cerebellum.finetune?.enabled) {
+      const scheduleHint = finetuneScheduleHint;
+      client.registerTask(
+        'Fine-tune Cerebellum on curated training data',
+        scheduleHint,
+        { type: 'finetune' },
+      ).then((taskId) => {
+        if (!taskId) return;
+        log.info('Fine-tune heartbeat task registered', { taskId, schedule: scheduleHint });
+
+        // Subscribe to heartbeat events and auto-trigger fine-tuning
+        (async () => {
+          try {
+            for await (const event of client.subscribeHeartbeat(config.cerebellum.heartbeatInterval)) {
+              for (const action of event.actions) {
+                if (action.taskId === taskId && action.action === 'invoke') {
+                  log.info('Heartbeat triggered fine-tune');
+                  orchestrator.triggerFineTune().catch((err) =>
+                    log.info('Auto fine-tune deferred', { reason: (err as Error).message }),
+                  );
+                }
+              }
+              orchestrator.emit({ type: 'heartbeat:tick', actions: event.actions });
+            }
+          } catch (err) {
+            log.warn('Heartbeat subscription ended', { error: (err as Error).message });
+          }
+        })();
+      }).catch((err) => {
+        log.warn('Failed to register fine-tune task', { error: (err as Error).message });
+      });
     }
 
     // Start status polling

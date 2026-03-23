@@ -35,13 +35,13 @@ describe('HippocampusCurator', () => {
       dir = ctx.dir;
       writeFileSync(join(dir, 'MEMORY.md'), 'User prefers dark mode', 'utf-8');
 
-      const pairs = [{ instruction: 'What theme?', response: 'dark mode', source: 'MEMORY.md' }];
+      const pairs = [{ instruction: 'What theme does the user prefer?', response: 'The user prefers dark mode.', source: 'MEMORY.md' }];
       (ctx.generator.generate as ReturnType<typeof vi.fn>).mockResolvedValue(JSON.stringify(pairs));
 
       const result = await ctx.curator.curate();
       expect(result.pairs).toHaveLength(1);
-      expect(result.pairs[0].instruction).toBe('What theme?');
-      expect(result.pairs[0].response).toBe('dark mode');
+      expect(result.pairs[0].instruction).toBe('What theme does the user prefer?');
+      expect(result.pairs[0].response).toBe('The user prefers dark mode.');
       expect(ctx.generator.generate).toHaveBeenCalledOnce();
     });
 
@@ -71,7 +71,7 @@ describe('HippocampusCurator', () => {
       const ctx = setup();
       dir = ctx.dir;
       writeFileSync(join(dir, 'MEMORY.md'), 'info', 'utf-8');
-      const json = JSON.stringify([{ instruction: 'q', response: 'a', source: 'x' }]);
+      const json = JSON.stringify([{ instruction: 'What framework is used?', response: 'The project uses React with Ink for TUI.', source: 'x' }]);
       (ctx.generator.generate as ReturnType<typeof vi.fn>).mockResolvedValue('```json\n' + json + '\n```');
 
       const result = await ctx.curator.curate();
@@ -83,7 +83,7 @@ describe('HippocampusCurator', () => {
       dir = ctx.dir;
       writeFileSync(join(dir, 'MEMORY.md'), 'content', 'utf-8');
       const data = [
-        { instruction: 'valid', response: 'ok', source: 'x' },
+        { instruction: 'What is the preferred theme?', response: 'The user prefers dark mode.', source: 'x' },
         { instruction: 'no response' },
         { response: 'no instruction' },
         {},
@@ -92,21 +92,37 @@ describe('HippocampusCurator', () => {
 
       const result = await ctx.curator.curate();
       expect(result.pairs).toHaveLength(1);
-      expect(result.pairs[0].instruction).toBe('valid');
+      expect(result.pairs[0].instruction).toBe('What is the preferred theme?');
+    });
+
+    it('filters entries with instruction or response shorter than 10 chars', async () => {
+      const ctx = setup();
+      dir = ctx.dir;
+      writeFileSync(join(dir, 'MEMORY.md'), 'content', 'utf-8');
+      const data = [
+        { instruction: 'short', response: 'also short', source: 'x' },
+        { instruction: 'ok', response: 'yes that is fine', source: 'x' },
+        { instruction: 'What is the deploy process?', response: 'Run deploy.sh from the project root.', source: 'x' },
+      ];
+      (ctx.generator.generate as ReturnType<typeof vi.fn>).mockResolvedValue(JSON.stringify(data));
+
+      const result = await ctx.curator.curate();
+      expect(result.pairs).toHaveLength(1);
+      expect(result.pairs[0].instruction).toBe('What is the deploy process?');
     });
 
     it('saves pairs to pending.jsonl', async () => {
       const ctx = setup();
       dir = ctx.dir;
       writeFileSync(join(dir, 'MEMORY.md'), 'content', 'utf-8');
-      const pairs = [{ instruction: 'q', response: 'a', source: 'x' }];
+      const pairs = [{ instruction: 'What database is used?', response: 'SQLite via node:sqlite built-in.', source: 'x' }];
       (ctx.generator.generate as ReturnType<typeof vi.fn>).mockResolvedValue(JSON.stringify(pairs));
 
       await ctx.curator.curate();
       const pendingPath = join(ctx.store.finetuneDir, 'pending.jsonl');
       expect(existsSync(pendingPath)).toBe(true);
       const content = readFileSync(pendingPath, 'utf-8');
-      expect(content).toContain('"instruction":"q"');
+      expect(content).toContain('What database is used?');
     });
 
     it('updates curated marker', async () => {
@@ -180,6 +196,38 @@ describe('HippocampusCurator', () => {
       dir = ctx.dir;
       // Should not throw
       expect(() => ctx.curator.markConsumed()).not.toThrow();
+    });
+  });
+
+  describe('deduplication', () => {
+    it('does not append duplicate pairs to pending.jsonl', async () => {
+      const ctx = setup();
+      dir = ctx.dir;
+      const ftDir = ctx.store.finetuneDir;
+
+      // Pre-seed pending with an existing pair
+      const existing = JSON.stringify({
+        instruction: 'What database is used?',
+        response: 'SQLite via node:sqlite.',
+        source: 'MEMORY.md',
+        createdAt: 1,
+      });
+      writeFileSync(join(ftDir, 'pending.jsonl'), existing + '\n', 'utf-8');
+
+      // Curate returns same instruction + a new one
+      writeFileSync(join(dir, 'MEMORY.md'), 'content', 'utf-8');
+      const data = [
+        { instruction: 'What database is used?', response: 'Different answer here.', source: 'x' },
+        { instruction: 'What framework is used?', response: 'React with Ink for TUI rendering.', source: 'x' },
+      ];
+      (ctx.generator.generate as ReturnType<typeof vi.fn>).mockResolvedValue(JSON.stringify(data));
+
+      await ctx.curator.curate();
+      const pairs = ctx.curator.getPendingPairs();
+      // Should have original + 1 new, not the duplicate
+      expect(pairs).toHaveLength(2);
+      expect(pairs[0].instruction).toBe('What database is used?');
+      expect(pairs[1].instruction).toBe('What framework is used?');
     });
   });
 });
