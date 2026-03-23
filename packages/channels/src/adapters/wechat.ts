@@ -1,4 +1,3 @@
-import { WechatyBuilder, type Wechaty, type Message as WechatyMessage } from 'wechaty';
 import type { ChannelPlugin, MessageHandler, OutboundMessage, InboundMessage } from '../types.js';
 import { chunkMarkdown, CHANNEL_LIMITS } from '../chunking.js';
 
@@ -9,7 +8,8 @@ export interface WeChatChannelConfig {
 }
 
 export function createWeChatChannel(config: WeChatChannelConfig): ChannelPlugin {
-  let bot: Wechaty | null = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let bot: any = null;
   let connected = false;
   const limit = CHANNEL_LIMITS.wechat;
 
@@ -18,17 +18,21 @@ export function createWeChatChannel(config: WeChatChannelConfig): ChannelPlugin 
     meta: { name: 'WeChat', emoji: 'W' },
 
     async start(handler: MessageHandler) {
-      bot = WechatyBuilder.build({
+      const wechaty = await import('wechaty').catch(() => null);
+      if (!wechaty) {
+        throw new Error(
+          'WeChat requires the wechaty package. Install it:\n  npm install -g wechaty wechaty-puppet-wechat4u',
+        );
+      }
+
+      bot = wechaty.WechatyBuilder.build({
         name: 'cereworker',
         puppet: config.puppet as 'wechaty-puppet-wechat4u',
         puppetOptions: config.token ? { token: config.token } : undefined,
       });
 
-      bot.on('message', async (message: WechatyMessage) => {
-        // Skip self messages
+      bot.on('message', async (message: any) => {
         if (message.self()) return;
-
-        // Only handle text messages
         if (message.type() !== bot!.Message.Type.Text) return;
 
         const text = message.text();
@@ -60,7 +64,7 @@ export function createWeChatChannel(config: WeChatChannelConfig): ChannelPlugin 
         }
       });
 
-      bot.on('login', (user) => {
+      bot.on('login', (user: any) => {
         console.log(`[WeChat] Logged in as ${user.name()}`);
         connected = true;
       });
@@ -70,7 +74,7 @@ export function createWeChatChannel(config: WeChatChannelConfig): ChannelPlugin 
         connected = false;
       });
 
-      bot.on('error', (error) => {
+      bot.on('error', (error: any) => {
         console.error('[WeChat] Error:', error);
       });
 
@@ -97,7 +101,6 @@ export function createWeChatChannel(config: WeChatChannelConfig): ChannelPlugin 
         return;
       }
 
-      // Try as room
       const room = await bot.Room.find({ id: msg.to });
       if (room) {
         const chunks = chunkMarkdown(msg.text, limit);
