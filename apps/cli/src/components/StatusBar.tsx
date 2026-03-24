@@ -16,6 +16,8 @@ interface StatusBarProps {
   finetuneActive?: boolean;
   finetuneProgress?: number;
   dmPolicy?: 'pairing' | 'open';
+  taskCount?: number;
+  taskRunning?: number;
 }
 
 export function StatusBar({
@@ -32,6 +34,8 @@ export function StatusBar({
   finetuneActive = false,
   finetuneProgress = 0,
   dmPolicy = 'pairing',
+  taskCount = 0,
+  taskRunning = 0,
 }: StatusBarProps) {
   return (
     <Box borderStyle="single" borderColor="gray" paddingX={1} justifyContent="space-between">
@@ -57,6 +61,11 @@ export function StatusBar({
         )}
         {finetuneActive && (
           <Text color="blue">[FT {Math.round(finetuneProgress * 100)}%]</Text>
+        )}
+        {taskCount > 0 && (
+          <Text color={taskRunning > 0 ? 'yellow' : 'blue'}>
+            [TASKS {taskRunning > 0 ? `${taskRunning}/${taskCount}` : taskCount}]
+          </Text>
         )}
         {autoMode && (
           <Text color="red" bold>AUTO</Text>

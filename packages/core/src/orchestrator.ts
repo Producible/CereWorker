@@ -122,6 +122,9 @@ export class Orchestrator extends TypedEventEmitter {
   private connectedNodes = 0;
   private gatewayUrl: string | undefined;
   private profile: { name: string; role: string; traits: string[] } | undefined;
+  private taskConversations = new Map<string, string>();
+  private taskRunning = new Set<string>();
+  private recurringTasks: Array<{ id: string; goal: string; schedule: string }> = [];
   private compactionConfig: CompactionConfig = {
     enabled: true,
     threshold: 0.8,
@@ -423,6 +426,85 @@ export class Orchestrator extends TypedEventEmitter {
     return true;
   }
 
+  // --- Recurring Task Execution ---
+
+  setRecurringTasks(tasks: Array<{ id: string; goal: string; schedule: string }>): void {
+    this.recurringTasks = tasks;
+  }
+
+  setTaskConversation(taskId: string, conversationId: string): void {
+    this.taskConversations.set(taskId, conversationId);
+  }
+
+  getTaskConversation(taskId: string): string | undefined {
+    return this.taskConversations.get(taskId);
+  }
+
+  isTaskRunning(taskId: string): boolean {
+    return this.taskRunning.has(taskId);
+  }
+
+  async runTask(
+    taskId: string,
+    goal: string,
+    options?: { timeoutMs?: number; autoMode?: boolean },
+  ): Promise<{ success: boolean; error?: string }> {
+    if (this.taskRunning.has(taskId)) {
+      return { success: false, error: 'Task already running' };
+    }
+
+    // Get or create a dedicated conversation for this task
+    let convId = this.taskConversations.get(taskId);
+    if (!convId || !this.conversations.get(convId)) {
+      const conv = this.conversations.create();
+      convId = conv.id;
+      this.taskConversations.set(taskId, convId);
+    }
+
+    const prevAutoMode = this.autoMode;
+    if (options?.autoMode !== undefined) {
+      this.autoMode = options.autoMode;
+    }
+
+    this.taskRunning.add(taskId);
+    this.emit({ type: 'task:start', taskId, goal });
+    log.info('Running recurring task', { taskId, conversationId: convId });
+
+    const timeoutMs = options?.timeoutMs ?? 600_000;
+
+    try {
+      const now = new Date().toISOString();
+      const prompt = [
+        `[Recurring Task: ${taskId}]`,
+        `Current time: ${now}`,
+        `Goal: ${goal}`,
+        '',
+        'Execute this goal using your available tools and skills.',
+        'Review your conversation history for learnings from previous runs.',
+        'After completing, use memory_log to record what you did and any outcomes.',
+      ].join('\n');
+
+      await Promise.race([
+        this.sendMessage(prompt, convId),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error(`Task timed out after ${timeoutMs / 1000}s`)), timeoutMs),
+        ),
+      ]);
+
+      this.emit({ type: 'task:complete', taskId });
+      log.info('Recurring task completed', { taskId });
+      return { success: true };
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      this.emit({ type: 'task:error', taskId, error });
+      log.warn('Recurring task failed', { taskId, error });
+      return { success: false, error };
+    } finally {
+      this.taskRunning.delete(taskId);
+      this.autoMode = prevAutoMode;
+    }
+  }
+
   async sendMessage(content: string, conversationId?: string): Promise<void> {
     if (!this.cerebrum) throw new Error('Cerebrum not connected');
 
@@ -475,6 +557,7 @@ export class Orchestrator extends TypedEventEmitter {
         progress: this.fineTuneStatus.progress,
         lastJobId: this.fineTuneStatus.jobId || undefined,
       },
+      recurringTasks: this.recurringTasks,
     });
     const systemParts = [basePrompt];
     if (this.systemContext) systemParts.push(this.systemContext);

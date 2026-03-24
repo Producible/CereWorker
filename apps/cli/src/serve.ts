@@ -38,7 +38,7 @@ export async function runHeadlessService(config: CereWorkerConfig): Promise<void
   // Node/standalone: health on gateway.port (no WS server using that port)
   const healthPort = mode === 'gateway' ? config.gateway.port + 1 : config.gateway.port;
 
-  const healthServer = createHealthServer(config, handles, startTime);
+  const healthServer = createHealthServer(config, handles, service, startTime);
   await new Promise<void>((resolve, reject) => {
     healthServer.on('error', reject);
     healthServer.listen(healthPort, () => {
@@ -80,6 +80,7 @@ export async function runHeadlessService(config: CereWorkerConfig): Promise<void
 function createHealthServer(
   config: CereWorkerConfig,
   handles: GatewayHandles,
+  service: import('./service.js').ServiceInstance,
   startTime: number,
 ): Server {
   return createServer((req, res) => {
@@ -97,6 +98,18 @@ function createHealthServer(
       if (mode === 'node') {
         body.nodeId = config.gateway.nodeId;
         body.connected = handles.client?.isConnected() ?? false;
+      }
+
+      const tasks = service.getEnabledTasks();
+      if (tasks.length > 0) {
+        const state = service.getTaskState();
+        body.tasks = tasks.map((t) => ({
+          id: t.id,
+          schedule: t.schedule,
+          running: service.orchestrator.isTaskRunning(t.id),
+          lastRunAt: state[t.id]?.lastRunAt ?? null,
+          runCount: state[t.id]?.runCount ?? 0,
+        }));
       }
 
       res.writeHead(200, { 'Content-Type': 'application/json' });

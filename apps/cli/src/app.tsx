@@ -98,7 +98,7 @@ export function App({ config, resumeConversationId }: AppProps) {
   }, [orchestrator, resumeConversationId]);
 
   const { messages, isStreaming, streamingContent, activeToolCall, error } = useChat(orchestrator);
-  const { status: cerebellumStatus, finetune } = useCerebellum(orchestrator);
+  const { status: cerebellumStatus, finetune, taskRunningCount } = useCerebellum(orchestrator);
 
   const handleSubmit = useCallback(
     (text: string) => {
@@ -397,6 +397,64 @@ export function App({ config, resumeConversationId }: AppProps) {
           break;
         }
 
+        case 'task': {
+          const taskArgs = args.trim().split(/\s+/);
+          const taskSub = taskArgs[0] || '';
+          const taskTarget = taskArgs[1] || '';
+
+          if (taskSub === 'run' && taskTarget) {
+            setSystemMessage(`Running task "${taskTarget}"...`);
+            service.runTask(taskTarget).then((result) => {
+              if (result.success) {
+                setSystemMessage(`Task "${taskTarget}" completed.`);
+              } else {
+                setSystemMessage(`Task "${taskTarget}" failed: ${result.error}`);
+              }
+            });
+          } else if (taskSub === 'history' && taskTarget) {
+            const convId = orchestrator.getTaskConversation(taskTarget);
+            if (!convId) {
+              setSystemMessage(`No conversation history for task "${taskTarget}".`);
+            } else {
+              const messages = orchestrator.getMessages(convId);
+              if (messages.length === 0) {
+                setSystemMessage(`Task "${taskTarget}" has an empty conversation.`);
+              } else {
+                const lines = messages.slice(-10).map((m) => {
+                  const prefix = m.role === 'user' ? '[GOAL]' : '[AGENT]';
+                  const text = m.content.length > 200 ? m.content.slice(0, 200) + '...' : m.content;
+                  return `  ${prefix} ${text}`;
+                });
+                setStickyMessage(true);
+                setSystemMessage(`Task "${taskTarget}" — last ${lines.length} messages:\n${lines.join('\n')}`);
+              }
+            }
+          } else if (taskSub === '' || taskSub === 'list') {
+            const tasks = service.getEnabledTasks();
+            if (tasks.length === 0) {
+              setSystemMessage('No recurring tasks configured. Add tasks to your cereworker.yml config.');
+            } else {
+              const state = service.getTaskState();
+              const lines = tasks.map((t) => {
+                const s = state[t.id];
+                const running = orchestrator.isTaskRunning(t.id) ? ' [RUNNING]' : '';
+                const lastRun = s?.lastRunAt ? ` (last: ${new Date(s.lastRunAt).toLocaleString()}, runs: ${s.runCount ?? 0})` : ' (never run)';
+                return `  ${t.id} (${t.schedule})${running}${lastRun}\n    ${t.goal.split('\n')[0]}`;
+              });
+              setStickyMessage(true);
+              setSystemMessage(`Recurring Tasks:\n${lines.join('\n')}`);
+            }
+          } else {
+            setSystemMessage(
+              'Usage: /task [list|run|history]\n' +
+              '  /task              List configured tasks\n' +
+              '  /task run <id>     Manually trigger a task\n' +
+              '  /task history <id> Show recent messages from a task',
+            );
+          }
+          break;
+        }
+
         case 'stop':
           orchestrator.emergencyStop();
           gatewayServer?.emergencyStopAll();
@@ -454,6 +512,7 @@ export function App({ config, resumeConversationId }: AppProps) {
   /auto [on|off]        Toggle auto mode (skip command approval)
   /auth [provider]      OAuth authentication instructions
   /finetune [sub]       Fine-tuning: start, status, config, history
+  /task [sub]           Recurring tasks: list, run <id>, history <id>
   /stop                 Emergency stop (works during streaming)
   /clear                Start a new conversation
   /help                 Show this help
@@ -492,6 +551,8 @@ export function App({ config, resumeConversationId }: AppProps) {
         finetuneActive={finetune.active}
         finetuneProgress={finetune.progress}
         dmPolicy={config.channels.dmPolicy}
+        taskCount={service.getEnabledTasks().length}
+        taskRunning={taskRunningCount}
       />
       <ChatView
         messages={messages}

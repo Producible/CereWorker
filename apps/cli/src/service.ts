@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -35,6 +35,12 @@ export interface GatewayHandles {
   client: GatewayNodeClient | null;
 }
 
+export interface TaskStateEntry {
+  conversationId: string;
+  lastRunAt?: string;
+  runCount?: number;
+}
+
 export interface ServiceInstance {
   orchestrator: Orchestrator;
   channelManager: ChannelManager;
@@ -44,6 +50,9 @@ export interface ServiceInstance {
   startChannels(): Promise<number>;
   startCerebellum(): Promise<{ ok: true } | { ok: false; reason: string }>;
   startGateway(callbacks?: GatewayCallbacks): Promise<GatewayHandles>;
+  runTask(taskId: string): Promise<{ success: boolean; error?: string }>;
+  getTaskState(): Record<string, TaskStateEntry>;
+  getEnabledTasks(): Array<{ id: string; goal: string; schedule: string; autoMode: boolean; timeoutMinutes: number }>;
   shutdown(): Promise<void>;
 }
 
@@ -107,6 +116,40 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
   if (skillPrompt) {
     orchestrator.setSystemContext(skillPrompt);
     log.info('Skills loaded', { count: eligible.length, total: allSkills.length });
+  }
+
+  // Set recurring tasks so system prompt includes them
+  const enabledTasks = config.tasks.filter((t) => t.enabled);
+  if (enabledTasks.length > 0) {
+    orchestrator.setRecurringTasks(enabledTasks.map((t) => ({ id: t.id, goal: t.goal, schedule: t.schedule })));
+    log.info('Recurring tasks configured', { count: enabledTasks.length });
+  }
+
+  // Load persisted task state (conversationId mappings)
+  const taskStateFile = join(homedir(), '.cereworker', 'task-state.json');
+  type TaskState = Record<string, { conversationId: string; lastRunAt?: string; runCount?: number }>;
+  let taskState: TaskState = {};
+  try {
+    if (existsSync(taskStateFile)) {
+      taskState = JSON.parse(readFileSync(taskStateFile, 'utf-8'));
+      for (const [taskId, state] of Object.entries(taskState)) {
+        if (state.conversationId) {
+          orchestrator.setTaskConversation(taskId, state.conversationId);
+        }
+      }
+      log.info('Task state restored', { tasks: Object.keys(taskState).length });
+    }
+  } catch {
+    log.debug('No task state to restore');
+  }
+
+  function saveTaskState(): void {
+    try {
+      mkdirSync(dirname(taskStateFile), { recursive: true });
+      writeFileSync(taskStateFile, JSON.stringify(taskState, null, 2));
+    } catch (err) {
+      log.warn('Failed to save task state', { error: (err as Error).message });
+    }
   }
 
   // Register hippocampus (memory) tools
@@ -590,39 +633,97 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
       // Non-blocking
     }
 
-    // Register fine-tune heartbeat task for automatic scheduling
-    if (config.cerebellum.finetune?.enabled) {
-      const scheduleHint = finetuneScheduleHint;
-      client.registerTask(
-        'Fine-tune Cerebellum on curated training data',
-        scheduleHint,
-        { type: 'finetune' },
-      ).then((taskId) => {
-        if (!taskId) return;
-        log.info('Fine-tune heartbeat task registered', { taskId, schedule: scheduleHint });
+    // Register heartbeat tasks: fine-tuning + recurring tasks
+    const heartbeatTaskMap = new Map<string, { type: 'finetune' } | { type: 'recurring'; configId: string }>();
 
-        // Subscribe to heartbeat events and auto-trigger fine-tuning
-        (async () => {
-          try {
-            for await (const event of client.subscribeHeartbeat(config.cerebellum.heartbeatInterval)) {
-              for (const action of event.actions) {
-                if (action.taskId === taskId && action.action === 'invoke') {
-                  log.info('Heartbeat triggered fine-tune');
-                  orchestrator.triggerFineTune().catch((err) =>
-                    log.info('Auto fine-tune deferred', { reason: (err as Error).message }),
-                  );
-                }
-              }
-              orchestrator.emit({ type: 'heartbeat:tick', actions: event.actions });
-            }
-          } catch (err) {
-            log.warn('Heartbeat subscription ended', { error: (err as Error).message });
+    const registerHeartbeatTasks = async () => {
+      // Fine-tune task
+      if (config.cerebellum.finetune?.enabled) {
+        try {
+          const taskId = await client.registerTask(
+            'Fine-tune Cerebellum on curated training data',
+            finetuneScheduleHint,
+            { type: 'finetune' },
+          );
+          if (taskId) {
+            heartbeatTaskMap.set(taskId, { type: 'finetune' });
+            log.info('Fine-tune heartbeat task registered', { taskId, schedule: finetuneScheduleHint });
           }
-        })();
-      }).catch((err) => {
-        log.warn('Failed to register fine-tune task', { error: (err as Error).message });
-      });
-    }
+        } catch (err) {
+          log.warn('Failed to register fine-tune task', { error: (err as Error).message });
+        }
+      }
+
+      // Recurring tasks from config
+      for (const task of enabledTasks) {
+        const scheduleHint = task.schedule === 'daily' ? 'every day'
+          : task.schedule === 'hourly' ? 'every hour'
+          : task.schedule === 'weekly' ? 'every week'
+          : task.schedule;
+        try {
+          const taskId = await client.registerTask(
+            task.goal.split('\n')[0],
+            scheduleHint,
+            { type: 'recurring-task', configId: task.id },
+          );
+          if (taskId) {
+            heartbeatTaskMap.set(taskId, { type: 'recurring', configId: task.id });
+            log.info('Recurring task registered with heartbeat', { taskId, configId: task.id, schedule: scheduleHint });
+          }
+        } catch (err) {
+          log.warn('Failed to register recurring task', { error: (err as Error).message, taskId: task.id });
+        }
+      }
+
+      if (heartbeatTaskMap.size === 0) return;
+
+      // Subscribe to heartbeat events
+      (async () => {
+        try {
+          for await (const event of client.subscribeHeartbeat(config.cerebellum.heartbeatInterval)) {
+            for (const action of event.actions) {
+              if (action.action !== 'invoke') continue;
+              const mapping = heartbeatTaskMap.get(action.taskId);
+              if (!mapping) continue;
+
+              if (mapping.type === 'finetune') {
+                log.info('Heartbeat triggered fine-tune');
+                orchestrator.triggerFineTune().catch((err) =>
+                  log.info('Auto fine-tune deferred', { reason: (err as Error).message }),
+                );
+              } else if (mapping.type === 'recurring') {
+                const taskConfig = enabledTasks.find((t) => t.id === mapping.configId);
+                if (!taskConfig) continue;
+                log.info('Heartbeat triggered recurring task', { taskId: mapping.configId });
+                orchestrator.runTask(mapping.configId, taskConfig.goal, {
+                  timeoutMs: taskConfig.timeoutMinutes * 60_000,
+                  autoMode: taskConfig.autoMode,
+                }).then((result) => {
+                  // Persist task state after each run
+                  const convId = orchestrator.getTaskConversation(mapping.configId);
+                  taskState[mapping.configId] = {
+                    conversationId: convId ?? '',
+                    lastRunAt: new Date().toISOString(),
+                    runCount: (taskState[mapping.configId]?.runCount ?? 0) + 1,
+                  };
+                  saveTaskState();
+                  if (!result.success) {
+                    log.warn('Recurring task failed', { taskId: mapping.configId, error: result.error });
+                  }
+                });
+              }
+            }
+            orchestrator.emit({ type: 'heartbeat:tick', actions: event.actions });
+          }
+        } catch (err) {
+          log.warn('Heartbeat subscription ended', { error: (err as Error).message });
+        }
+      })();
+    };
+
+    registerHeartbeatTasks().catch((err) => {
+      log.warn('Failed to register heartbeat tasks', { error: (err as Error).message });
+    });
 
     // Start status polling
     const pollInterval = config.cerebellum.heartbeatInterval * 1000;
@@ -762,6 +863,35 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     log.info('Service shut down');
   }
 
+  async function runTask(taskId: string): Promise<{ success: boolean; error?: string }> {
+    const taskConfig = enabledTasks.find((t) => t.id === taskId);
+    if (!taskConfig) return { success: false, error: `Unknown task: ${taskId}` };
+
+    const result = await orchestrator.runTask(taskId, taskConfig.goal, {
+      timeoutMs: taskConfig.timeoutMinutes * 60_000,
+      autoMode: taskConfig.autoMode,
+    });
+
+    // Persist state
+    const convId = orchestrator.getTaskConversation(taskId);
+    taskState[taskId] = {
+      conversationId: convId ?? '',
+      lastRunAt: new Date().toISOString(),
+      runCount: (taskState[taskId]?.runCount ?? 0) + 1,
+    };
+    saveTaskState();
+
+    return result;
+  }
+
+  function getTaskState(): Record<string, TaskStateEntry> {
+    return { ...taskState };
+  }
+
+  function getEnabledTasks(): Array<{ id: string; goal: string; schedule: string; autoMode: boolean; timeoutMinutes: number }> {
+    return enabledTasks;
+  }
+
   return {
     orchestrator,
     channelManager,
@@ -771,6 +901,9 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     startChannels,
     startCerebellum,
     startGateway,
+    runTask,
+    getTaskState,
+    getEnabledTasks,
     shutdown,
   };
 }

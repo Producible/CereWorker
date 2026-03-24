@@ -120,17 +120,36 @@ describe('buildSystemPrompt', () => {
     expect(result).not.toContain('## Profile');
   });
 
-  it('includes guidelines section', () => {
+  it('includes how to work section', () => {
     const result = buildSystemPrompt(makeOptions());
-    expect(result).toContain('## Guidelines');
-    expect(result).toContain('Use tools to take real actions');
+    expect(result).toContain('## How to Work');
+    expect(result).toContain('Find Skills');
+    expect(result).toContain('Skills first');
   });
 
   it('separates sections with double newlines', () => {
     const result = buildSystemPrompt(makeOptions());
     expect(result).toContain('\n\n## Architecture');
     expect(result).toContain('\n\n## Operating Mode');
-    expect(result).toContain('\n\n## Guidelines');
+    expect(result).toContain('\n\n## How to Work');
+  });
+
+  it('shows recurring tasks section when tasks provided', () => {
+    const result = buildSystemPrompt(makeOptions({
+      recurringTasks: [
+        { id: 'daily-report', goal: 'Generate a daily summary\nwith details', schedule: 'daily' },
+        { id: 'repo-check', goal: 'Check repos for issues', schedule: 'hourly' },
+      ],
+    }));
+    expect(result).toContain('## Recurring Tasks');
+    expect(result).toContain('2 recurring task(s)');
+    expect(result).toContain('**daily-report** (daily)');
+    expect(result).toContain('**repo-check** (hourly)');
+  });
+
+  it('omits recurring tasks section when empty', () => {
+    const result = buildSystemPrompt(makeOptions());
+    expect(result).not.toContain('## Recurring Tasks');
   });
 
   it('shows fine-tune section when enabled and idle', () => {

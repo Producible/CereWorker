@@ -17,6 +17,7 @@ export function useCerebellum(orchestrator: Orchestrator) {
     progress: 0,
     loss: 0,
   });
+  const [taskRunningCount, setTaskRunningCount] = useState(0);
 
   useEffect(() => {
     const unsubs: Array<() => void> = [];
@@ -57,8 +58,26 @@ export function useCerebellum(orchestrator: Orchestrator) {
       }),
     );
 
+    unsubs.push(
+      orchestrator.on('task:start', () => {
+        setTaskRunningCount((c) => c + 1);
+      }),
+    );
+
+    unsubs.push(
+      orchestrator.on('task:complete', () => {
+        setTaskRunningCount((c) => Math.max(0, c - 1));
+      }),
+    );
+
+    unsubs.push(
+      orchestrator.on('task:error', () => {
+        setTaskRunningCount((c) => Math.max(0, c - 1));
+      }),
+    );
+
     return () => unsubs.forEach((u) => u());
   }, [orchestrator]);
 
-  return { status, lastActions, finetune };
+  return { status, lastActions, finetune, taskRunningCount };
 }

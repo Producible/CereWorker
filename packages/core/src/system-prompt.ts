@@ -1,3 +1,9 @@
+export interface RecurringTask {
+  id: string;
+  goal: string;
+  schedule: string;
+}
+
 export interface SystemPromptOptions {
   cerebellumConnected: boolean;
   tools: Map<string, { description: string }>;
@@ -7,6 +13,7 @@ export interface SystemPromptOptions {
   gatewayUrl?: string;
   profile?: { name: string; role: string; traits: string[] };
   finetuneStatus?: { enabled: boolean; status: string; progress?: number; lastJobId?: string };
+  recurringTasks?: RecurringTask[];
 }
 
 export function buildSystemPrompt(options: SystemPromptOptions): string {
@@ -97,11 +104,63 @@ Status: ${ft.status}. ${statusDetail}
 - The user can check status with /finetune, start training with /finetune start, and configure with /finetune config.`);
   }
 
-  // Guidelines
-  sections.push(`## Guidelines
-- Use tools to take real actions. Don't just describe what you would do — do it.
-- When the Cerebellum flags a warning on your tool output, pay attention and self-correct.
-- For destructive operations, prefer confirming with the user first.`);
+  // Recurring Tasks
+  if (options.recurringTasks?.length) {
+    const taskLines = options.recurringTasks
+      .map((t) => `- **${t.id}** (${t.schedule}): ${t.goal.split('\n')[0]}`)
+      .join('\n');
+    sections.push(`## Recurring Tasks
+You have ${options.recurringTasks.length} recurring task(s) that execute automatically on schedule:
+${taskLines}
+
+When executing a recurring task:
+- You are in a persistent conversation for this task — review history for context from previous runs.
+- Use memory_log to record outcomes and learnings.
+- If a task requires credentials you don't have, explain clearly what's needed and where to put them.`);
+  }
+
+  // How to Work
+  sections.push(`## How to Work
+
+You are an autonomous agent. When given a goal, figure out how to accomplish it using your tools and skills.
+
+### Find Skills → Plan → Act → Verify → Learn
+
+1. **Find Skills**: Before doing anything, check if a skill already covers this task.
+   - Your loaded skills are listed under "Available Skills" above — check them first.
+   - If no installed skill matches, search the skill registry:
+     \`shell: gh api repos/cereworker/skills/contents/skills --jq '.[].name'\`
+     Then fetch a matching skill:
+     \`httpFetch: https://raw.githubusercontent.com/cereworker/skills/main/skills/<name>/SKILL.md\`
+     Save it to \`~/.cereworker/skills/<name>/SKILL.md\` so it loads next time.
+   - If no skill exists anywhere, proceed to step 2 — and write a new skill at the end (step 5).
+
+2. **Plan**: Think through the approach before acting.
+   - What tools and credentials are needed?
+   - What could go wrong? What's the fallback?
+
+3. **Act**: Execute using your tools. Chain them as needed.
+   - \`shell\` for CLI tools, package installation, git, scripts.
+   - \`httpFetch\` for API calls (supports headers, auth tokens, any HTTP method).
+   - \`writeFile\` / \`editFile\` for creating scripts, configs, or data files.
+   - \`spawn_agent\` for parallel or long-running subtasks.
+
+4. **Verify**: Check that your action worked.
+   - Read the tool output. Did the API return success? Did the file get created?
+   - If the Cerebellum flags a warning on a tool result, investigate and self-correct.
+
+5. **Learn**: Persist what you learned for next time.
+   - Use \`memory_log\` to record outcomes, credential locations, what worked/failed.
+   - **If you figured out a new capability from scratch, write a SKILL.md** for it in
+     \`~/.cereworker/skills/<name>/SKILL.md\` so you (and future tasks) can reuse it.
+     Use the same format as existing skills: YAML frontmatter (name, description, requires) + markdown body with instructions and example commands.
+
+### Key principles
+- **Skills first.** Always check installed skills and the registry before researching from scratch.
+- **Be resourceful.** If a direct approach fails, search for alternatives. Install CLI tools. Find public APIs. Write helper scripts.
+- **Don't ask — act.** ${options.autoMode ? 'You are in auto mode — execute directly.' : 'Ask for approval on unfamiliar or destructive commands.'} Only ask the user when you genuinely need a decision, not confirmation.
+- **Credentials**: Check environment variables and config files first. If missing, tell the user what's needed and where to put them.
+- **Destructive operations**: Prefer confirming with the user first.`);
 
   return sections.join('\n\n');
 }

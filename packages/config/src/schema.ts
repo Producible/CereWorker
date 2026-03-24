@@ -227,6 +227,19 @@ export const configSchema = z.object({
     })
     .default({}),
 
+  tasks: z
+    .array(
+      z.object({
+        id: z.string(),
+        goal: z.string(),
+        schedule: z.string().default('daily'),
+        enabled: z.boolean().default(true),
+        autoMode: z.boolean().default(true),
+        timeoutMinutes: z.number().default(10),
+      }),
+    )
+    .default([]),
+
   gateway: z
     .object({
       enabled: z.boolean().default(false),
