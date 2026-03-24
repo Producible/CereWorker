@@ -122,9 +122,15 @@ export const configSchema = z.object({
       browser: z
         .object({
           enabled: z.boolean().default(true),
-          mode: z.enum(['launch', 'connect']).default('launch'),
+          mode: z.enum(['launch', 'connect', 'extension']).default('launch'),
           cdpPort: z.number().default(9222),
           headless: z.boolean().default(true),
+          extension: z
+            .object({
+              relayPort: z.number().default(18900),
+              token: z.string().optional(),
+            })
+            .default({}),
         })
         .default({}),
     })

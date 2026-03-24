@@ -9,7 +9,7 @@ import type { ToolDefinition } from '@cereworker/core';
 import { CerebrumProvider } from '@cereworker/cerebrum';
 import type { CereWorkerConfig } from '@cereworker/config';
 import { createChannelManager, type ChannelManager } from '@cereworker/channels';
-import { browserToolDefinitions } from '@cereworker/browser';
+import { createBrowserTools, PuppeteerBackend, CdpBackend, BrowserRelay, ExtensionBackend } from '@cereworker/browser';
 import { loadSkills, filterEligibleSkills, SkillRegistry } from '@cereworker/skills';
 import {
   HippocampusStore,
@@ -249,12 +249,30 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
   }
 
   // Register browser tools with orchestrator
-  for (const [name, toolDef] of Object.entries(browserToolDefinitions)) {
-    orchestrator.registerTool(name, {
-      description: toolDef.description,
-      parameters: toolDef.parameters as unknown as Record<string, unknown>,
-      execute: async (args) => toolDef.execute(args as never),
-    });
+  let browserRelay: BrowserRelay | null = null;
+  if (config.tools.browser.enabled) {
+    const browserMode = config.tools.browser.mode;
+    let backend;
+    if (browserMode === 'extension') {
+      const relay = new BrowserRelay({
+        port: config.tools.browser.extension.relayPort,
+        token: config.tools.browser.extension.token,
+      });
+      browserRelay = relay;
+      backend = new ExtensionBackend(relay);
+    } else if (browserMode === 'connect') {
+      backend = new CdpBackend({ port: config.tools.browser.cdpPort });
+    } else {
+      backend = new PuppeteerBackend({ headless: config.tools.browser.headless });
+    }
+    const browserTools = createBrowserTools(backend);
+    for (const [name, toolDef] of Object.entries(browserTools)) {
+      orchestrator.registerTool(name, {
+        description: toolDef.description,
+        parameters: toolDef.parameters as unknown as Record<string, unknown>,
+        execute: async (args) => toolDef.execute(args as never),
+      });
+    }
   }
 
   // Create channel manager
@@ -286,6 +304,21 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
   });
 
   orchestrator.start();
+
+  // Start browser extension relay if configured
+  if (browserRelay) {
+    browserRelay.start().then(() => {
+      log.info('Browser relay started', { port: config.tools.browser.extension.relayPort });
+    }).catch((err) => {
+      log.warn('Failed to start browser relay', { error: (err as Error).message });
+    });
+    browserRelay.on('extension:connected', () => {
+      orchestrator.emit({ type: 'browser:extension-connected' });
+    });
+    browserRelay.on('extension:disconnected', () => {
+      orchestrator.emit({ type: 'browser:extension-disconnected' });
+    });
+  }
 
   // Expire stale pairing codes every 5 minutes
   const pairingExpiryInterval = setInterval(() => pairingStore.expireStale(), 5 * 60 * 1000);
@@ -855,6 +888,10 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     if (gatewayClient) {
       gatewayClient.disconnect();
       gatewayClient = null;
+    }
+    if (browserRelay) {
+      await browserRelay.stop();
+      browserRelay = null;
     }
     clearInterval(pairingExpiryInterval);
     pairingStore.close();

@@ -1,18 +1,6 @@
-export {
-  launchBrowser,
-  closeBrowser,
-  getSession,
-  setMode,
-  getMode,
-  navigateTo,
-  getPageText,
-  screenshot,
-  clickElement,
-  typeText,
-  evaluateJs,
-  waitForSelector,
-  getPageUrl,
-  type BrowserSession,
-} from './puppeteer.js';
-export { connectCdp, disconnectCdp, getCdpSession, type CdpConnectionOptions } from './cdp.js';
-export { browserToolDefinitions, type BrowserToolName } from './tools.js';
+export type { BrowserBackend, TabInfo } from './backend.js';
+export { PuppeteerBackend, type BrowserSession } from './puppeteer.js';
+export { CdpBackend, type CdpConnectionOptions } from './cdp.js';
+export { createBrowserTools, type BrowserTools, type BrowserToolName } from './tools.js';
+export { BrowserRelay, type RelayConfig, type RelayCommand, type RelayResult } from './relay.js';
+export { ExtensionBackend } from './extension-backend.js';

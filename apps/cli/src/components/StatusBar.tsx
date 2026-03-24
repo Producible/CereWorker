@@ -18,6 +18,7 @@ interface StatusBarProps {
   dmPolicy?: 'pairing' | 'open';
   taskCount?: number;
   taskRunning?: number;
+  extensionConnected?: boolean;
 }
 
 export function StatusBar({
@@ -36,6 +37,7 @@ export function StatusBar({
   dmPolicy = 'pairing',
   taskCount = 0,
   taskRunning = 0,
+  extensionConnected = false,
 }: StatusBarProps) {
   return (
     <Box borderStyle="single" borderColor="gray" paddingX={1} justifyContent="space-between">
@@ -61,6 +63,9 @@ export function StatusBar({
         )}
         {finetuneActive && (
           <Text color="blue">[FT {Math.round(finetuneProgress * 100)}%]</Text>
+        )}
+        {extensionConnected && (
+          <Text color="green">[EXT]</Text>
         )}
         {taskCount > 0 && (
           <Text color={taskRunning > 0 ? 'yellow' : 'blue'}>

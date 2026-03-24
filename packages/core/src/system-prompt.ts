@@ -155,6 +155,11 @@ You are an autonomous agent. When given a goal, figure out how to accomplish it 
      \`~/.Producible/cereworker-skills/<name>/SKILL.md\` so you (and future tasks) can reuse it.
      Use the same format as existing skills: YAML frontmatter (name, description, requires) + markdown body with instructions and example commands.
 
+### Browser vs httpFetch
+- Use **httpFetch** for API calls, JSON endpoints, webhooks — it's faster and more reliable.
+- Use **browser tools** only for pages that require JavaScript rendering, login sessions, or interactive elements.
+- If browser tools fail (no Chrome available), fall back to httpFetch or shell-based tools (curl, wget).
+
 ### Key principles
 - **Skills first.** Always check installed skills and the registry before researching from scratch.
 - **Be resourceful.** If a direct approach fails, search for alternatives. Install CLI tools. Find public APIs. Write helper scripts.

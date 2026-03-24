@@ -31,6 +31,7 @@ export function App({ config, resumeConversationId }: AppProps) {
   const [currentModel, setCurrentModel] = useState(config.cerebrum.defaultModel);
   const [autoMode, setAutoMode] = useState(config.tools.shell.autoMode);
   const [gatewayNodeCount, setGatewayNodeCount] = useState(0);
+  const [extensionConnected, setExtensionConnected] = useState(false);
   const [gatewayServer, setGatewayServer] = useState<GatewayServer | null>(null);
   const [gatewayClient, setGatewayClient] = useState<GatewayNodeClient | null>(null);
 
@@ -96,6 +97,13 @@ export function App({ config, resumeConversationId }: AppProps) {
       setSystemMessage(`No conversation found starting with "${resumeConversationId}"`);
     }
   }, [orchestrator, resumeConversationId]);
+
+  // Listen for browser extension events
+  useEffect(() => {
+    const unsub1 = orchestrator.on('browser:extension-connected', () => setExtensionConnected(true));
+    const unsub2 = orchestrator.on('browser:extension-disconnected', () => setExtensionConnected(false));
+    return () => { unsub1(); unsub2(); };
+  }, [orchestrator]);
 
   const { messages, isStreaming, streamingContent, activeToolCall, error } = useChat(orchestrator);
   const { status: cerebellumStatus, finetune, taskRunningCount } = useCerebellum(orchestrator);
@@ -553,6 +561,7 @@ export function App({ config, resumeConversationId }: AppProps) {
         dmPolicy={config.channels.dmPolicy}
         taskCount={service.getEnabledTasks().length}
         taskRunning={taskRunningCount}
+        extensionConnected={extensionConnected}
       />
       <ChatView
         messages={messages}

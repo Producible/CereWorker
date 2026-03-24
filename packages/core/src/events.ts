@@ -30,6 +30,8 @@ export type OrchestratorEvent =
   | { type: 'task:start'; taskId: string; goal: string }
   | { type: 'task:complete'; taskId: string }
   | { type: 'task:error'; taskId: string; error: string }
+  | { type: 'browser:extension-connected' }
+  | { type: 'browser:extension-disconnected' }
   | { type: 'conversation:resumed'; conversationId: string; messages: Message[] }
   | { type: 'error'; error: Error };
 

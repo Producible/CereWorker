@@ -1,20 +1,7 @@
 import { z } from 'zod';
-import {
-  navigateTo,
-  getPageText,
-  screenshot,
-  clickElement,
-  typeText,
-  evaluateJs,
-  waitForSelector,
-  getPageUrl,
-  closeBrowser,
-  setMode,
-  getMode,
-} from './puppeteer.js';
-import { connectCdp, disconnectCdp } from './cdp.js';
+import type { BrowserBackend } from './backend.js';
 
-function wrapBrowserTool<T>(fn: (args: T) => Promise<string>): (args: T) => Promise<string> {
+function wrap<T>(fn: (args: T) => Promise<string>): (args: T) => Promise<string> {
   return async (args: T) => {
     try {
       return await fn(args);
@@ -24,101 +11,110 @@ function wrapBrowserTool<T>(fn: (args: T) => Promise<string>): (args: T) => Prom
   };
 }
 
-export const browserToolDefinitions = {
-  browserNavigate: {
-    description: 'Navigate the browser to a URL. Requires a running Chrome browser — prefer httpFetch for API calls.',
-    parameters: z.object({
-      url: z.string().describe('The URL to navigate to'),
-    }),
-    execute: wrapBrowserTool((args: { url: string }) => navigateTo(args.url)),
-  },
-  browserGetText: {
-    description: 'Get the visible text content of the current page',
-    parameters: z.object({}),
-    execute: wrapBrowserTool(async () => getPageText()),
-  },
-  browserScreenshot: {
-    description: 'Take a screenshot of the current page',
-    parameters: z.object({
-      path: z.string().optional().describe('File path to save screenshot'),
-    }),
-    execute: wrapBrowserTool(async (args: { path?: string }) => screenshot(args.path)),
-  },
-  browserClick: {
-    description: 'Click an element on the page by CSS selector',
-    parameters: z.object({
-      selector: z.string().describe('CSS selector of the element to click'),
-    }),
-    execute: wrapBrowserTool(async (args: { selector: string }) => clickElement(args.selector)),
-  },
-  browserType: {
-    description: 'Type text into an input element on the page',
-    parameters: z.object({
-      selector: z.string().describe('CSS selector of the input element'),
-      text: z.string().describe('Text to type'),
-    }),
-    execute: wrapBrowserTool(async (args: { selector: string; text: string }) => typeText(args.selector, args.text)),
-  },
-  browserEval: {
-    description: 'Execute JavaScript code in the browser page context',
-    parameters: z.object({
-      code: z.string().describe('JavaScript code to evaluate'),
-    }),
-    execute: wrapBrowserTool(async (args: { code: string }) => evaluateJs(args.code)),
-  },
-  browserWait: {
-    description: 'Wait for a CSS selector to appear on the page',
-    parameters: z.object({
-      selector: z.string().describe('CSS selector to wait for'),
-      timeout: z.number().optional().default(5000).describe('Timeout in milliseconds'),
-    }),
-    execute: wrapBrowserTool(async (args: { selector: string; timeout?: number }) =>
-      waitForSelector(args.selector, args.timeout)),
-  },
-  browserGetUrl: {
-    description: 'Get the current URL of the browser page',
-    parameters: z.object({}),
-    execute: wrapBrowserTool(async () => getPageUrl()),
-  },
-  browserConnect: {
-    description:
-      'Connect to an existing Chrome browser via CDP (Chrome DevTools Protocol). Chrome must be running with --remote-debugging-port.',
-    parameters: z.object({
-      port: z.number().optional().default(9222).describe('Chrome remote debugging port'),
-      wsEndpoint: z.string().optional().describe('Direct WebSocket endpoint URL (overrides port)'),
-    }),
-    execute: async (args: { port?: number; wsEndpoint?: string }) => {
-      try {
-        setMode('connect', { port: args.port, wsEndpoint: args.wsEndpoint });
-        const s = await connectCdp({ port: args.port, wsEndpoint: args.wsEndpoint });
-        const url = s.page.url();
-        return `Connected to Chrome via CDP. Current page: ${url}`;
-      } catch (err) {
-        setMode('launch');
-        return `Failed to connect: ${err instanceof Error ? err.message : String(err)}`;
-      }
+export function createBrowserTools(backend: BrowserBackend) {
+  return {
+    browserNavigate: {
+      description: 'Navigate the browser to a URL. Prefer httpFetch for API calls.',
+      parameters: z.object({
+        url: z.string().describe('The URL to navigate to'),
+      }),
+      execute: wrap((args: { url: string }) => backend.navigate(args.url)),
     },
-  },
-  browserDisconnect: {
-    description: 'Disconnect from Chrome without closing it (CDP mode only)',
-    parameters: z.object({}),
-    execute: async () => {
-      if (getMode() !== 'connect') {
-        return 'Not in CDP mode. Use browserClose to close a launched browser.';
-      }
-      await disconnectCdp();
-      setMode('launch');
-      return 'Disconnected from Chrome';
+    browserGetText: {
+      description: 'Get the visible text content of the current page',
+      parameters: z.object({}),
+      execute: wrap(async () => backend.getPageText()),
     },
-  },
-  browserClose: {
-    description: 'Close the browser (launch mode) or disconnect (CDP mode)',
-    parameters: z.object({}),
-    execute: async () => {
-      await closeBrowser();
-      return getMode() === 'connect' ? 'Disconnected from Chrome' : 'Browser closed';
+    browserScreenshot: {
+      description: 'Take a screenshot of the current page',
+      parameters: z.object({
+        path: z.string().optional().describe('File path to save screenshot'),
+      }),
+      execute: wrap(async (args: { path?: string }) => backend.screenshot(args.path)),
     },
-  },
-};
+    browserClick: {
+      description: 'Click an element on the page by CSS selector',
+      parameters: z.object({
+        selector: z.string().describe('CSS selector of the element to click'),
+      }),
+      execute: wrap(async (args: { selector: string }) => backend.click(args.selector)),
+    },
+    browserType: {
+      description: 'Type text into an input element on the page',
+      parameters: z.object({
+        selector: z.string().describe('CSS selector of the input element'),
+        text: z.string().describe('Text to type'),
+      }),
+      execute: wrap(async (args: { selector: string; text: string }) => backend.type(args.selector, args.text)),
+    },
+    browserEval: {
+      description: 'Execute JavaScript code in the browser page context',
+      parameters: z.object({
+        code: z.string().describe('JavaScript code to evaluate'),
+      }),
+      execute: wrap(async (args: { code: string }) => backend.evaluate(args.code)),
+    },
+    browserWait: {
+      description: 'Wait for a CSS selector to appear on the page',
+      parameters: z.object({
+        selector: z.string().describe('CSS selector to wait for'),
+        timeout: z.number().optional().default(5000).describe('Timeout in milliseconds'),
+      }),
+      execute: wrap(async (args: { selector: string; timeout?: number }) =>
+        backend.waitForSelector(args.selector, args.timeout)),
+    },
+    browserGetUrl: {
+      description: 'Get the current URL of the browser page',
+      parameters: z.object({}),
+      execute: wrap(async () => backend.getPageUrl()),
+    },
+    browserListTabs: {
+      description: 'List all open browser tabs with their URLs',
+      parameters: z.object({}),
+      execute: wrap(async () => {
+        const tabs = await backend.listTabs();
+        if (tabs.length === 0) return 'No tabs open.';
+        return tabs.map((t) =>
+          `${t.active ? '→ ' : '  '}[${t.id}] ${t.url}${t.title ? ` - ${t.title}` : ''}`
+        ).join('\n');
+      }),
+    },
+    browserSwitchTab: {
+      description: 'Switch to a different browser tab by its ID',
+      parameters: z.object({
+        tabId: z.string().describe('Tab ID from browserListTabs'),
+      }),
+      execute: wrap(async (args: { tabId: string }) => backend.switchTab(args.tabId)),
+    },
+    browserNewTab: {
+      description: 'Open a new browser tab, optionally navigating to a URL',
+      parameters: z.object({
+        url: z.string().optional().describe('URL to navigate to in the new tab'),
+      }),
+      execute: wrap(async (args: { url?: string }) => backend.newTab(args.url)),
+    },
+    browserCloseTab: {
+      description: 'Close a browser tab by ID, or close the current tab',
+      parameters: z.object({
+        tabId: z.string().optional().describe('Tab ID to close (current tab if omitted)'),
+      }),
+      execute: wrap(async (args: { tabId?: string }) => backend.closeTab(args.tabId)),
+    },
+    browserConnect: {
+      description: 'Connect to the browser backend. In extension mode, waits for the Chrome extension.',
+      parameters: z.object({}),
+      execute: wrap(async () => backend.connect()),
+    },
+    browserDisconnect: {
+      description: 'Disconnect from the browser without closing it',
+      parameters: z.object({}),
+      execute: wrap(async () => {
+        await backend.disconnect();
+        return 'Disconnected from browser';
+      }),
+    },
+  };
+}
 
-export type BrowserToolName = keyof typeof browserToolDefinitions;
+export type BrowserTools = ReturnType<typeof createBrowserTools>;
+export type BrowserToolName = keyof BrowserTools;
