@@ -9,6 +9,33 @@
 
 A dual-LLM autonomous agent that pairs a small local model (the **Cerebellum**) with giant cloud LLMs (the **Cerebrum**) to produce work that is not just intelligent, but verifiably effective in the real world.
 
+## Table of Contents
+
+- [Why CereWorker](#why-cereworker)
+- [Architecture](#architecture)
+- [Quick Start](#quick-start)
+- [How It Works](#how-it-works)
+  - [Message Flow](#message-flow)
+  - [Heartbeat Flow](#heartbeat-flow)
+  - [Sub-Agent Flow](#sub-agent-flow)
+  - [Context Window Management](#context-window-management)
+  - [Exec Safety](#exec-safety-supervised-and-full-auto-modes)
+  - [Emergency Stop](#emergency-stop)
+  - [Gateway: Multi-Node Control](#gateway-multi-node-control)
+  - [Browser Automation](#browser-automation)
+  - [Headless Service Mode](#headless-service-mode)
+  - [Channel Flow](#channel-flow)
+- [Self-Improvement](#self-improvement-beyond-prompt-engineering)
+- [Packages](#packages)
+- [Built-in Tools](#built-in-tools)
+- [Skills](#skills)
+- [Cerebellum Models](#cerebellum-models)
+- [Hippocampus: Memory System](#hippocampus-memory-system)
+- [Configuration](#configuration)
+- [Development](#development)
+- [Acknowledgments](#acknowledgments)
+- [License](#license)
+
 ## Why CereWorker
 
 Most AI agents today are built on a single giant LLM. They reason well, but they have critical blind spots:
