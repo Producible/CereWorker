@@ -133,7 +133,7 @@ class CerebellumServicer(cerebellum_pb2_grpc.CerebellumServicer):
         self.heartbeat.add_subscriber(on_event)
 
         try:
-            while context.is_active():
+            while True:
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=interval + 5)
                     hb_event = cerebellum_pb2.HeartbeatEvent(timestamp=event["timestamp"])
@@ -145,6 +145,8 @@ class CerebellumServicer(cerebellum_pb2_grpc.CerebellumServicer):
                     yield hb_event
                 except asyncio.TimeoutError:
                     continue
+        except asyncio.CancelledError:
+            pass
         finally:
             self.heartbeat.remove_subscriber(on_event)
 
