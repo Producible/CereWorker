@@ -290,6 +290,26 @@ gateway:
 
 Use `/nodes` in the TUI to see connected nodes (gateway mode) or connection status (node mode). For remote access, use Tailscale, WireGuard, or SSH tunnels -- do not expose the WebSocket port on the public internet without TLS.
 
+### Browser Automation
+
+CereWorker's browser tools support three backend modes, configured via `tools.browser.mode`:
+
+**Launch mode** (default): Starts a Puppeteer-managed browser. Set `headless: false` to see the browser window. Best for automated scraping and testing where no existing session is needed.
+
+**Connect mode**: Attaches to a running Chrome instance via CDP. Start Chrome with `--remote-debugging-port=9222` and set `mode: connect`. Useful when you need access to an already-authenticated browser session from the command line.
+
+**Extension mode**: Controls the user's actual Chrome browser through the CereWorker Browser Bridge extension. The agent sees the same tabs, cookies, and sessions as the user -- ideal for tasks like posting to social media, managing dashboards, or any workflow that requires an authenticated browser.
+
+To use extension mode:
+
+1. Set `tools.browser.mode: extension` in config
+2. Load `packages/browser/extension/` as an unpacked extension in Chrome (`chrome://extensions` -> Load unpacked)
+3. Open the extension options and set the relay port (default 18900) and token (if configured)
+4. Click the extension icon -- badge shows `ON` when connected
+5. The TUI shows `[EXT]` in the status bar when the extension is active
+
+The agent automatically prefers `httpFetch` for API calls and only uses browser tools for pages requiring JavaScript rendering or interactive elements.
+
 ### Headless Service Mode
 
 For production deployments, CereWorker can run without the TUI as a persistent background service:
@@ -378,7 +398,7 @@ Other agents get more expensive as they get smarter (longer prompts, more retrie
 | [`@cereworker/cerebrum`](packages/cerebrum) | [![npm](https://img.shields.io/npm/v/@cereworker/cerebrum)](https://www.npmjs.com/package/@cereworker/cerebrum) | AI SDK 6 multi-provider LLM abstraction + built-in tools |
 | [`@cereworker/cerebellum-client`](packages/cerebellum-client) | [![npm](https://img.shields.io/npm/v/@cereworker/cerebellum-client)](https://www.npmjs.com/package/@cereworker/cerebellum-client) | gRPC client for the Cerebellum container |
 | [`@cereworker/channels`](packages/channels) | [![npm](https://img.shields.io/npm/v/@cereworker/channels)](https://www.npmjs.com/package/@cereworker/channels) | IM adapters (Slack, Discord, Telegram, Matrix, Feishu, WeChat) |
-| [`@cereworker/browser`](packages/browser) | [![npm](https://img.shields.io/npm/v/@cereworker/browser)](https://www.npmjs.com/package/@cereworker/browser) | Puppeteer browser automation tools |
+| [`@cereworker/browser`](packages/browser) | [![npm](https://img.shields.io/npm/v/@cereworker/browser)](https://www.npmjs.com/package/@cereworker/browser) | Browser automation (Puppeteer, CDP, Chrome extension) |
 | [`@cereworker/skills`](packages/skills) | [![npm](https://img.shields.io/npm/v/@cereworker/skills)](https://www.npmjs.com/package/@cereworker/skills) | SKILL.md plugin loader and registry |
 | [`@cereworker/hippocampus`](packages/hippocampus) | [![npm](https://img.shields.io/npm/v/@cereworker/hippocampus)](https://www.npmjs.com/package/@cereworker/hippocampus) | Temporary memory store, memory tools, fine-tune curator |
 | [`@cereworker/gateway`](packages/gateway) | [![npm](https://img.shields.io/npm/v/@cereworker/gateway)](https://www.npmjs.com/package/@cereworker/gateway) | WebSocket gateway for multi-node control |
@@ -388,7 +408,7 @@ Other agents get more expensive as they get smarter (longer prompts, more retrie
 
 **Shell & File Operations** -- Execute commands, read/write files, edit files by exact match, list directories, search file contents (grep/ripgrep), find files by glob pattern. Shell execution is governed by the exec policy: safe binaries (ls, git, node, etc.) auto-execute, destructive patterns are blocked, and unknown commands prompt for approval in supervised mode
 
-**Browser Automation** -- Navigate, screenshot, click, type, evaluate JS, wait for elements. Supports both launching a new browser and connecting to an existing Chrome via CDP (`--remote-debugging-port`)
+**Browser Automation** -- Navigate, screenshot, click, type, evaluate JS, wait for elements, manage tabs (list/switch/open/close). Three backend modes: **launch** (Puppeteer headless), **connect** (CDP to running Chrome via `--remote-debugging-port`), or **extension** (control the user's actual Chrome session via the CereWorker Browser Bridge extension)
 
 **HTTP & Web Search** -- Fetch URLs (`httpFetch`) with timeout and private-IP blocking. Search the web (`webSearch`) via DuckDuckGo, no API key required
 
@@ -506,6 +526,16 @@ subAgents:
 tools:
   shell:
     autoMode: false              # true = full-auto (no approval prompts)
+
+tools:
+  browser:
+    enabled: true
+    mode: launch                   # launch | connect | extension
+    headless: true
+    cdpPort: 9222                  # for connect mode
+    extension:
+      relayPort: 18900             # for extension mode
+      # token: ${BROWSER_TOKEN}   # optional shared secret
 
 gateway:
   mode: standalone               # standalone | gateway | node
