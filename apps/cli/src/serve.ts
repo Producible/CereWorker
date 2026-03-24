@@ -22,8 +22,8 @@ export async function runHeadlessService(config: CereWorkerConfig): Promise<void
 
   // Start cerebellum
   if (config.cerebellum.enabled) {
-    const connected = await service.startCerebellum();
-    log.info('Cerebellum', { connected });
+    const result = await service.startCerebellum();
+    log.info('Cerebellum', { ok: result.ok, reason: result.ok ? undefined : result.reason });
   }
 
   // Start channels

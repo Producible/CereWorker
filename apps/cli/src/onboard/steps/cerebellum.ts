@@ -189,6 +189,15 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
           execSync('which docker', { stdio: 'pipe' });
           hw.hasDocker = true;
           clack.log.success('Docker installed successfully.');
+
+          // Start the Docker service
+          try {
+            execSync('sudo systemctl start docker', { stdio: 'pipe', timeout: 15_000 });
+            execSync('sudo systemctl enable docker', { stdio: 'pipe', timeout: 10_000 });
+            clack.log.success('Docker service started and enabled on boot.');
+          } catch {
+            clack.log.warn('Could not start Docker service. Run: sudo systemctl start docker');
+          }
         } catch {
           clack.log.warn('Docker was installed but may require a re-login to work.');
         }

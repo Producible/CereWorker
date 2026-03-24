@@ -54,14 +54,13 @@ export function App({ config, resumeConversationId }: AppProps) {
   // Start cerebellum in background
   useEffect(() => {
     if (config.cerebellum.enabled) {
-      service.startCerebellum().then((ok) => {
-        if (!ok) {
+      service.startCerebellum().then((result) => {
+        if (!result.ok) {
           setStickyMessage(true);
           setSystemMessage(
-            'Cerebellum failed to start. This is a core feature — tool verification and scheduling are unavailable.\n' +
-            '  Check that Docker is running: docker ps\n' +
-            '  Check the container: docker logs cereworker-cerebellum\n' +
-            '  Re-run onboarding: cereworker onboard',
+            'Cerebellum failed to start. This is a core feature — tool verification and scheduling are unavailable.\n\n' +
+            result.reason +
+            '\n\n  Re-run onboarding: cereworker onboard',
           );
         }
       });

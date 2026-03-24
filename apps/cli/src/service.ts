@@ -42,7 +42,7 @@ export interface ServiceInstance {
   skillRegistry: SkillRegistry;
   pairingStore: PairingStore;
   startChannels(): Promise<number>;
-  startCerebellum(): Promise<boolean>;
+  startCerebellum(): Promise<{ ok: true } | { ok: false; reason: string }>;
   startGateway(callbacks?: GatewayCallbacks): Promise<GatewayHandles>;
   shutdown(): Promise<void>;
 }
@@ -292,22 +292,50 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
   let dockerPrefix = '';
 
   function isDockerAvailable(): boolean {
-    // Check if Docker is installed
+    // Check if Docker is installed (check PATH, then common locations)
+    let dockerBin = '';
     try {
-      execSync('which docker', { stdio: 'pipe' });
+      dockerBin = execSync('which docker', { stdio: 'pipe' }).toString().trim();
     } catch {
+      // Not in PATH — check common install locations
+      const candidates = ['/usr/bin/docker', '/usr/local/bin/docker', '/snap/bin/docker'];
+      for (const c of candidates) {
+        try {
+          execSync(`test -x ${c}`, { stdio: 'pipe' });
+          dockerBin = c;
+          break;
+        } catch {}
+      }
+    }
+
+    if (!dockerBin) {
       log.warn('Docker is not installed. Install Docker to use Cerebellum.');
       return false;
     }
 
     // Try without sudo first
     try {
-      execSync('docker info', { stdio: 'pipe', timeout: 5000 });
+      execSync(`${dockerBin} info`, { stdio: 'pipe', timeout: 10_000 });
       return true;
-    } catch {
+    } catch (err) {
+      const msg = (err as Error).message;
+      // Docker installed but daemon not running
+      if (msg.includes('Is the docker daemon running') || msg.includes('Cannot connect to the Docker daemon')) {
+        // Try to start the service
+        try {
+          execSync('sudo -n systemctl start docker', { stdio: 'pipe', timeout: 15_000 });
+          log.info('Started Docker service');
+          execSync(`${dockerBin} info`, { stdio: 'pipe', timeout: 10_000 });
+          return true;
+        } catch {
+          log.warn('Docker service is not running. Start it with: sudo systemctl start docker');
+          return false;
+        }
+      }
+
       // Permission denied — try with sudo
       try {
-        execSync('sudo -n docker info', { stdio: 'pipe', timeout: 5000 });
+        execSync(`sudo -n ${dockerBin} info`, { stdio: 'pipe', timeout: 10_000 });
         dockerPrefix = 'sudo ';
         log.info('Using sudo for Docker commands (add user to docker group to avoid this)');
         return true;
@@ -447,12 +475,43 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     }
   }
 
-  async function startCerebellum(): Promise<boolean> {
-    if (!config.cerebellum.enabled) return false;
+  async function startCerebellum(): Promise<{ ok: true } | { ok: false; reason: string }> {
+    if (!config.cerebellum.enabled) return { ok: false, reason: 'Cerebellum is disabled in config.' };
 
     // Auto-start Docker container
+    let dockerReason = '';
     if (config.cerebellum.docker.autoStart) {
-      ensureDockerRunning();
+      if (!isDockerAvailable()) {
+        // Determine specific reason
+        try {
+          execSync('which docker', { stdio: 'pipe' });
+          // Docker binary found but daemon not running or permission denied
+          try {
+            execSync('docker info', { stdio: 'pipe', timeout: 5000 });
+          } catch (e) {
+            const msg = (e as Error).message;
+            if (msg.includes('Is the docker daemon running') || msg.includes('Cannot connect to the Docker daemon')) {
+              dockerReason = 'Docker is installed but the service is not running.\n  Start it with: sudo systemctl start docker';
+            } else {
+              dockerReason = 'Docker permission denied. Run: sudo usermod -aG docker $USER && newgrp docker';
+            }
+          }
+        } catch {
+          dockerReason = 'Docker is not installed. Install Docker: https://docs.docker.com/engine/install/';
+        }
+        if (!dockerReason) dockerReason = 'Docker is not available. Install Docker or check permissions.';
+      } else if (!ensureDockerRunning()) {
+        // Gather container logs for diagnostics
+        try {
+          const logs = execSync(
+            `${dockerPrefix}docker logs --tail 20 cereworker-cerebellum 2>&1`,
+            { stdio: 'pipe', timeout: 5000 },
+          ).toString().trim();
+          dockerReason = `Container failed to start.\nLast logs:\n${logs}`;
+        } catch {
+          dockerReason = 'Container failed to start. No logs available (container may not exist).';
+        }
+      }
     }
 
     // Connect gRPC client with retries
@@ -460,9 +519,14 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     const client = new CerebellumClient(config.cerebellum.address);
     const maxRetries = 15;
     const retryDelay = 3000;
+    let lastError = '';
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      await client.connect();
+      try {
+        await client.connect();
+      } catch (err) {
+        lastError = (err as Error).message;
+      }
       if (client.isConnected()) {
         log.info('Cerebellum connected', { address: config.cerebellum.address, attempt });
         break;
@@ -474,8 +538,11 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     }
 
     if (!client.isConnected()) {
+      const parts = [`Could not connect to Cerebellum at ${config.cerebellum.address} after ${maxRetries} attempts.`];
+      if (lastError) parts.push(`Last error: ${lastError}`);
+      if (dockerReason) parts.push(dockerReason);
       log.warn('Could not connect to Cerebellum', { address: config.cerebellum.address });
-      return false;
+      return { ok: false, reason: parts.join('\n') };
     }
 
     cerebellumClient = client;
@@ -555,7 +622,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
       }
     }, pollInterval);
 
-    return true;
+    return { ok: true };
   }
 
   async function startChannels(): Promise<number> {
