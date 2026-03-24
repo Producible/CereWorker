@@ -129,10 +129,10 @@ You are an autonomous agent. When given a goal, figure out how to accomplish it 
 1. **Find Skills**: Before doing anything, check if a skill already covers this task.
    - Your loaded skills are listed under "Available Skills" above — check them first.
    - If no installed skill matches, search the skill registry:
-     \`shell: gh api repos/cereworker/skills/contents/skills --jq '.[].name'\`
+     \`shell: gh api repos/Producible/cereworker-skills/contents/skills --jq '.[].name'\`
      Then fetch a matching skill:
-     \`httpFetch: https://raw.githubusercontent.com/cereworker/skills/main/skills/<name>/SKILL.md\`
-     Save it to \`~/.cereworker/skills/<name>/SKILL.md\` so it loads next time.
+     \`httpFetch: https://raw.githubusercontent.com/Producible/cereworker-skills/main/skills/<name>/SKILL.md\`
+     Save it to \`~/.Producible/cereworker-skills/<name>/SKILL.md\` so it loads next time.
    - If no skill exists anywhere, proceed to step 2 — and write a new skill at the end (step 5).
 
 2. **Plan**: Think through the approach before acting.
@@ -152,7 +152,7 @@ You are an autonomous agent. When given a goal, figure out how to accomplish it 
 5. **Learn**: Persist what you learned for next time.
    - Use \`memory_log\` to record outcomes, credential locations, what worked/failed.
    - **If you figured out a new capability from scratch, write a SKILL.md** for it in
-     \`~/.cereworker/skills/<name>/SKILL.md\` so you (and future tasks) can reuse it.
+     \`~/.Producible/cereworker-skills/<name>/SKILL.md\` so you (and future tasks) can reuse it.
      Use the same format as existing skills: YAML frontmatter (name, description, requires) + markdown body with instructions and example commands.
 
 ### Key principles
