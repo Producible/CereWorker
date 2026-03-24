@@ -23,6 +23,9 @@ A dual-LLM autonomous agent that pairs a small local model (the **Cerebellum**) 
   - [Emergency Stop](#emergency-stop)
   - [Gateway: Multi-Node Control](#gateway-multi-node-control)
   - [Browser Automation](#browser-automation)
+    - [Installing the Chrome Extension](#installing-the-chrome-extension)
+    - [Configuring the Extension](#configuring-the-extension)
+    - [Using Extension Mode](#using-extension-mode)
   - [Headless Service Mode](#headless-service-mode)
   - [Channel Flow](#channel-flow)
 - [Self-Improvement](#self-improvement-beyond-prompt-engineering)
@@ -327,15 +330,68 @@ CereWorker's browser tools support three backend modes, configured via `tools.br
 
 **Extension mode**: Controls the user's actual Chrome browser through the CereWorker Browser Bridge extension. The agent sees the same tabs, cookies, and sessions as the user -- ideal for tasks like posting to social media, managing dashboards, or any workflow that requires an authenticated browser.
 
-To use extension mode:
+#### Installing the Chrome Extension
 
-1. Set `tools.browser.mode: extension` in config
-2. Load `packages/browser/extension/` as an unpacked extension in Chrome (`chrome://extensions` -> Load unpacked)
-3. Open the extension options and set the relay port (default 18900) and token (if configured)
-4. Click the extension icon -- badge shows `ON` when connected
-5. The TUI shows `[EXT]` in the status bar when the extension is active
+The extension is a static folder (no build step) located at `packages/browser/extension/` in the source repo.
 
-The agent automatically prefers `httpFetch` for API calls and only uses browser tools for pages requiring JavaScript rendering or interactive elements.
+**From source:**
+
+```bash
+git clone https://github.com/Producible/CereWorker.git
+# The extension is at CereWorker/packages/browser/extension/
+```
+
+**From npm install:**
+
+```bash
+# Find the installed package location
+EXT_DIR="$(node -e "console.log(require.resolve('@cereworker/browser/package.json').replace('/package.json',''))")/extension"
+echo "Extension located at: $EXT_DIR"
+```
+
+Then load it into Chrome:
+
+1. Open `chrome://extensions` in Chrome
+2. Enable **Developer mode** (toggle in the top-right corner)
+3. Click **Load unpacked** and select the `extension/` directory
+4. The CereWorker Browser Bridge icon appears in your toolbar
+
+#### Configuring the Extension
+
+Click the extension icon's three-dot menu -> **Options** (or right-click the icon -> **Options**):
+
+- **Relay Port**: Must match your CereWorker config (default `18900`)
+- **Token**: Must match `tools.browser.extension.token` in your config (leave empty if no token is set)
+- Click **Save & Test Connection** to verify the relay server is reachable
+
+#### Using Extension Mode
+
+1. Add to your `~/.cereworker/config.yaml`:
+
+```yaml
+tools:
+  browser:
+    mode: extension
+    extension:
+      relayPort: 18900
+      # token: my-secret    # optional, must match extension options
+```
+
+2. Start CereWorker:
+
+```bash
+cereworker
+```
+
+3. Click the extension icon in Chrome -- the badge indicates status:
+   - `ON` (green): Connected to CereWorker relay
+   - `...` (yellow): Connecting
+   - `!` (red): Connection error
+   - Click again to disconnect
+
+4. The TUI status bar shows `[EXT]` when the extension is active
+
+The agent can now navigate, click, type, take screenshots, and manage tabs in your actual browser. It automatically prefers `httpFetch` for API calls and only uses browser tools for pages requiring JavaScript rendering or interactive elements.
 
 ### Headless Service Mode
 
