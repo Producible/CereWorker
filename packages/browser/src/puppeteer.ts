@@ -20,12 +20,21 @@ export function getMode(): 'launch' | 'connect' {
 }
 
 async function getOrCreateSession(): Promise<BrowserSession> {
-  if (mode === 'connect') {
-    const existing = getCdpSession();
-    if (existing) return existing;
-    return connectCdp(cdpOptions);
+  try {
+    if (mode === 'connect') {
+      const existing = getCdpSession();
+      if (existing) return existing;
+      return await connectCdp(cdpOptions);
+    }
+    return await launchBrowser();
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `No browser available (${msg}). ` +
+      'Either launch Chrome with --remote-debugging-port and use browserConnect, ' +
+      'or use httpFetch/shell tools instead of browser automation.',
+    );
   }
-  return launchBrowser();
 }
 
 export async function launchBrowser(headless = true): Promise<BrowserSession> {
