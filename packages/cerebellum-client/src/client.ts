@@ -112,32 +112,36 @@ export class CerebellumClient {
   }
 
   async connect(): Promise<void> {
+    const currentDir = dirname(fileURLToPath(import.meta.url));
+    // Look for proto bundled with this package first, fall back to monorepo root
+    let protoPath = resolve(currentDir, '../proto/cerebellum.proto');
+    if (!existsSync(protoPath)) {
+      protoPath = resolve(currentDir, '../../../proto/cerebellum.proto');
+    }
+    if (!existsSync(protoPath)) {
+      this.connected = false;
+      throw new Error(`Proto file not found at ${protoPath}. Reinstall @cereworker/cerebellum-client.`);
+    }
+
+    const packageDefinition = protoLoader.loadSync(protoPath, {
+      keepCase: false,
+      longs: Number,
+      enums: String,
+      defaults: true,
+      oneofs: true,
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const proto = grpc.loadPackageDefinition(packageDefinition) as any;
+    const CerebellumService = proto.cereworker.cerebellum.Cerebellum;
+
+    this.client = new CerebellumService(
+      this.address,
+      grpc.credentials.createInsecure(),
+    );
+
+    // Test connection with a deadline
     try {
-      const currentDir = dirname(fileURLToPath(import.meta.url));
-      // Look for proto bundled with this package first, fall back to monorepo root
-      let protoPath = resolve(currentDir, '../proto/cerebellum.proto');
-      if (!existsSync(protoPath)) {
-        protoPath = resolve(currentDir, '../../../proto/cerebellum.proto');
-      }
-
-      const packageDefinition = protoLoader.loadSync(protoPath, {
-        keepCase: false,
-        longs: Number,
-        enums: String,
-        defaults: true,
-        oneofs: true,
-      });
-
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const proto = grpc.loadPackageDefinition(packageDefinition) as any;
-      const CerebellumService = proto.cereworker.cerebellum.Cerebellum;
-
-      this.client = new CerebellumService(
-        this.address,
-        grpc.credentials.createInsecure(),
-      );
-
-      // Test connection with a deadline
       await new Promise<void>((resolve, reject) => {
         const deadline = new Date(Date.now() + 5000);
         this.client.waitForReady(deadline, (err: Error | null) => {
@@ -145,10 +149,10 @@ export class CerebellumClient {
           else resolve();
         });
       });
-
       this.connected = true;
-    } catch {
+    } catch (err) {
       this.connected = false;
+      throw err;
     }
   }
 

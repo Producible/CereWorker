@@ -8,7 +8,7 @@ services:
     ports:
       - "50051:50051"
     volumes:
-      - cerebellum-models:/root/.cache/huggingface  # persist downloaded model weights
+      - ${CEREWORKER_MODELS:-cerebellum-models}:/root/.cache/huggingface  # model weights (host path or Docker volume)
       - cerebellum-checkpoints:/checkpoints          # persist fine-tuned adapters/weights
       - cerebellum-data:/data                        # training data staging
       - ./:/workspace:ro                             # read-only access for tool verification

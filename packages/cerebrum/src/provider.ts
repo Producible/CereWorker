@@ -11,6 +11,49 @@ import { buildCompactionPrompt } from './context.js';
 import { TokenStore, refreshAccessToken, OAUTH_PROVIDERS } from './oauth/index.js';
 import { refreshOpenAIToken, refreshGoogleToken } from './oauth/pi-auth.js';
 
+function friendlyApiError(error: unknown, provider: string, model: string): string {
+  if (!(error instanceof Error)) return String(error);
+  const msg = error.message;
+
+  // Location restriction (Google)
+  if (msg.includes('User location is not supported')) {
+    return `${provider} model "${model}" is not available in your region. Try a different model (e.g. gemini-2.0-flash) or switch providers with /provider.`;
+  }
+
+  // Auth errors
+  if (msg.includes('invalid_api_key') || msg.includes('Incorrect API key') || msg.includes('401')) {
+    return `Invalid API key for ${provider}. Check your key in ~/.cereworker/config.yaml or set the appropriate environment variable.`;
+  }
+
+  // Rate limits
+  if (msg.includes('429') || msg.includes('rate limit') || msg.includes('quota')) {
+    return `Rate limit exceeded for ${provider}. Wait a moment and try again, or switch providers with /provider.`;
+  }
+
+  // Model not found
+  if (msg.includes('model not found') || msg.includes('does not exist') || msg.includes('404')) {
+    return `Model "${model}" not found on ${provider}. Check the model name or use /model to switch.`;
+  }
+
+  // Context length
+  if (msg.includes('context length') || msg.includes('too many tokens') || msg.includes('maximum')) {
+    return `Message too long for ${model}. Try shortening your message or start a new conversation.`;
+  }
+
+  // Billing/permissions
+  if (msg.includes('billing') || msg.includes('payment') || msg.includes('403')) {
+    return `Access denied for ${provider}. Check your billing/plan at the provider's dashboard.`;
+  }
+
+  // Network
+  if (msg.includes('ECONNREFUSED') || msg.includes('ECONNRESET') || msg.includes('fetch failed')) {
+    return `Cannot reach ${provider}. Check your internet connection.`;
+  }
+
+  // Fall back to the original message but strip the class name prefix
+  return msg.replace(/^[A-Za-z_]+Error \[AI_[A-Za-z]+\]: /, '');
+}
+
 export class CerebrumProvider {
   private config: CerebrumConfig;
   private builtinTools: BuiltinTools;
@@ -218,7 +261,10 @@ export class CerebrumProvider {
 
         callbacks.onFinish(fullContent);
       } catch (error) {
-        callbacks.onError(error instanceof Error ? error : new Error(String(error)));
+        const provider = options?.provider ?? this.config.defaultProvider;
+        const modelName = options?.model ?? this.config.defaultModel;
+        const friendly = friendlyApiError(error, provider, modelName);
+        callbacks.onError(new Error(friendly));
         throw error;
       }
     }, this.retryOptions);

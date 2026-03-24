@@ -82,6 +82,7 @@ export const configSchema = z.object({
         .object({
           autoStart: z.boolean().default(true),
           image: z.string().default('cereworker/cerebellum'),
+          modelsPath: z.string().default('~/.cereworker/models'),
           composeFile: z.string().optional(),
         })
         .default({}),

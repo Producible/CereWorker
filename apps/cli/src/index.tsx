@@ -59,7 +59,12 @@ async function main() {
       await runConfigureProfile();
       return;
     }
-    console.error('Usage: cereworker configure <profile>');
+    if (target === 'model') {
+      const { runConfigureModel } = await import('./configure.js');
+      await runConfigureModel();
+      return;
+    }
+    console.error('Usage: cereworker configure <profile|model>');
     process.exit(1);
   }
 

@@ -436,7 +436,12 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     if (composeFile) {
       try {
         const modelId = config.cerebellum.model.id;
-        const env = { ...process.env, MODEL_PATH: modelId };
+        const modelsPathCompose = config.cerebellum.docker.modelsPath.replace(/^~/, homedir());
+        const env = {
+          ...process.env,
+          MODEL_PATH: modelId,
+          ...(existsSync(modelsPathCompose) ? { CEREWORKER_MODELS: modelsPathCompose } : {}),
+        };
         execSync(`${dockerPrefix}docker compose -f "${composeFile}" up -d cerebellum`, {
           env,
           stdio: 'pipe',
@@ -455,12 +460,20 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
       const modelId = config.cerebellum.model.id;
       const interval = config.cerebellum.heartbeatInterval;
       const port = config.cerebellum.address.split(':')[1] ?? '50051';
+
+      // Use host models directory if it exists (pre-downloaded during onboarding),
+      // otherwise fall back to Docker named volume
+      const modelsPath = config.cerebellum.docker.modelsPath.replace(/^~/, homedir());
+      const modelsVolume = existsSync(modelsPath)
+        ? `"${modelsPath}":/root/.cache/huggingface`
+        : 'cerebellum-models:/root/.cache/huggingface';
+
       execSync(
         `${dockerPrefix}docker run -d --name cereworker-cerebellum` +
         ` -p ${port}:50051` +
         ` -e MODEL_PATH=${modelId}` +
         ` -e HEARTBEAT_INTERVAL=${interval}` +
-        ` -v cerebellum-models:/root/.cache/huggingface` +
+        ` -v ${modelsVolume}` +
         ` -v cerebellum-checkpoints:/checkpoints` +
         ` -v cerebellum-data:/data` +
         ` --restart unless-stopped` +
@@ -515,10 +528,11 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     }
 
     // Connect gRPC client with retries
-    // Model loading can take 30s+ on first run (downloading weights from HuggingFace)
+    // First run downloads model weights (~1.2 GB for Qwen3 0.6B) and loads them,
+    // which can take 2-5 minutes depending on network and hardware.
     const client = new CerebellumClient(config.cerebellum.address);
-    const maxRetries = 15;
-    const retryDelay = 3000;
+    const maxRetries = 60;
+    const retryDelay = 5000;
     let lastError = '';
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -540,7 +554,20 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     if (!client.isConnected()) {
       const parts = [`Could not connect to Cerebellum at ${config.cerebellum.address} after ${maxRetries} attempts.`];
       if (lastError) parts.push(`Last error: ${lastError}`);
-      if (dockerReason) parts.push(dockerReason);
+      if (dockerReason) {
+        parts.push(dockerReason);
+      } else {
+        // Docker started fine but gRPC failed — grab container logs for clues
+        try {
+          const logs = execSync(
+            `${dockerPrefix}docker logs --tail 20 cereworker-cerebellum 2>&1`,
+            { stdio: 'pipe', timeout: 5000 },
+          ).toString().trim();
+          if (logs) parts.push(`Container logs:\n${logs}`);
+        } catch {
+          // Container might not exist if autoStart is off
+        }
+      }
       log.warn('Could not connect to Cerebellum', { address: config.cerebellum.address });
       return { ok: false, reason: parts.join('\n') };
     }

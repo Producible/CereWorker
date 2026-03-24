@@ -26,6 +26,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # CPU image (latest) — ~1.5 GB
       - uses: docker/build-push-action@v5
         with:
           context: ./cerebellum
@@ -33,3 +34,12 @@ jobs:
           build-contexts: proto=./proto
           push: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
           tags: cereworker/cerebellum:latest
+
+      # GPU image — ~4.0 GB (includes CUDA torch)
+      - uses: docker/build-push-action@v5
+        with:
+          context: ./cerebellum
+          file: ./cerebellum/Dockerfile.gpu
+          build-contexts: proto=./proto
+          push: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+          tags: cereworker/cerebellum:gpu

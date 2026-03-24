@@ -102,6 +102,7 @@ export function buildConfig(params: BuildConfigParams): Record<string, unknown> 
 
     const docker: Record<string, unknown> = {
       autoStart: params.cerebellum.dockerAutoStart ?? true,
+      ...(params.cerebellum.dockerImage ? { image: params.cerebellum.dockerImage } : {}),
     };
 
     // Detect and store docker-compose.yml path so auto-start works from any cwd

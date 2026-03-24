@@ -1,5 +1,7 @@
 import { execSync } from 'node:child_process';
-import { totalmem } from 'node:os';
+import { mkdirSync } from 'node:fs';
+import { totalmem, homedir } from 'node:os';
+import { join } from 'node:path';
 import { clack, guardCancel } from '../prompter.js';
 
 export interface CerebellumResult {
@@ -15,6 +17,7 @@ export interface CerebellumResult {
     schedule: string;
   };
   dockerAutoStart?: boolean;
+  dockerImage?: string;
 }
 
 interface HardwareInfo {
@@ -219,16 +222,20 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
       dockerPrefix = 'sudo ';
     }
 
+    const imageTag = hw.hasGpu ? 'gpu' : 'latest';
+    const fullImage = `cereworker/cerebellum:${imageTag}`;
+    clack.log.info(`Selected image: ${fullImage}${hw.hasGpu ? ' (GPU detected)' : ' (CPU)'}`);
+
     let hasImage = false;
     try {
-      const out = execSync(`${dockerPrefix}docker images -q cereworker/cerebellum:latest`, { stdio: 'pipe' }).toString().trim();
+      const out = execSync(`${dockerPrefix}docker images -q ${fullImage}`, { stdio: 'pipe' }).toString().trim();
       hasImage = !!out;
     } catch {}
 
     if (!hasImage) {
       const pullImage = guardCancel(
         await clack.confirm({
-          message: 'Download Cerebellum Docker image now?',
+          message: `Download Cerebellum Docker image (${imageTag}) now?`,
           initialValue: true,
         }),
       );
@@ -238,16 +245,16 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
           clack.log.info('Docker requires elevated privileges. You may be prompted for your password.');
         }
         try {
-          clack.log.info('Pulling Cerebellum image from Docker Hub...');
+          clack.log.info(`Pulling ${fullImage} from Docker Hub...`);
           execSync(
-            `${dockerPrefix}docker pull cereworker/cerebellum:latest`,
+            `${dockerPrefix}docker pull ${fullImage}`,
             { stdio: 'inherit', timeout: 3_600_000 },
           );
           clack.log.success('Cerebellum image ready.');
         } catch {
           // Pull may have succeeded despite error — check before reporting failure
           try {
-            const pulled = execSync(`${dockerPrefix}docker images -q cereworker/cerebellum:latest`, { stdio: 'pipe' }).toString().trim();
+            const pulled = execSync(`${dockerPrefix}docker images -q ${fullImage}`, { stdio: 'pipe' }).toString().trim();
             if (pulled) {
               clack.log.success('Cerebellum image ready.');
             } else {
@@ -263,6 +270,28 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
     } else {
       clack.log.info('Cerebellum Docker image already exists.');
     }
+
+    // Pre-download model weights on host so container starts instantly
+    if (model?.source === 'huggingface' && model.id) {
+      const modelsDir = join(homedir(), '.cereworker', 'models');
+      mkdirSync(modelsDir, { recursive: true });
+
+      clack.log.info(`Downloading ${model.id} model weights (this may take a few minutes)...`);
+      try {
+        execSync(
+          `${dockerPrefix}docker run --rm` +
+          ` -v "${modelsDir}:/root/.cache/huggingface"` +
+          ` ${fullImage}` +
+          ` python -c "from transformers import AutoModelForCausalLM, AutoTokenizer;` +
+          ` AutoTokenizer.from_pretrained('${model.id}');` +
+          ` AutoModelForCausalLM.from_pretrained('${model.id}')"`,
+          { stdio: 'inherit', timeout: 600_000 },
+        );
+        clack.log.success('Model weights downloaded.');
+      } catch {
+        clack.log.warn('Model download failed. It will be downloaded on first startup (may take a few minutes).');
+      }
+    }
   }
 
   const dockerAutoStart = guardCancel(
@@ -272,5 +301,7 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
     }),
   );
 
-  return { enabled: true, model, finetune, dockerAutoStart };
+  const dockerImage = hw.hasGpu ? 'cereworker/cerebellum:gpu' : 'cereworker/cerebellum:latest';
+
+  return { enabled: true, model, finetune, dockerAutoStart, dockerImage };
 }
