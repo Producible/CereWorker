@@ -6,7 +6,9 @@ import { configSchema, type CereWorkerConfig } from './schema.js';
 
 const CONFIG_DIR = join(homedir(), '.cereworker');
 const GLOBAL_CONFIG = join(CONFIG_DIR, 'config.yaml');
+const GLOBAL_CONFIG_ALT = join(CONFIG_DIR, 'config.yml');
 const LOCAL_CONFIG = '.cereworker.yaml';
+const LOCAL_CONFIG_ALT = '.cereworker.yml';
 
 export function ensureConfigDir(): void {
   if (!existsSync(CONFIG_DIR)) {
@@ -81,8 +83,9 @@ export function deepMerge(
 export function loadConfig(overrides?: Partial<CereWorkerConfig>): CereWorkerConfig {
   ensureConfigDir();
 
-  const globalConfig = loadYaml(GLOBAL_CONFIG);
-  const localConfig = loadYaml(resolve(process.cwd(), LOCAL_CONFIG));
+  const globalConfig = loadYaml(existsSync(GLOBAL_CONFIG) ? GLOBAL_CONFIG : GLOBAL_CONFIG_ALT);
+  const localPath = resolve(process.cwd(), LOCAL_CONFIG);
+  const localConfig = loadYaml(existsSync(localPath) ? localPath : resolve(process.cwd(), LOCAL_CONFIG_ALT));
   const envConfig = loadFromEnv();
 
   const merged = deepMerge({}, globalConfig, localConfig, envConfig, (overrides ?? {}) as Record<string, unknown>);
