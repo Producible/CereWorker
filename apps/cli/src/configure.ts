@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { loadRawConfig, GLOBAL_CONFIG, writeConfig } from '@cereworker/config';
 import { profileStep } from './onboard/steps/profile.js';
 import { clack, guardCancel } from './onboard/prompter.js';
@@ -58,6 +59,85 @@ const PROVIDERS = [
   { value: 'google', label: 'Google (Gemini)' },
   { value: 'local', label: 'Local (Ollama / vLLM)' },
 ];
+
+export async function runConfigureBrowser(): Promise<void> {
+  const raw = loadRawConfig();
+  const tools = (raw.tools ?? {}) as Record<string, unknown>;
+  const browser = (tools.browser ?? {}) as Record<string, unknown>;
+  const ext = (browser.extension ?? {}) as Record<string, unknown>;
+
+  const currentMode = (browser.mode as string) ?? 'launch';
+  const currentEnabled = browser.enabled !== false;
+
+  clack.log.info(`Current: mode=${currentMode}, enabled=${currentEnabled}`);
+
+  const mode = guardCancel(
+    await clack.select({
+      message: 'Browser mode',
+      options: [
+        { value: 'extension', label: 'Extension', hint: 'control your real Chrome via extension' },
+        { value: 'launch', label: 'Launch', hint: 'headless Puppeteer (default)' },
+        { value: 'connect', label: 'Connect', hint: 'attach to running Chrome via CDP' },
+        { value: 'disabled', label: 'Disabled', hint: 'turn off browser tools' },
+      ],
+      initialValue: currentEnabled ? currentMode : 'disabled',
+    }),
+  ) as string;
+
+  if (mode === 'disabled') {
+    browser.enabled = false;
+    tools.browser = browser;
+    raw.tools = tools;
+    writeConfig(raw);
+    clack.outro(`Browser tools disabled in ${GLOBAL_CONFIG}`);
+    return;
+  }
+
+  browser.enabled = true;
+  browser.mode = mode;
+
+  if (mode === 'extension') {
+    const relayPort = guardCancel(
+      await clack.text({
+        message: 'Relay port',
+        initialValue: String(ext.relayPort ?? 18900),
+        validate: (v) => (/^\d+$/.test(v) ? undefined : 'Must be a number'),
+      }),
+    ) as string;
+
+    const currentToken = (ext.token as string) ?? '';
+    const generateNew = !currentToken;
+    const token = guardCancel(
+      await clack.text({
+        message: 'Shared token (leave empty to auto-generate)',
+        initialValue: currentToken,
+        placeholder: generateNew ? 'will auto-generate' : undefined,
+      }),
+    ) as string;
+
+    ext.relayPort = parseInt(relayPort, 10);
+    ext.token = token || randomBytes(16).toString('hex');
+    browser.extension = ext;
+
+    clack.log.info(`Extension relay: port ${ext.relayPort}, token ${ext.token}`);
+  }
+
+  if (mode === 'connect') {
+    const cdpPort = guardCancel(
+      await clack.text({
+        message: 'CDP port',
+        initialValue: String(browser.cdpPort ?? 9222),
+        validate: (v) => (/^\d+$/.test(v) ? undefined : 'Must be a number'),
+      }),
+    ) as string;
+    browser.cdpPort = parseInt(cdpPort, 10);
+  }
+
+  tools.browser = browser;
+  raw.tools = tools;
+  writeConfig(raw);
+  clack.outro(`Browser mode set to "${mode}" in ${GLOBAL_CONFIG}`);
+}
 
 export async function runConfigureModel(): Promise<void> {
   const raw = loadRawConfig();

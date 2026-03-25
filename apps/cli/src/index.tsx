@@ -64,7 +64,12 @@ async function main() {
       await runConfigureModel();
       return;
     }
-    console.error('Usage: cereworker configure <profile|model>');
+    if (target === 'browser') {
+      const { runConfigureBrowser } = await import('./configure.js');
+      await runConfigureBrowser();
+      return;
+    }
+    console.error('Usage: cereworker configure <profile|model|browser>');
     process.exit(1);
   }
 
