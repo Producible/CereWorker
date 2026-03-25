@@ -19,6 +19,7 @@ interface StatusBarProps {
   taskCount?: number;
   taskRunning?: number;
   extensionConnected?: boolean;
+  cerebellumEnabled?: boolean;
 }
 
 export function StatusBar({
@@ -38,13 +39,25 @@ export function StatusBar({
   taskCount = 0,
   taskRunning = 0,
   extensionConnected = false,
+  cerebellumEnabled = true,
 }: StatusBarProps) {
+  const cerebellumLoading = cerebellumEnabled && cerebellumStatus === null;
+  const cerebellumLabel = cerebellumStatus?.healthy
+    ? 'connected'
+    : cerebellumLoading
+      ? 'loading...'
+      : 'OFFLINE';
+  const cerebellumColor = cerebellumStatus?.healthy
+    ? 'green'
+    : cerebellumLoading
+      ? 'yellow'
+      : 'red';
   return (
     <Box borderStyle="single" borderColor="gray" paddingX={1} justifyContent="space-between">
       <Box gap={2}>
         <Text color="cyan">Cerebrum: {provider}/{model}</Text>
-        <Text color={cerebellumStatus?.healthy ? 'green' : 'red'} bold={!cerebellumStatus?.healthy}>
-          Cerebellum: {cerebellumStatus?.healthy ? 'connected' : 'OFFLINE'}
+        <Text color={cerebellumColor} bold={cerebellumColor === 'red'}>
+          Cerebellum: {cerebellumLabel}
           {cerebellumStatus?.tasksRegistered ? ` (${cerebellumStatus.tasksRegistered} tasks)` : ''}
         </Text>
         {channelCount > 0 && (

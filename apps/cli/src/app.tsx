@@ -549,6 +549,7 @@ export function App({ config, resumeConversationId }: AppProps) {
         provider={currentProvider}
         model={currentModel}
         cerebellumStatus={cerebellumStatus}
+        cerebellumEnabled={config.cerebellum.enabled}
         isStreaming={isStreaming}
         channelCount={channelCount}
         autoMode={autoMode}
