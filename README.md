@@ -365,7 +365,14 @@ Click the extension icon's three-dot menu -> **Options** (or right-click the ico
 
 #### Using Extension Mode
 
-1. Add to your `~/.cereworker/config.yaml`:
+**Option A — Interactive CLI:**
+
+```bash
+cereworker configure browser
+# Select "Extension", set relay port and token interactively
+```
+
+**Option B — Manual config** (`~/.cereworker/config.yaml`):
 
 ```yaml
 tools:
@@ -376,7 +383,7 @@ tools:
       # token: my-secret    # optional, must match extension options
 ```
 
-2. Start CereWorker:
+Then start CereWorker:
 
 ```bash
 cereworker
