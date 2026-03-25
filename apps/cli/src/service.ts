@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -331,6 +331,42 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     const lastMsg = messages[messages.length - 1];
     return lastMsg?.role === 'cerebrum' ? lastMsg.content : undefined;
   });
+
+  // Wire discovery mode for first run
+  if (needsDiscovery) {
+    orchestrator.setDiscoveryMode(true);
+    orchestrator.setDiscoveryCompleteHandler((result) => {
+      // Update instance identity with discovered profile
+      instanceStore.updateProfile({
+        name: result.name,
+        role: result.role,
+        traits: result.traits,
+        source: 'discovered',
+      });
+      orchestrator.setProfile(result);
+      log.info('Discovery completed, instance profile updated', { name: result.name });
+
+      // Write training pairs from the discovery conversation to pending.jsonl
+      try {
+        const pendingPath = join(homedir(), '.cereworker', 'finetune', 'pending.jsonl');
+        mkdirSync(dirname(pendingPath), { recursive: true });
+        const messages = orchestrator.getMessages();
+        for (let i = 0; i < messages.length - 1; i++) {
+          if (messages[i].role === 'user' && messages[i + 1].role === 'cerebrum') {
+            const pair = JSON.stringify({
+              instruction: messages[i].content,
+              response: messages[i + 1].content,
+              source: 'discovery',
+              createdAt: messages[i + 1].timestamp,
+            });
+            appendFileSync(pendingPath, pair + '\n', 'utf-8');
+          }
+        }
+      } catch {
+        // Non-critical
+      }
+    });
+  }
 
   orchestrator.start();
 

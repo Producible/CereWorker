@@ -125,6 +125,8 @@ export class Orchestrator extends TypedEventEmitter {
   private profile: { name: string; role: string; traits: string[] } | undefined;
   private instanceStore: InstanceStore | null = null;
   private proactiveEnabled = false;
+  private discoveryMode = false;
+  private onDiscoveryComplete: ((result: { name: string; role: string; traits: string[] }) => void) | null = null;
   private taskConversations = new Map<string, string>();
   private taskRunning = new Set<string>();
   private recurringTasks: Array<{ id: string; goal: string; schedule: string }> = [];
@@ -227,6 +229,19 @@ export class Orchestrator extends TypedEventEmitter {
 
   setProactiveEnabled(enabled: boolean): void {
     this.proactiveEnabled = enabled;
+  }
+
+  setDiscoveryMode(enabled: boolean): void {
+    this.discoveryMode = enabled;
+    log.info('Discovery mode changed', { enabled });
+  }
+
+  isDiscoveryMode(): boolean {
+    return this.discoveryMode;
+  }
+
+  setDiscoveryCompleteHandler(handler: (result: { name: string; role: string; traits: string[] }) => void): void {
+    this.onDiscoveryComplete = handler;
   }
 
   sendProactiveMessage(content: string, source: string): void {
@@ -421,6 +436,20 @@ export class Orchestrator extends TypedEventEmitter {
     }
   }
 
+  private parseDiscoveryCompletion(text: string): { name: string; role: string; traits: string[] } | null {
+    const match = text.match(/<discovery_complete>\s*([\s\S]*?)\s*<\/discovery_complete>/);
+    if (!match) return null;
+    const block = match[1];
+    const nameMatch = block.match(/name:\s*(.+)/i);
+    const roleMatch = block.match(/role:\s*(.+)/i);
+    const traitsMatch = block.match(/traits:\s*(.+)/i);
+    return {
+      name: nameMatch?.[1]?.trim() || 'Cere',
+      role: roleMatch?.[1]?.trim() || 'general-purpose assistant',
+      traits: traitsMatch?.[1]?.split(',').map((t) => t.trim().toLowerCase()).filter(Boolean) ?? [],
+    };
+  }
+
   getActiveConversationId(): string | null {
     return this.activeConversationId;
   }
@@ -595,6 +624,7 @@ export class Orchestrator extends TypedEventEmitter {
       instanceCreatedAt: instance?.createdAt,
       finetuneCount: instance?.finetuneLineage.length,
       proactiveEnabled: this.proactiveEnabled,
+      discoveryMode: this.discoveryMode,
     });
     const systemParts = [basePrompt];
     if (this.systemContext) systemParts.push(this.systemContext);
@@ -697,6 +727,16 @@ export class Orchestrator extends TypedEventEmitter {
             toolCalls?.length ? { toolCalls } : undefined,
           );
           this.emit({ type: 'message:cerebrum:end', message: cerebrumMessage });
+
+          // Check for discovery completion
+          if (this.discoveryMode && content.includes('<discovery_complete>')) {
+            const parsed = this.parseDiscoveryCompletion(content);
+            if (parsed && this.onDiscoveryComplete) {
+              this.discoveryMode = false;
+              this.onDiscoveryComplete(parsed);
+              log.info('Discovery completed', { name: parsed.name });
+            }
+          }
         },
         onError: (error) => {
           log.error('Cerebrum stream error', { error: error.message });

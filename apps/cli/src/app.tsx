@@ -98,6 +98,13 @@ export function App({ config, resumeConversationId }: AppProps) {
     }
   }, [orchestrator, resumeConversationId]);
 
+  // Auto-kickoff discovery on first run
+  useEffect(() => {
+    if (!service.needsDiscovery) return;
+    // Send a seed message to trigger the agent's first discovery question
+    orchestrator.sendMessage('Hello! I just started for the first time.');
+  }, [service, orchestrator]);
+
   // Listen for browser extension events
   useEffect(() => {
     const unsub1 = orchestrator.on('browser:extension-connected', () => setExtensionConnected(true));

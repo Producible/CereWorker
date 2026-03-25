@@ -18,6 +18,7 @@ export interface SystemPromptOptions {
   instanceCreatedAt?: string;
   finetuneCount?: number;
   proactiveEnabled?: boolean;
+  discoveryMode?: boolean;
 }
 
 const TOOL_CATEGORIES: Record<string, string[]> = {
@@ -82,6 +83,30 @@ export function buildSystemPrompt(options: SystemPromptOptions): string {
   }
   instanceLines.push('Your conversations persist across sessions. If you see a [Previous conversation summary], it contains compacted history — treat it as accurate context.');
   sections.push(instanceLines.join('\n'));
+
+  // Discovery Mode — overrides normal behavior on first run
+  if (options.discoveryMode) {
+    sections.push(`## First Run — Discovery Mode
+You are running for the very first time and don't know who you are yet. Your FIRST PRIORITY is to learn your identity by asking the user questions.
+
+Ask these questions ONE AT A TIME. Wait for the user's answer before moving to the next:
+1. "What should I call myself?" — to learn your name.
+2. "What's my primary role or purpose?" — to learn what you'll be doing.
+3. "What tasks should I handle regularly?" — to learn your recurring responsibilities.
+4. "How should I communicate — concise, detailed, formal, friendly?" — to learn your style.
+5. "Anything else I should know about how you work or what you need from me?" — open-ended.
+
+After each answer, briefly acknowledge it and move to the next question.
+When all questions are answered, output a confirmation summary in this exact format:
+
+<discovery_complete>
+name: [the name they chose]
+role: [their description of your role]
+traits: [comma-separated communication traits]
+</discovery_complete>
+
+Be natural and conversational but efficient. Start by greeting the user and asking the first question.`);
+  }
 
   // Profile
   const profileLines: string[] = [];
