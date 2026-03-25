@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
-import type { Message, ToolDefinition } from '@cereworker/core';
+import type { Message, ToolCall as CWToolCall, ToolDefinition } from '@cereworker/core';
 import type { CerebrumConfig, ProviderConfig, StreamCallbacks } from './types.js';
 import { createBuiltinTools, type BuiltinTools } from './tools/index.js';
 import { withRetry, type RetryOptions } from './retry.js';
@@ -156,18 +156,81 @@ export class CerebrumProvider {
   }
 
   private convertMessages(messages: Message[]): ModelMessage[] {
-    return messages
-      .filter((m) => m.role !== 'system' && m.role !== 'cerebellum' && m.role !== 'tool')
-      .map((m): ModelMessage => {
-        switch (m.role) {
-          case 'user':
-            return { role: 'user', content: m.content } as ModelMessage;
-          case 'cerebrum':
-            return { role: 'assistant', content: m.content } as ModelMessage;
-          default:
-            return { role: 'user', content: m.content } as ModelMessage;
+    const result: ModelMessage[] = [];
+
+    for (const m of messages) {
+      if (m.role === 'system' || m.role === 'cerebellum') continue;
+
+      if (m.role === 'user') {
+        result.push({ role: 'user', content: m.content } as ModelMessage);
+        continue;
+      }
+
+      if (m.role === 'cerebrum') {
+        if (m.toolCalls?.length) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const content: any[] = [];
+          if (m.content) {
+            content.push({ type: 'text', text: m.content });
+          }
+          for (const tc of m.toolCalls) {
+            content.push({
+              type: 'tool-call',
+              toolCallId: tc.id,
+              toolName: tc.name,
+              input: tc.args,
+            });
+          }
+          result.push({ role: 'assistant', content } as ModelMessage);
+        } else {
+          result.push({ role: 'assistant', content: m.content } as ModelMessage);
         }
-      });
+        continue;
+      }
+
+      if (m.role === 'tool' && m.toolResult) {
+        result.push({
+          role: 'tool',
+          content: [{
+            type: 'tool-result',
+            toolCallId: m.toolResult.callId,
+            toolName: (m.metadata?.toolName as string) ?? 'unknown',
+            output: { type: 'text', value: m.content },
+          }],
+        } as unknown as ModelMessage);
+        continue;
+      }
+
+      // Fallback: treat unknown roles as user
+      result.push({ role: 'user', content: m.content } as ModelMessage);
+    }
+
+    return result;
+  }
+
+  /** Drop tool messages not preceded by an assistant message with matching tool calls. */
+  private sanitizeToolPairing(messages: ModelMessage[]): ModelMessage[] {
+    const result: ModelMessage[] = [];
+
+    for (const msg of messages) {
+      if (msg.role === 'tool') {
+        const prev = result[result.length - 1];
+        if (prev?.role === 'assistant' && Array.isArray(prev.content)) {
+          const hasToolCalls = (prev.content as Array<{ type: string }>).some(
+            (p) => p.type === 'tool-call',
+          );
+          if (hasToolCalls) {
+            result.push(msg);
+            continue;
+          }
+        }
+        // Drop orphaned tool messages
+        continue;
+      }
+      result.push(msg);
+    }
+
+    return result;
   }
 
   async stream(
@@ -180,7 +243,7 @@ export class CerebrumProvider {
     const nonSystemMessages = messages.filter((m) => m.role !== 'system');
 
     const model = await this.getModel(options?.provider, options?.model);
-    const coreMessages = this.convertMessages(nonSystemMessages);
+    const coreMessages = this.sanitizeToolPairing(this.convertMessages(nonSystemMessages));
 
     const systemParts: string[] = [];
     if (options?.systemPrompt) systemParts.push(options.systemPrompt);
@@ -228,6 +291,7 @@ export class CerebrumProvider {
         });
 
         let fullContent = '';
+        const collectedToolCalls: CWToolCall[] = [];
 
         for await (const part of result.fullStream) {
           switch (part.type) {
@@ -236,9 +300,11 @@ export class CerebrumProvider {
               callbacks.onChunk(part.text);
               break;
             case 'tool-call':
-              // External tools call onToolCall via their execute function.
-              // Builtin tools are executed by the AI SDK directly via their
-              // execute function — do not fire onToolCall for them.
+              collectedToolCalls.push({
+                id: part.toolCallId,
+                name: part.toolName,
+                args: (part as { input?: unknown }).input as Record<string, unknown> ?? {},
+              });
               break;
             case 'error':
               callbacks.onError(
@@ -248,7 +314,7 @@ export class CerebrumProvider {
           }
         }
 
-        callbacks.onFinish(fullContent);
+        callbacks.onFinish(fullContent, collectedToolCalls.length > 0 ? collectedToolCalls : undefined);
       } catch (error) {
         const provider = options?.provider ?? this.config.defaultProvider;
         const modelName = options?.model ?? this.config.defaultModel;

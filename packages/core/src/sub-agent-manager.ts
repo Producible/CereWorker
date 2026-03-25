@@ -301,8 +301,11 @@ export class SubAgentManager {
                 return result;
               }
             },
-            onFinish: (content) => {
-              instance.conversation.appendMessage(instance.conversationId, 'cerebrum', content);
+            onFinish: (content, toolCalls) => {
+              instance.conversation.appendMessage(
+                instance.conversationId, 'cerebrum', content,
+                toolCalls?.length ? { toolCalls } : undefined,
+              );
               instance.messagesCount++;
               instance.result = content;
               this.appendTranscript(instance, { role: 'cerebrum', content });

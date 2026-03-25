@@ -32,6 +32,6 @@ export interface CerebrumRequest {
 export interface StreamCallbacks {
   onChunk: (chunk: string) => void;
   onToolCall: (toolCall: ToolCall) => Promise<ToolResult>;
-  onFinish: (content: string) => void;
+  onFinish: (content: string, toolCalls?: ToolCall[]) => void;
   onError: (error: Error) => void;
 }

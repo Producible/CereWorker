@@ -28,7 +28,7 @@ export interface ToolDefinition {
 export interface StreamCallbacks {
   onChunk: (chunk: string) => void;
   onToolCall: (toolCall: ToolCall) => Promise<ToolResult>;
-  onFinish: (content: string) => void;
+  onFinish: (content: string, toolCalls?: ToolCall[]) => void;
   onError: (error: Error) => void;
 }
 
@@ -658,8 +658,11 @@ export class Orchestrator extends TypedEventEmitter {
 
           return result;
         },
-        onFinish: (content) => {
-          const cerebrumMessage = this.conversations.appendMessage(convId, 'cerebrum', content);
+        onFinish: (content, toolCalls) => {
+          const cerebrumMessage = this.conversations.appendMessage(
+            convId, 'cerebrum', content,
+            toolCalls?.length ? { toolCalls } : undefined,
+          );
           this.emit({ type: 'message:cerebrum:end', message: cerebrumMessage });
         },
         onError: (error) => {
