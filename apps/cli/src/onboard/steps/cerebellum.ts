@@ -265,19 +265,21 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
             const layerStatus = new Map<string, string>();
 
             const parseDockerProgress = (data: Buffer) => {
-              for (const line of data.toString().split('\n')) {
+              // Docker pull uses \r for in-place progress updates, split on both \r and \n
+              for (const line of data.toString().split(/[\r\n]+/)) {
                 // Lines like: "abc123: Downloading [==>   ] 23.4MB/156MB"
                 // or: "abc123: Pull complete"
-                const match = line.match(/^([a-f0-9]+):\s+(.+)/);
+                const match = line.match(/([a-f0-9]+):\s+(.+)/);
                 if (match) {
                   const [, id, status] = match;
-                  layerStatus.set(id, status);
+                  layerStatus.set(id, status.trim());
                   layersTotal = layerStatus.size;
                   layersDone = [...layerStatus.values()].filter(s => s.includes('complete') || s.includes('exists')).length;
-                  // Check for download progress in this line
-                  const dlMatch = status.match(/Downloading.*?(\d+(?:\.\d+)?[kMG]?B)\/(\d+(?:\.\d+)?[kMG]?B)/);
+                  const dlMatch = status.match(/Downloading.*?(\d+(?:\.\d+)?\s*[kMG]?B)\/(\d+(?:\.\d+)?\s*[kMG]?B)/);
                   if (dlMatch) {
-                    pullSpinner.message(`Pulling ${fullImage} — layer ${layersDone}/${layersTotal} (${dlMatch[1]}/${dlMatch[2]})`);
+                    pullSpinner.message(`Pulling ${fullImage} — layer ${layersDone}/${layersTotal} (${dlMatch[1].trim()}/${dlMatch[2].trim()})`);
+                  } else if (status.includes('Extracting')) {
+                    pullSpinner.message(`Pulling ${fullImage} — extracting layer ${layersDone}/${layersTotal}`);
                   } else if (layersDone > 0) {
                     pullSpinner.message(`Pulling ${fullImage} — layer ${layersDone}/${layersTotal}`);
                   }
