@@ -474,14 +474,18 @@ export class Orchestrator extends TypedEventEmitter {
 
     try {
       const now = new Date().toISOString();
+      const taskDef = this.recurringTasks.find((t) => t.id === taskId);
+      const schedule = taskDef?.schedule ?? 'unknown';
       const prompt = [
         `[Recurring Task: ${taskId}]`,
+        `Schedule: ${schedule}`,
         `Current time: ${now}`,
         `Goal: ${goal}`,
         '',
         'Execute this goal using your available tools and skills.',
         'Review your conversation history for learnings from previous runs.',
-        'After completing, use memory_log to record what you did and any outcomes.',
+        'If a step fails, try an alternative approach before giving up.',
+        'After completing, use memory_log to record what you did, outcomes, and any issues.',
       ].join('\n');
 
       await Promise.race([

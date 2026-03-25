@@ -9,6 +9,8 @@ const CONSUMED_DIR = 'consumed';
 
 const CURATION_PROMPT = `You are a memory curator for CereWorker, an AI agent. Your job is to review the agent's temporary memories and decide which contain **durable knowledge** worth permanently learning through fine-tuning.
 
+The training pairs will fine-tune a small model (Cerebellum, Qwen3 0.6B) that answers yes/no questions about task scheduling and tool verification. Create pairs that build contextual understanding of the user's environment.
+
 ## Instructions
 
 Review the memories below. For each piece of knowledge that is:
@@ -17,7 +19,7 @@ Review the memories below. For each piece of knowledge that is:
 - A recurring workflow or process
 - Important context that would be useful across many future sessions
 
-Create a training pair in instruction/response format. Skip anything that is:
+Create a training pair. Skip anything that is:
 - Ephemeral session details (timestamps, one-off tasks)
 - Already obvious or common knowledge
 - Too vague to be useful
@@ -33,6 +35,12 @@ Respond with a JSON array of objects. Each object must have:
 If no memories are worth fine-tuning, respond with an empty array: []
 
 Respond ONLY with the JSON array, nothing else.
+
+## Examples
+
+Good (operational): {"instruction": "The project uses pnpm monorepo. A shell command ran 'npm install'. Is the tool result likely correct?", "response": "No — this project uses pnpm, not npm. The correct command would be 'pnpm install'.", "source": "MEMORY.md"}
+Good (contextual): {"instruction": "What package manager does the user's main project use?", "response": "pnpm, in a monorepo managed by Turborepo.", "source": "MEMORY.md"}
+Bad (skip): {"instruction": "What happened?", "response": "Some stuff.", "source": "2026-03-25.md"}
 
 ## Memories to Review
 
@@ -183,7 +191,7 @@ export class HippocampusCurator {
         .filter((item: Record<string, unknown>) => {
           if (typeof item !== 'object' || !item) return false;
           if (typeof item.instruction !== 'string' || typeof item.response !== 'string') return false;
-          return (item.instruction as string).trim().length >= 10 && (item.response as string).trim().length >= 10;
+          return (item.instruction as string).trim().length >= 30 && (item.response as string).trim().length >= 20;
         })
         .map((item: Record<string, unknown>) => ({
           instruction: item.instruction as string,

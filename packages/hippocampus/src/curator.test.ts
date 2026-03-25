@@ -71,7 +71,7 @@ describe('HippocampusCurator', () => {
       const ctx = setup();
       dir = ctx.dir;
       writeFileSync(join(dir, 'MEMORY.md'), 'info', 'utf-8');
-      const json = JSON.stringify([{ instruction: 'What framework is used?', response: 'The project uses React with Ink for TUI.', source: 'x' }]);
+      const json = JSON.stringify([{ instruction: 'What frontend framework is used in this project?', response: 'The project uses React with Ink for TUI rendering.', source: 'x' }]);
       (ctx.generator.generate as ReturnType<typeof vi.fn>).mockResolvedValue('```json\n' + json + '\n```');
 
       const result = await ctx.curator.curate();
@@ -83,46 +83,46 @@ describe('HippocampusCurator', () => {
       dir = ctx.dir;
       writeFileSync(join(dir, 'MEMORY.md'), 'content', 'utf-8');
       const data = [
-        { instruction: 'What is the preferred theme?', response: 'The user prefers dark mode.', source: 'x' },
-        { instruction: 'no response' },
-        { response: 'no instruction' },
+        { instruction: 'What is the preferred theme for this project?', response: 'The user prefers dark mode for all editors.', source: 'x' },
+        { instruction: 'no response at all for this' },
+        { response: 'no instruction provided here' },
         {},
       ];
       (ctx.generator.generate as ReturnType<typeof vi.fn>).mockResolvedValue(JSON.stringify(data));
 
       const result = await ctx.curator.curate();
       expect(result.pairs).toHaveLength(1);
-      expect(result.pairs[0].instruction).toBe('What is the preferred theme?');
+      expect(result.pairs[0].instruction).toBe('What is the preferred theme for this project?');
     });
 
-    it('filters entries with instruction or response shorter than 10 chars', async () => {
+    it('filters entries with short instruction or response', async () => {
       const ctx = setup();
       dir = ctx.dir;
       writeFileSync(join(dir, 'MEMORY.md'), 'content', 'utf-8');
       const data = [
         { instruction: 'short', response: 'also short', source: 'x' },
-        { instruction: 'ok', response: 'yes that is fine', source: 'x' },
-        { instruction: 'What is the deploy process?', response: 'Run deploy.sh from the project root.', source: 'x' },
+        { instruction: 'a bit longer but still short', response: 'tiny', source: 'x' },
+        { instruction: 'What is the deploy process for production?', response: 'Run deploy.sh from the project root directory.', source: 'x' },
       ];
       (ctx.generator.generate as ReturnType<typeof vi.fn>).mockResolvedValue(JSON.stringify(data));
 
       const result = await ctx.curator.curate();
       expect(result.pairs).toHaveLength(1);
-      expect(result.pairs[0].instruction).toBe('What is the deploy process?');
+      expect(result.pairs[0].instruction).toBe('What is the deploy process for production?');
     });
 
     it('saves pairs to pending.jsonl', async () => {
       const ctx = setup();
       dir = ctx.dir;
       writeFileSync(join(dir, 'MEMORY.md'), 'content', 'utf-8');
-      const pairs = [{ instruction: 'What database is used?', response: 'SQLite via node:sqlite built-in.', source: 'x' }];
+      const pairs = [{ instruction: 'What database engine is used in the project?', response: 'SQLite via the node:sqlite built-in module.', source: 'x' }];
       (ctx.generator.generate as ReturnType<typeof vi.fn>).mockResolvedValue(JSON.stringify(pairs));
 
       await ctx.curator.curate();
       const pendingPath = join(ctx.store.finetuneDir, 'pending.jsonl');
       expect(existsSync(pendingPath)).toBe(true);
       const content = readFileSync(pendingPath, 'utf-8');
-      expect(content).toContain('What database is used?');
+      expect(content).toContain('What database engine is used in the project?');
     });
 
     it('updates curated marker', async () => {
@@ -207,8 +207,8 @@ describe('HippocampusCurator', () => {
 
       // Pre-seed pending with an existing pair
       const existing = JSON.stringify({
-        instruction: 'What database is used?',
-        response: 'SQLite via node:sqlite.',
+        instruction: 'What database engine is used in the project?',
+        response: 'SQLite via the node:sqlite built-in module.',
         source: 'MEMORY.md',
         createdAt: 1,
       });
@@ -217,8 +217,8 @@ describe('HippocampusCurator', () => {
       // Curate returns same instruction + a new one
       writeFileSync(join(dir, 'MEMORY.md'), 'content', 'utf-8');
       const data = [
-        { instruction: 'What database is used?', response: 'Different answer here.', source: 'x' },
-        { instruction: 'What framework is used?', response: 'React with Ink for TUI rendering.', source: 'x' },
+        { instruction: 'What database engine is used in the project?', response: 'A different answer for testing.', source: 'x' },
+        { instruction: 'What frontend framework is used in the project?', response: 'React with Ink for TUI rendering in the terminal.', source: 'x' },
       ];
       (ctx.generator.generate as ReturnType<typeof vi.fn>).mockResolvedValue(JSON.stringify(data));
 
@@ -226,8 +226,8 @@ describe('HippocampusCurator', () => {
       const pairs = ctx.curator.getPendingPairs();
       // Should have original + 1 new, not the duplicate
       expect(pairs).toHaveLength(2);
-      expect(pairs[0].instruction).toBe('What database is used?');
-      expect(pairs[1].instruction).toBe('What framework is used?');
+      expect(pairs[0].instruction).toBe('What database engine is used in the project?');
+      expect(pairs[1].instruction).toBe('What frontend framework is used in the project?');
     });
   });
 });

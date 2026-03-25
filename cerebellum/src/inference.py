@@ -105,7 +105,7 @@ class CerebellumInference:
             f"Last run: {elapsed_str} ago. "
             f"Schedule: {schedule_hint}. "
             f"System: {status}. "
-            f"Should this task run now? Answer only yes or no."
+            f"Should this task run now? Answer yes or no."
         )
 
         response = self._generate(prompt)
@@ -117,7 +117,7 @@ class CerebellumInference:
 
         return result
 
-    def verify_checks(self, tool_name: str, check_summary: str) -> bool:
+    def verify_checks(self, tool_name: str, check_summary: str, tool_args: str = "") -> bool:
         """Ask the model: given these check results, is everything OK?
 
         The programmatic checks have already run. This is a final binary
@@ -129,9 +129,10 @@ class CerebellumInference:
             return True
 
         prompt = (
-            f"Tool '{tool_name}' ran. "
-            f"Results: {check_summary}. "
-            f"Is everything OK? Answer only yes or no."
+            f"Tool '{tool_name}' ran"
+            f"{f' with args: {tool_args}' if tool_args else ''}. "
+            f"Checks: {check_summary}. "
+            f"Is everything OK? Answer yes or no."
         )
 
         response = self._generate(prompt)
@@ -146,7 +147,10 @@ class CerebellumInference:
     def _generate(self, prompt: str) -> str:
         """Run inference with minimal token generation."""
         try:
-            messages = [{"role": "user", "content": prompt}]
+            messages = [
+                {"role": "system", "content": "You are a binary watchdog. Answer every question with exactly one word: yes or no."},
+                {"role": "user", "content": prompt},
+            ]
             text = self.tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
             )

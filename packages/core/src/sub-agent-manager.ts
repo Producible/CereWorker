@@ -233,18 +233,25 @@ export class SubAgentManager {
     }, instance.timeoutMs);
 
     try {
+      const agentTools = this.createAgentTools(instance.agentDir);
+
       // Send the task as the first message
+      const toolNames = Array.from(agentTools.keys()).join(', ');
+      const timeoutMin = Math.round(instance.timeoutMs / 60000);
+      const systemMsg =
+        `You are a sub-agent with a focused task. You have ${timeoutMin} minutes.\n` +
+        `Available tools: ${toolNames}\n` +
+        `Work autonomously — do not ask questions. Use memory_write to save findings.\n` +
+        `When done, clearly state: what you found, what you did, and whether it succeeded.`;
       instance.conversation.appendMessage(
         instance.conversationId,
         'system',
-        'You are a sub-agent. Complete the given task and respond with your findings. Use memory_write to save important findings to your own memory.',
+        systemMsg,
       );
       instance.conversation.appendMessage(instance.conversationId, 'user', instance.task);
       instance.messagesCount += 2;
-      this.appendTranscript(instance, { role: 'system', content: 'You are a sub-agent...' });
+      this.appendTranscript(instance, { role: 'system', content: systemMsg });
       this.appendTranscript(instance, { role: 'user', content: instance.task });
-
-      const agentTools = this.createAgentTools(instance.agentDir);
 
       // Stream the cerebrum response
       const messages = instance.conversation.getMessages(instance.conversationId);

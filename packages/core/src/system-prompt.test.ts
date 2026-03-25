@@ -17,6 +17,11 @@ describe('buildSystemPrompt', () => {
     expect(result).toContain('You are the Cerebrum of CereWorker');
   });
 
+  it('includes conversation persistence note', () => {
+    const result = buildSystemPrompt(makeOptions());
+    expect(result).toContain('conversations persist across sessions');
+  });
+
   it('shows cerebellum connected status', () => {
     const result = buildSystemPrompt(makeOptions({ cerebellumConnected: true }));
     expect(result).toContain('Status: connected');
@@ -26,19 +31,39 @@ describe('buildSystemPrompt', () => {
   it('shows cerebellum offline status', () => {
     const result = buildSystemPrompt(makeOptions({ cerebellumConnected: false }));
     expect(result).toContain('Status: offline');
-    expect(result).toContain('OFFLINE');
-    expect(result).toContain('critical problem');
+    expect(result).toContain('Tool verification unavailable');
   });
 
   it('lists tools when present', () => {
     const tools = new Map([
       ['shell', { description: 'Run commands' }],
-      ['read_file', { description: 'Read a file' }],
+      ['readFile', { description: 'Read a file' }],
     ]);
     const result = buildSystemPrompt(makeOptions({ tools }));
     expect(result).toContain('## Available Tools');
     expect(result).toContain('**shell**: Run commands');
-    expect(result).toContain('**read_file**: Read a file');
+    expect(result).toContain('**readFile**: Read a file');
+  });
+
+  it('groups tools by category', () => {
+    const tools = new Map([
+      ['shell', { description: 'Run commands' }],
+      ['memory_read', { description: 'Read memory' }],
+      ['httpFetch', { description: 'Make HTTP request' }],
+    ]);
+    const result = buildSystemPrompt(makeOptions({ tools }));
+    expect(result).toContain('### File & Code');
+    expect(result).toContain('### Memory');
+    expect(result).toContain('### Network');
+  });
+
+  it('puts unknown tools in Other category', () => {
+    const tools = new Map([
+      ['customTool', { description: 'A custom tool' }],
+    ]);
+    const result = buildSystemPrompt(makeOptions({ tools }));
+    expect(result).toContain('### Other');
+    expect(result).toContain('**customTool**: A custom tool');
   });
 
   it('omits tools section when empty', () => {
@@ -127,11 +152,29 @@ describe('buildSystemPrompt', () => {
     expect(result).toContain('Skills first');
   });
 
+  it('places How to Work before Architecture', () => {
+    const result = buildSystemPrompt(makeOptions());
+    const howToWorkIdx = result.indexOf('## How to Work');
+    const architectureIdx = result.indexOf('## Architecture');
+    expect(howToWorkIdx).toBeLessThan(architectureIdx);
+  });
+
+  it('includes error recovery guidance', () => {
+    const result = buildSystemPrompt(makeOptions());
+    expect(result).toContain('### Error Recovery');
+  });
+
+  it('includes browser workflow guidance', () => {
+    const result = buildSystemPrompt(makeOptions());
+    expect(result).toContain('browserConnect');
+    expect(result).toContain('browserDisconnect');
+  });
+
   it('separates sections with double newlines', () => {
     const result = buildSystemPrompt(makeOptions());
+    expect(result).toContain('\n\n## How to Work');
     expect(result).toContain('\n\n## Architecture');
     expect(result).toContain('\n\n## Operating Mode');
-    expect(result).toContain('\n\n## How to Work');
   });
 
   it('shows recurring tasks section when tasks provided', () => {
@@ -195,5 +238,11 @@ describe('buildSystemPrompt', () => {
   it('omits fine-tune section when not provided', () => {
     const result = buildSystemPrompt(makeOptions());
     expect(result).not.toContain('## Fine-Tuning');
+  });
+
+  it('uses httpFetch for skill registry search', () => {
+    const result = buildSystemPrompt(makeOptions());
+    expect(result).toContain('httpFetch: https://api.github.com/repos/Producible/cereworker-skills');
+    expect(result).not.toContain('gh api');
   });
 });

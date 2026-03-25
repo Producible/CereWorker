@@ -34,7 +34,7 @@ export class ConversationExtractor {
         // Find the next assistant message (skip tool calls, system, etc.)
         let assistant: { role: string; content: string } | null = null;
         for (let j = i + 1; j < messages.length; j++) {
-          if (messages[j].role === 'assistant') {
+          if (messages[j].role === 'assistant' || messages[j].role === 'cerebrum') {
             assistant = messages[j];
             break;
           }

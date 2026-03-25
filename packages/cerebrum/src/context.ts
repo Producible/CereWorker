@@ -8,13 +8,20 @@ export function buildCompactionPrompt(messages: Message[]): string {
     .map((m) => `[${m.role}]: ${m.content}`)
     .join('\n\n');
 
-  return `Summarize the following conversation, preserving:
-- Active tasks and their current status
-- Key decisions made
-- Important context and facts established
-- Any pending questions or action items
+  return `Summarize this conversation for an autonomous AI agent. This summary replaces the full history, so preserve everything needed to continue working.
 
-Be concise but thorough. Do not lose critical details.
+Preserve:
+- Current task state (what step are we on, what remains)
+- File paths created, modified, or referenced
+- Tool calls that succeeded and their key outputs
+- Tool calls that failed and why (avoid retrying the same broken approach)
+- Decisions made and their rationale
+- User preferences (communication style, priorities, constraints)
+- Credentials, API endpoints, or config values discovered
+- Pending questions or action items
+
+Format as short bullet points grouped by topic. Most actionable items first.
+Do not include pleasantries, timestamps, or verbatim tool output.
 
 ---
 ${formatted}`;

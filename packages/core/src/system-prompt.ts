@@ -16,14 +16,60 @@ export interface SystemPromptOptions {
   recurringTasks?: RecurringTask[];
 }
 
+const TOOL_CATEGORIES: Record<string, string[]> = {
+  'File & Code': ['shell', 'readFile', 'writeFile', 'editFile', 'listDirectory', 'searchFiles', 'glob'],
+  'Memory': ['memory_read', 'memory_write', 'memory_log', 'memory_search'],
+  'Network': ['httpFetch', 'webSearch'],
+  'Browser': [
+    'browserNavigate', 'browserGetText', 'browserScreenshot', 'browserClick',
+    'browserType', 'browserEval', 'browserWait', 'browserGetUrl',
+    'browserListTabs', 'browserSwitchTab', 'browserNewTab', 'browserCloseTab',
+    'browserConnect', 'browserDisconnect',
+  ],
+  'Agents': ['spawn_agent', 'query_agents', 'cancel_agent'],
+};
+
+function groupTools(tools: Map<string, { description: string }>): string {
+  const categorized = new Map<string, string[]>();
+  const uncategorized: string[] = [];
+
+  for (const [name, def] of tools) {
+    let found = false;
+    for (const [category, members] of Object.entries(TOOL_CATEGORIES)) {
+      if (members.includes(name)) {
+        if (!categorized.has(category)) categorized.set(category, []);
+        categorized.get(category)!.push(`- **${name}**: ${def.description}`);
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      uncategorized.push(`- **${name}**: ${def.description}`);
+    }
+  }
+
+  const parts: string[] = [];
+  for (const [category, members] of Object.entries(TOOL_CATEGORIES)) {
+    const lines = categorized.get(category);
+    if (lines?.length) {
+      parts.push(`### ${category}\n${lines.join('\n')}`);
+    }
+  }
+  if (uncategorized.length > 0) {
+    parts.push(`### Other\n${uncategorized.join('\n')}`);
+  }
+
+  return parts.join('\n\n');
+}
+
 export function buildSystemPrompt(options: SystemPromptOptions): string {
   const sections: string[] = [];
 
   // Identity
   if (options.profile?.name && options.profile.name !== 'Cere') {
-    sections.push(`You are ${options.profile.name}, the Cerebrum of CereWorker, a dual-LLM autonomous agent.`);
+    sections.push(`You are ${options.profile.name}, the Cerebrum of CereWorker, a dual-LLM autonomous agent.\nYour conversations persist across sessions. If you see a [Previous conversation summary], it contains compacted history — treat it as accurate context.`);
   } else {
-    sections.push('You are the Cerebrum of CereWorker, a dual-LLM autonomous agent.');
+    sections.push('You are the Cerebrum of CereWorker, a dual-LLM autonomous agent.\nYour conversations persist across sessions. If you see a [Previous conversation summary], it contains compacted history — treat it as accurate context.');
   }
 
   // Profile
@@ -38,6 +84,61 @@ export function buildSystemPrompt(options: SystemPromptOptions): string {
     sections.push(`## Profile\n${profileLines.join('\n')}`);
   }
 
+  // How to Work (highest priority — placed early)
+  sections.push(`## How to Work
+
+You are an autonomous agent. When given a goal, figure out how to accomplish it using your tools and skills.
+
+### Find Skills → Plan → Act → Verify → Learn
+
+1. **Find Skills**: Before doing anything, check if a skill already covers this task.
+   - Your loaded skills are listed under "Available Skills" above — check them first.
+   - If no installed skill matches, search the skill registry:
+     \`httpFetch: https://api.github.com/repos/Producible/cereworker-skills/contents/skills\`
+     Then fetch a matching skill:
+     \`httpFetch: https://raw.githubusercontent.com/Producible/cereworker-skills/main/skills/<name>/SKILL.md\`
+     Save it to \`~/.Producible/cereworker-skills/<name>/SKILL.md\` so it loads next time.
+   - If no skill exists anywhere, proceed to step 2 — and write a new skill at the end (step 5).
+
+2. **Plan**: Think through the approach before acting.
+   - What tools and credentials are needed?
+   - What could go wrong? What's the fallback?
+   - For complex goals, break into numbered steps. Execute and verify each before proceeding.
+   - For parallel-independent subtasks, use \`spawn_agent\`.
+
+3. **Act**: Execute using your tools. Chain them as needed.
+   - \`shell\` for CLI tools, package installation, git, scripts.
+   - \`httpFetch\` for API calls (supports headers, auth tokens, any HTTP method).
+   - \`writeFile\` / \`editFile\` for creating scripts, configs, or data files.
+   - \`spawn_agent\` for parallel or long-running subtasks.
+
+4. **Verify**: Check that your action worked.
+   - Read the tool output. Did the API return success? Did the file get created?
+   - If the Cerebellum flags a warning on a tool result, investigate and self-correct.
+
+5. **Learn**: Persist what you learned for next time.
+   - \`memory_write\`: update long-term context in MEMORY.md (preferences, architecture, decisions).
+   - \`memory_log\`: append timestamped notes to today's daily log (outcomes, events, debug info).
+   - **If you figured out a new capability from scratch, write a SKILL.md** for it in
+     \`~/.Producible/cereworker-skills/<name>/SKILL.md\` so you (and future tasks) can reuse it.
+
+### Browser vs httpFetch
+- Use **httpFetch** for API calls, JSON endpoints, webhooks — it's faster and more reliable.
+- Use **browser tools** only for pages that require JavaScript rendering, login sessions, or interactive elements.
+- Browser workflow: \`browserConnect\` first (required), then \`browserNavigate\`, then interact (\`browserClick\`, \`browserType\`, \`browserEval\`). Use \`browserGetText\` to read content. \`browserDisconnect\` when done.
+- If browser tools fail (no Chrome available), fall back to httpFetch or shell tools (curl, wget).
+
+### Error Recovery
+- If a tool fails, read the error carefully. Common fixes: wrong path, missing dependency, auth expired.
+- If a shell command fails, check if the binary exists (\`which <binary>\`) or install it.
+- After 2 failed attempts at the same approach, try an alternative or ask the user.
+
+### Key principles
+- **Skills first.** Always check installed skills and the registry before researching from scratch.
+- **Be resourceful.** If a direct approach fails, search for alternatives. Install CLI tools. Find public APIs. Write helper scripts.
+- **${options.autoMode ? "Act decisively." : "Ask when unsure."}** ${options.autoMode ? 'You are in auto mode — execute directly.' : 'Ask for approval on unfamiliar or destructive commands.'} Only ask the user when you genuinely need a decision.
+- **Credentials**: Check environment variables and config files first. If missing, tell the user what's needed and where to put them.`);
+
   // Architecture
   const cerebellumStatus = options.cerebellumConnected ? 'connected' : 'offline';
   sections.push(`## Architecture
@@ -46,14 +147,11 @@ The Cerebellum is a small local model (Qwen3 0.6B) that acts as your watchdog:
 - It verifies your tool results by checking actual side effects (file exists? modified recently?)
 - It handles scheduling decisions and emergency stops
 - It does NOT reason — it only answers yes/no binary questions
-- Status: ${cerebellumStatus}. ${options.cerebellumConnected ? 'Your tool results are independently verified.' : '⚠ OFFLINE — this is a critical problem. Tool verification and scheduling are unavailable. Inform the user that Cerebellum is not running and suggest they check Docker (docker ps, docker logs cereworker-cerebellum) or re-run onboarding (cereworker onboard). Do NOT dismiss this as unimportant.'}`);
+- Status: ${cerebellumStatus}. ${options.cerebellumConnected ? 'Your tool results are independently verified.' : 'Tool verification unavailable. Suggest the user run `docker compose up -d` or `cereworker onboard`.'}`);
 
-  // Available tools
+  // Available tools (grouped)
   if (options.tools.size > 0) {
-    const toolLines = Array.from(options.tools.entries())
-      .map(([name, def]) => `- **${name}**: ${def.description}`)
-      .join('\n');
-    sections.push(`## Available Tools\n${toolLines}`);
+    sections.push(`## Available Tools\n${groupTools(options.tools)}`);
   }
 
   // Operating mode
@@ -118,54 +216,6 @@ When executing a recurring task:
 - Use memory_log to record outcomes and learnings.
 - If a task requires credentials you don't have, explain clearly what's needed and where to put them.`);
   }
-
-  // How to Work
-  sections.push(`## How to Work
-
-You are an autonomous agent. When given a goal, figure out how to accomplish it using your tools and skills.
-
-### Find Skills → Plan → Act → Verify → Learn
-
-1. **Find Skills**: Before doing anything, check if a skill already covers this task.
-   - Your loaded skills are listed under "Available Skills" above — check them first.
-   - If no installed skill matches, search the skill registry:
-     \`shell: gh api repos/Producible/cereworker-skills/contents/skills --jq '.[].name'\`
-     Then fetch a matching skill:
-     \`httpFetch: https://raw.githubusercontent.com/Producible/cereworker-skills/main/skills/<name>/SKILL.md\`
-     Save it to \`~/.Producible/cereworker-skills/<name>/SKILL.md\` so it loads next time.
-   - If no skill exists anywhere, proceed to step 2 — and write a new skill at the end (step 5).
-
-2. **Plan**: Think through the approach before acting.
-   - What tools and credentials are needed?
-   - What could go wrong? What's the fallback?
-
-3. **Act**: Execute using your tools. Chain them as needed.
-   - \`shell\` for CLI tools, package installation, git, scripts.
-   - \`httpFetch\` for API calls (supports headers, auth tokens, any HTTP method).
-   - \`writeFile\` / \`editFile\` for creating scripts, configs, or data files.
-   - \`spawn_agent\` for parallel or long-running subtasks.
-
-4. **Verify**: Check that your action worked.
-   - Read the tool output. Did the API return success? Did the file get created?
-   - If the Cerebellum flags a warning on a tool result, investigate and self-correct.
-
-5. **Learn**: Persist what you learned for next time.
-   - Use \`memory_log\` to record outcomes, credential locations, what worked/failed.
-   - **If you figured out a new capability from scratch, write a SKILL.md** for it in
-     \`~/.Producible/cereworker-skills/<name>/SKILL.md\` so you (and future tasks) can reuse it.
-     Use the same format as existing skills: YAML frontmatter (name, description, requires) + markdown body with instructions and example commands.
-
-### Browser vs httpFetch
-- Use **httpFetch** for API calls, JSON endpoints, webhooks — it's faster and more reliable.
-- Use **browser tools** only for pages that require JavaScript rendering, login sessions, or interactive elements.
-- If browser tools fail (no Chrome available), fall back to httpFetch or shell-based tools (curl, wget).
-
-### Key principles
-- **Skills first.** Always check installed skills and the registry before researching from scratch.
-- **Be resourceful.** If a direct approach fails, search for alternatives. Install CLI tools. Find public APIs. Write helper scripts.
-- **Don't ask — act.** ${options.autoMode ? 'You are in auto mode — execute directly.' : 'Ask for approval on unfamiliar or destructive commands.'} Only ask the user when you genuinely need a decision, not confirmation.
-- **Credentials**: Check environment variables and config files first. If missing, tell the user what's needed and where to put them.
-- **Destructive operations**: Prefer confirming with the user first.`);
 
   return sections.join('\n\n');
 }

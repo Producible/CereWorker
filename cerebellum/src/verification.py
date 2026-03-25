@@ -65,7 +65,8 @@ class ToolVerifier:
 
         # All programmatic checks pass - ask model as final gate
         summary = self._summarize_checks(checks)
-        model_verdict = self.inference.verify_checks(tool_name, summary)
+        args_str = ", ".join(f"{k}={v}" for k, v in tool_args.items())[:200]
+        model_verdict = self.inference.verify_checks(tool_name, summary, args_str)
 
         return VerificationResult(
             passed=model_verdict, checks=checks, model_verdict=model_verdict
