@@ -14,6 +14,10 @@ export interface SystemPromptOptions {
   profile?: { name: string; role: string; traits: string[] };
   finetuneStatus?: { enabled: boolean; status: string; progress?: number; lastJobId?: string };
   recurringTasks?: RecurringTask[];
+  instanceId?: string;
+  instanceCreatedAt?: string;
+  finetuneCount?: number;
+  proactiveEnabled?: boolean;
 }
 
 const TOOL_CATEGORIES: Record<string, string[]> = {
@@ -66,11 +70,18 @@ export function buildSystemPrompt(options: SystemPromptOptions): string {
   const sections: string[] = [];
 
   // Identity
-  if (options.profile?.name && options.profile.name !== 'Cere') {
-    sections.push(`You are ${options.profile.name}, the Cerebrum of CereWorker, a dual-LLM autonomous agent.\nYour conversations persist across sessions. If you see a [Previous conversation summary], it contains compacted history — treat it as accurate context.`);
-  } else {
-    sections.push('You are the Cerebrum of CereWorker, a dual-LLM autonomous agent.\nYour conversations persist across sessions. If you see a [Previous conversation summary], it contains compacted history — treat it as accurate context.');
+  const nameStr = (options.profile?.name && options.profile.name !== 'Cere')
+    ? `You are ${options.profile.name}, the Cerebrum of CereWorker, a dual-LLM autonomous agent.`
+    : 'You are the Cerebrum of CereWorker, a dual-LLM autonomous agent.';
+  const instanceLines: string[] = [nameStr];
+  if (options.instanceId) {
+    const parts = [`Instance ${options.instanceId}`];
+    if (options.instanceCreatedAt) parts.push(`active since ${options.instanceCreatedAt.split('T')[0]}`);
+    if (options.finetuneCount) parts.push(`${options.finetuneCount} fine-tune cycle${options.finetuneCount === 1 ? '' : 's'} completed`);
+    instanceLines.push(parts.join(', ') + '.');
   }
+  instanceLines.push('Your conversations persist across sessions. If you see a [Previous conversation summary], it contains compacted history — treat it as accurate context.');
+  sections.push(instanceLines.join('\n'));
 
   // Profile
   const profileLines: string[] = [];
@@ -215,6 +226,16 @@ When executing a recurring task:
 - You are in a persistent conversation for this task — review history for context from previous runs.
 - Use memory_log to record outcomes and learnings.
 - If a task requires credentials you don't have, explain clearly what's needed and where to put them.`);
+  }
+
+  // Proactive Mode
+  if (options.proactiveEnabled) {
+    sections.push(`## Proactive Mode
+You work proactively. When you complete a task or encounter an issue:
+- Report results immediately — do not wait for the user to ask.
+- If resuming from a previous session, acknowledge the context and what was done before.
+- For status reports, summarize completed work, pending items, and any blockers.
+- Push important updates to the user's connected messaging channels.`);
   }
 
   return sections.join('\n\n');

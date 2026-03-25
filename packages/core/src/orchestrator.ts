@@ -7,6 +7,7 @@ import { createLogger } from './logger.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import type { Message, ToolCall, ToolResult, VerificationResult, AgentHealthAction } from './types.js';
 import { estimateMessageTokens, shouldCompact, buildCompactionMessages } from './context.js';
+import type { InstanceStore, FineTuneRecord } from './instance.js';
 
 const log = createLogger('orchestrator');
 
@@ -122,6 +123,8 @@ export class Orchestrator extends TypedEventEmitter {
   private connectedNodes = 0;
   private gatewayUrl: string | undefined;
   private profile: { name: string; role: string; traits: string[] } | undefined;
+  private instanceStore: InstanceStore | null = null;
+  private proactiveEnabled = false;
   private taskConversations = new Map<string, string>();
   private taskRunning = new Set<string>();
   private recurringTasks: Array<{ id: string; goal: string; schedule: string }> = [];
@@ -212,6 +215,22 @@ export class Orchestrator extends TypedEventEmitter {
 
   setProfile(profile: { name: string; role: string; traits: string[] }): void {
     this.profile = profile;
+  }
+
+  setInstanceStore(store: InstanceStore): void {
+    this.instanceStore = store;
+  }
+
+  getInstanceStore(): InstanceStore | null {
+    return this.instanceStore;
+  }
+
+  setProactiveEnabled(enabled: boolean): void {
+    this.proactiveEnabled = enabled;
+  }
+
+  sendProactiveMessage(content: string, source: string): void {
+    this.emit({ type: 'message:proactive', content, source });
   }
 
   setAutoMode(enabled: boolean): void {
@@ -359,6 +378,14 @@ export class Orchestrator extends TypedEventEmitter {
             completedAt: status.completedAt || Date.now(),
             loss: status.currentLoss,
           });
+          this.instanceStore?.recordFineTune({
+            jobId: status.jobId,
+            method: this.fineTuneMethod,
+            completedAt: new Date(status.completedAt || Date.now()).toISOString(),
+            checkpointPath: status.checkpointPath,
+            loss: status.currentLoss,
+            trainingPairs: status.totalSteps,
+          });
           this.emit({
             type: 'finetune:complete',
             jobId: status.jobId,
@@ -411,6 +438,7 @@ export class Orchestrator extends TypedEventEmitter {
   startConversation(): string {
     const conversation = this.conversations.create();
     this.activeConversationId = conversation.id;
+    this.instanceStore?.incrementConversation();
     log.info('Started conversation', { id: conversation.id });
     return conversation.id;
   }
@@ -547,6 +575,7 @@ export class Orchestrator extends TypedEventEmitter {
     }
 
     // Build system prompt with runtime state + skills context
+    const instance = this.instanceStore?.get();
     const basePrompt = buildSystemPrompt({
       cerebellumConnected: this.cerebellum?.isConnected() ?? false,
       tools: this.tools,
@@ -562,6 +591,10 @@ export class Orchestrator extends TypedEventEmitter {
         lastJobId: this.fineTuneStatus.jobId || undefined,
       },
       recurringTasks: this.recurringTasks,
+      instanceId: instance?.id,
+      instanceCreatedAt: instance?.createdAt,
+      finetuneCount: instance?.finetuneLineage.length,
+      proactiveEnabled: this.proactiveEnabled,
     });
     const systemParts = [basePrompt];
     if (this.systemContext) systemParts.push(this.systemContext);

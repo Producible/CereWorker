@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Orchestrator, ConversationStore, PairingStore, createLogger, createHttpTools } from '@cereworker/core';
+import { Orchestrator, ConversationStore, PairingStore, InstanceStore, PlanStore, ProactiveController, createLogger, createHttpTools } from '@cereworker/core';
 import { CerebellumClient } from '@cereworker/cerebellum-client';
 import type { ToolDefinition } from '@cereworker/core';
 import { CerebrumProvider } from '@cereworker/cerebrum';
@@ -47,6 +47,9 @@ export interface ServiceInstance {
   cerebrum: CerebrumProvider;
   skillRegistry: SkillRegistry;
   pairingStore: PairingStore;
+  instanceStore: InstanceStore;
+  proactiveController: ProactiveController | null;
+  needsDiscovery: boolean;
   startChannels(): Promise<number>;
   startCerebellum(): Promise<{ ok: true } | { ok: false; reason: string }>;
   startGateway(callbacks?: GatewayCallbacks): Promise<GatewayHandles>;
@@ -59,6 +62,31 @@ export interface ServiceInstance {
 export function createService(config: CereWorkerConfig): ServiceInstance {
   // Create persistent conversation store
   const conversationStore = new ConversationStore();
+
+  // Instance identity
+  const instanceStore = new InstanceStore();
+  let instance = instanceStore.load();
+  let needsDiscovery = false;
+  if (instance) {
+    instanceStore.updateBoot();
+    // If config profile changed and instance was static, update it
+    if (instance.profile.source === 'static') {
+      const cp = config.profile;
+      if (cp.name !== instance.profile.name || cp.role !== instance.profile.role) {
+        instanceStore.updateProfile({ name: cp.name, role: cp.role, traits: cp.traits });
+        instance = instanceStore.get()!;
+      }
+    }
+  } else {
+    // No instance yet — create from config or flag for discovery
+    instance = instanceStore.create(config.profile, 'static');
+    // Populate conversation count from existing DB
+    const existing = conversationStore.list();
+    if (existing.length > 0) {
+      instanceStore.setConversationCount(existing.length);
+    }
+    needsDiscovery = true;
+  }
 
   const orchestrator = new Orchestrator({
     conversationStore,
@@ -88,8 +116,9 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
   // Set initial auto mode on orchestrator
   orchestrator.setAutoMode(config.tools.shell.autoMode);
 
-  // Set worker profile
-  orchestrator.setProfile(config.profile);
+  // Set worker profile from instance identity (overrides config)
+  orchestrator.setProfile(instance!.profile);
+  orchestrator.setInstanceStore(instanceStore);
 
   // Bridge CerebrumProvider to Orchestrator's CerebrumAdapter interface
   orchestrator.setCerebrum({
@@ -875,7 +904,47 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     return { server: null, client: null };
   }
 
+  // --- Proactive Controller ---
+  let proactiveController: ProactiveController | null = null;
+  if (config.proactive.enabled) {
+    const planStore = new PlanStore();
+
+    proactiveController = new ProactiveController({
+      planStore,
+      instanceStore,
+      output: {
+        sendToUser: (content, source) => {
+          orchestrator.sendProactiveMessage(content, source);
+        },
+        broadcastToChannels: async (content) => {
+          try { await channelManager.broadcast({ to: 'all', text: content }); } catch { /* best effort */ }
+        },
+      },
+      taskRunner: {
+        runTask: (taskId, goal, options) => orchestrator.runTask(taskId, goal, options),
+        isTaskRunning: (taskId) => orchestrator.isTaskRunning(taskId),
+      },
+      textGenerator: {
+        generate: (prompt) => cerebrum.generate(prompt),
+      },
+      config: {
+        enabled: config.proactive.enabled,
+        resumeOnBoot: config.proactive.resumeOnBoot,
+        statusReports: config.proactive.statusReports,
+        statusReportSchedule: config.proactive.statusReportSchedule,
+        maxConcurrentProactive: config.proactive.maxConcurrentProactive,
+      },
+    });
+
+    orchestrator.setProactiveEnabled(true);
+    log.info('Proactive controller initialized', {
+      resumeOnBoot: config.proactive.resumeOnBoot,
+      statusReports: config.proactive.statusReports,
+    });
+  }
+
   async function shutdown(): Promise<void> {
+    proactiveController?.stop();
     if (cerebellumPoller) {
       clearInterval(cerebellumPoller);
       cerebellumPoller = null;
@@ -938,6 +1007,9 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     cerebrum,
     skillRegistry,
     pairingStore,
+    instanceStore,
+    proactiveController,
+    needsDiscovery,
     startChannels,
     startCerebellum,
     startGateway,

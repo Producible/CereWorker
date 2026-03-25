@@ -34,6 +34,9 @@ export type OrchestratorEvent =
   | { type: 'browser:extension-connected' }
   | { type: 'browser:extension-disconnected' }
   | { type: 'conversation:resumed'; conversationId: string; messages: Message[] }
+  | { type: 'message:proactive'; content: string; source: string }
+  | { type: 'proactive:resume'; taskId: string; goal: string }
+  | { type: 'proactive:report'; report: string }
   | { type: 'error'; error: Error };
 
 type EventHandler<T> = (event: T) => void;

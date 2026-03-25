@@ -246,6 +246,16 @@ export const configSchema = z.object({
     )
     .default([]),
 
+  proactive: z
+    .object({
+      enabled: z.boolean().default(false),
+      resumeOnBoot: z.enum(['auto', 'notify']).default('auto'),
+      statusReports: z.boolean().default(true),
+      statusReportSchedule: z.enum(['hourly', 'daily', 'weekly']).default('daily'),
+      maxConcurrentProactive: z.number().default(2),
+    })
+    .default({}),
+
   gateway: z
     .object({
       enabled: z.boolean().default(false),

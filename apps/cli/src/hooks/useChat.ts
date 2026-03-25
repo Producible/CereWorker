@@ -80,6 +80,20 @@ export function useChat(orchestrator: Orchestrator) {
     );
 
     unsubs.push(
+      orchestrator.on('message:proactive', ({ content, source }) => {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: `proactive-${Date.now()}`,
+            role: 'cerebrum' as const,
+            content: `[${source}] ${content}`,
+            timestamp: Date.now(),
+          },
+        ]);
+      }),
+    );
+
+    unsubs.push(
       orchestrator.on('error', ({ error: err }) => {
         setError(err.message);
         setIsStreaming(false);
