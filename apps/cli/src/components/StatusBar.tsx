@@ -42,25 +42,8 @@ function CerebellumIndicator({
     );
   }
 
-  if (enabled && !status && loading) {
-    const { phase, attempt, maxAttempts } = loading;
-    const hasProgress = attempt !== undefined && maxAttempts !== undefined && maxAttempts > 0;
-    const pct = hasProgress ? Math.round((attempt! / maxAttempts!) * 100) : 0;
-    const barWidth = 15;
-    const filled = hasProgress ? Math.round((pct / 100) * barWidth) : 0;
-    const bar = hasProgress
-      ? `[${'='.repeat(filled)}${filled < barWidth ? '>' : ''}${'.'.repeat(Math.max(0, barWidth - filled - 1))}]`
-      : '';
-
-    return (
-      <Text color="yellow">
-        Cerebellum: {phase} {bar}{hasProgress ? ` ${pct}%` : ''}
-      </Text>
-    );
-  }
-
   if (enabled && !status) {
-    return <Text color="yellow">Cerebellum: loading...</Text>;
+    return <Text color="yellow">Cerebellum: {loading?.phase || 'loading...'}</Text>;
   }
 
   return (
