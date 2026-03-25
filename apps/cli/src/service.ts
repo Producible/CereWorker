@@ -344,6 +344,10 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
         source: 'discovered',
       });
       orchestrator.setProfile(result);
+      orchestrator.sendProactiveMessage(
+        `Identity saved! I'm ${result.name}, role: ${result.role}. Ready to work.`,
+        'discovery-complete',
+      );
       log.info('Discovery completed, instance profile updated', { name: result.name });
 
       // Write training pairs from the discovery conversation to pending.jsonl

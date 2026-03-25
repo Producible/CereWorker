@@ -635,7 +635,8 @@ export class Orchestrator extends TypedEventEmitter {
       ...messages,
     ];
 
-    const toolDefs = Object.fromEntries(this.tools);
+    // In discovery mode, don't pass tools to prevent the LLM from calling them
+    const toolDefs = this.discoveryMode ? {} : Object.fromEntries(this.tools);
     let fullContent = '';
 
     try {
