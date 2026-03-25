@@ -344,9 +344,8 @@ git clone https://github.com/Producible/CereWorker.git
 **From npm install:**
 
 ```bash
-# Find the installed package location
-EXT_DIR="$(node -e "const p=require.resolve('@cereworker/browser');console.log(p.substring(0,p.lastIndexOf('dist'))+'extension')")"
-echo "Extension located at: $EXT_DIR"
+# Print the extension directory path
+cereworker extension-dir
 ```
 
 Then load it into Chrome:

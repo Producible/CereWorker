@@ -96,6 +96,14 @@ async function main() {
     return;
   }
 
+  if (subcommand === 'extension-dir') {
+    const { createRequire: cr } = await import('node:module');
+    const r = cr(import.meta.url);
+    const p = r.resolve('@cereworker/browser');
+    console.log(p.substring(0, p.lastIndexOf('dist')) + 'extension');
+    return;
+  }
+
   if (subcommand === 'serve') {
     const { runHeadlessService } = await import('./serve.js');
     const config = loadConfig();
