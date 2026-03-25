@@ -244,61 +244,25 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
         if (dockerPrefix) {
           clack.log.info('Docker requires elevated privileges. You may be prompted for your password.');
         }
-        const pullSpinner = clack.spinner();
-        pullSpinner.start(`Pulling ${fullImage} from Docker Hub...`);
+        clack.log.info(`Pulling ${fullImage}...`);
         try {
-          await new Promise<void>((resolve, reject) => {
-            const args = dockerPrefix
-              ? ['docker', 'pull', '--progress=plain', fullImage]
-              : ['pull', '--progress=plain', fullImage];
-            const cmd = dockerPrefix ? 'sudo' : 'docker';
-            const proc = nodeSpawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-
-            const timer = setTimeout(() => {
-              proc.kill();
-              reject(new Error('Pull timed out'));
-            }, 3_600_000);
-
-            // Docker pull writes progress to stdout — parse layer progress
-            let layersDone = 0;
-            let layersTotal = 0;
-            const layerStatus = new Map<string, string>();
-
-            const parseDockerProgress = (data: Buffer) => {
-              // Docker pull uses \r for in-place progress updates, split on both \r and \n
-              for (const line of data.toString().split(/[\r\n]+/)) {
-                // Lines like: "abc123: Downloading [==>   ] 23.4MB/156MB"
-                // or: "abc123: Pull complete"
-                const match = line.match(/([a-f0-9]+):\s+(.+)/);
-                if (match) {
-                  const [, id, status] = match;
-                  layerStatus.set(id, status.trim());
-                  layersTotal = layerStatus.size;
-                  layersDone = [...layerStatus.values()].filter(s => s.includes('complete') || s.includes('exists')).length;
-                  const dlMatch = status.match(/Downloading.*?(\d+(?:\.\d+)?\s*[kMG]?B)\/(\d+(?:\.\d+)?\s*[kMG]?B)/);
-                  if (dlMatch) {
-                    pullSpinner.message(`Pulling ${fullImage} — layer ${layersDone}/${layersTotal} (${dlMatch[1].trim()}/${dlMatch[2].trim()})`);
-                  } else if (status.includes('Extracting')) {
-                    pullSpinner.message(`Pulling ${fullImage} — extracting layer ${layersDone}/${layersTotal}`);
-                  } else if (layersDone > 0) {
-                    pullSpinner.message(`Pulling ${fullImage} — layer ${layersDone}/${layersTotal}`);
-                  }
-                }
-              }
-            };
-
-            proc.stdout.on('data', parseDockerProgress);
-            proc.stderr.on('data', parseDockerProgress);
-
-            proc.on('close', (code) => {
-              clearTimeout(timer);
-              code === 0 ? resolve() : reject(new Error(`docker pull exited with code ${code}`));
-            });
+          // Use stdio: 'inherit' so Docker shows its own native progress bar
+          const args = dockerPrefix
+            ? ['docker', 'pull', fullImage]
+            : ['pull', fullImage];
+          const cmd = dockerPrefix ? 'sudo' : 'docker';
+          const code = await new Promise<number | null>((resolve, reject) => {
+            const proc = nodeSpawn(cmd, args, { stdio: 'inherit' });
+            const timer = setTimeout(() => { proc.kill(); reject(new Error('Pull timed out')); }, 3_600_000);
+            proc.on('close', (c) => { clearTimeout(timer); resolve(c); });
             proc.on('error', (err) => { clearTimeout(timer); reject(err); });
           });
-          pullSpinner.stop('Cerebellum image ready.');
+          if (code === 0) {
+            clack.log.success('Cerebellum image ready.');
+          } else {
+            clack.log.warn(`docker pull exited with code ${code}. You can retry with "cereworker onboard".`);
+          }
         } catch {
-          pullSpinner.stop();
           // Pull may have succeeded despite error — check before reporting failure
           try {
             const pulled = execSync(`${dockerPrefix}docker images -q ${fullImage}`, { stdio: 'pipe' }).toString().trim();
