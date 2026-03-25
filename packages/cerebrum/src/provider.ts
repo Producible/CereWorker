@@ -1,4 +1,4 @@
-import { streamText, generateText, tool, type ModelMessage, type LanguageModel } from 'ai';
+import { streamText, generateText, tool, stepCountIs, type ModelMessage, type LanguageModel } from 'ai';
 import { z } from 'zod';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
@@ -222,6 +222,7 @@ export class CerebrumProvider {
           model,
           messages: coreMessages,
           tools: allTools,
+          stopWhen: stepCountIs(options?.maxSteps ?? 10),
           temperature: this.config.temperature,
           ...(systemPrompt ? { system: systemPrompt } : {}),
         });
