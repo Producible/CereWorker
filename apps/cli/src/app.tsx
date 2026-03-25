@@ -106,7 +106,7 @@ export function App({ config, resumeConversationId }: AppProps) {
   }, [orchestrator]);
 
   const { messages, isStreaming, streamingContent, activeToolCall, error } = useChat(orchestrator);
-  const { status: cerebellumStatus, finetune, taskRunningCount } = useCerebellum(orchestrator);
+  const { status: cerebellumStatus, loading: cerebellumLoadingInfo, finetune, taskRunningCount } = useCerebellum(orchestrator);
 
   const handleSubmit = useCallback(
     (text: string) => {
@@ -549,6 +549,7 @@ export function App({ config, resumeConversationId }: AppProps) {
         provider={currentProvider}
         model={currentModel}
         cerebellumStatus={cerebellumStatus}
+        cerebellumLoading={cerebellumLoadingInfo}
         cerebellumEnabled={config.cerebellum.enabled}
         isStreaming={isStreaming}
         channelCount={channelCount}

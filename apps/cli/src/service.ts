@@ -570,6 +570,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     // Auto-start Docker container
     let dockerReason = '';
     if (config.cerebellum.docker.autoStart) {
+      orchestrator.emit({ type: 'cerebellum:loading', phase: 'Starting Docker...' });
       if (!isDockerAvailable()) {
         // Determine specific reason
         try {
@@ -611,7 +612,9 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     const retryDelay = 5000;
     let lastError = '';
 
+    orchestrator.emit({ type: 'cerebellum:loading', phase: 'Connecting...', attempt: 0, maxAttempts: maxRetries });
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      orchestrator.emit({ type: 'cerebellum:loading', phase: 'Connecting...', attempt, maxAttempts: maxRetries });
       try {
         await client.connect();
       } catch (err) {

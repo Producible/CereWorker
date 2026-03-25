@@ -11,6 +11,7 @@ export type OrchestratorEvent =
   | { type: 'verification:start'; callId: string; toolName: string }
   | { type: 'verification:end'; result: VerificationResult }
   | { type: 'heartbeat:tick'; actions: TaskAction[] }
+  | { type: 'cerebellum:loading'; phase: string; attempt?: number; maxAttempts?: number }
   | { type: 'cerebellum:status'; status: CerebellumStatus }
   | { type: 'agent:spawned'; agentId: string; task: string }
   | { type: 'agent:completed'; agentId: string; result: string }

@@ -1,11 +1,13 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import type { CerebellumStatus } from '@cereworker/core';
+import type { CerebellumLoading } from '../hooks/useCerebellum.js';
 
 interface StatusBarProps {
   provider: string;
   model: string;
   cerebellumStatus: CerebellumStatus | null;
+  cerebellumLoading?: CerebellumLoading | null;
   isStreaming: boolean;
   channelCount?: number;
   autoMode?: boolean;
@@ -22,10 +24,58 @@ interface StatusBarProps {
   cerebellumEnabled?: boolean;
 }
 
+function CerebellumIndicator({
+  status,
+  loading,
+  enabled,
+}: {
+  status: CerebellumStatus | null;
+  loading?: CerebellumLoading | null;
+  enabled: boolean;
+}) {
+  if (status?.healthy) {
+    return (
+      <Text color="green">
+        Cerebellum: connected
+        {status.tasksRegistered ? ` (${status.tasksRegistered} tasks)` : ''}
+      </Text>
+    );
+  }
+
+  if (enabled && !status && loading) {
+    const { phase, attempt, maxAttempts } = loading;
+    const hasProgress = attempt !== undefined && maxAttempts !== undefined && maxAttempts > 0;
+    const pct = hasProgress ? Math.round((attempt! / maxAttempts!) * 100) : 0;
+    const barWidth = 15;
+    const filled = hasProgress ? Math.round((pct / 100) * barWidth) : 0;
+    const bar = hasProgress
+      ? `[${'='.repeat(filled)}${filled < barWidth ? '>' : ''}${'.'.repeat(Math.max(0, barWidth - filled - 1))}]`
+      : '';
+
+    return (
+      <Text color="yellow">
+        Cerebellum: {phase} {bar}{hasProgress ? ` ${pct}%` : ''}
+      </Text>
+    );
+  }
+
+  if (enabled && !status) {
+    return <Text color="yellow">Cerebellum: loading...</Text>;
+  }
+
+  return (
+    <Text color="red" bold>
+      Cerebellum: OFFLINE
+      {status?.tasksRegistered ? ` (${status.tasksRegistered} tasks)` : ''}
+    </Text>
+  );
+}
+
 export function StatusBar({
   provider,
   model,
   cerebellumStatus,
+  cerebellumLoading: loadingInfo = null,
   isStreaming,
   channelCount = 0,
   autoMode = false,
@@ -41,25 +91,11 @@ export function StatusBar({
   extensionConnected = false,
   cerebellumEnabled = true,
 }: StatusBarProps) {
-  const cerebellumLoading = cerebellumEnabled && cerebellumStatus === null;
-  const cerebellumLabel = cerebellumStatus?.healthy
-    ? 'connected'
-    : cerebellumLoading
-      ? 'loading...'
-      : 'OFFLINE';
-  const cerebellumColor = cerebellumStatus?.healthy
-    ? 'green'
-    : cerebellumLoading
-      ? 'yellow'
-      : 'red';
   return (
     <Box borderStyle="single" borderColor="gray" paddingX={1} justifyContent="space-between">
       <Box gap={2}>
         <Text color="cyan">Cerebrum: {provider}/{model}</Text>
-        <Text color={cerebellumColor} bold={cerebellumColor === 'red'}>
-          Cerebellum: {cerebellumLabel}
-          {cerebellumStatus?.tasksRegistered ? ` (${cerebellumStatus.tasksRegistered} tasks)` : ''}
-        </Text>
+        <CerebellumIndicator status={cerebellumStatus} loading={loadingInfo} enabled={cerebellumEnabled} />
         {channelCount > 0 && (
           <Text color="green">Channels: {channelCount}</Text>
         )}

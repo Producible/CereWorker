@@ -8,8 +8,15 @@ export interface FineTuneInfo {
   loss: number;
 }
 
+export interface CerebellumLoading {
+  phase: string;
+  attempt?: number;
+  maxAttempts?: number;
+}
+
 export function useCerebellum(orchestrator: Orchestrator) {
   const [status, setStatus] = useState<CerebellumStatus | null>(null);
+  const [loading, setLoading] = useState<CerebellumLoading | null>(null);
   const [lastActions, setLastActions] = useState<TaskAction[]>([]);
   const [finetune, setFinetune] = useState<FineTuneInfo>({
     active: false,
@@ -23,7 +30,14 @@ export function useCerebellum(orchestrator: Orchestrator) {
     const unsubs: Array<() => void> = [];
 
     unsubs.push(
+      orchestrator.on('cerebellum:loading', (event) => {
+        setLoading({ phase: event.phase, attempt: event.attempt, maxAttempts: event.maxAttempts });
+      }),
+    );
+
+    unsubs.push(
       orchestrator.on('cerebellum:status', ({ status: s }) => {
+        setLoading(null);
         setStatus(s);
       }),
     );
@@ -79,5 +93,5 @@ export function useCerebellum(orchestrator: Orchestrator) {
     return () => unsubs.forEach((u) => u());
   }, [orchestrator]);
 
-  return { status, lastActions, finetune, taskRunningCount };
+  return { status, loading, lastActions, finetune, taskRunningCount };
 }
