@@ -105,8 +105,9 @@ traits: friendly
 
     const result = await engine.run();
 
-    expect(result.trainingPairs).toHaveLength(1);
-    expect(result.trainingPairs[0].instruction).toBe('Call me Bot');
+    // 2 pairs: seed→first response + user answer→completion
+    expect(result.trainingPairs).toHaveLength(2);
+    expect(result.trainingPairs[1].instruction).toBe('Call me Bot');
     expect(result.trainingPairs[0].source).toBe('discovery');
   });
 

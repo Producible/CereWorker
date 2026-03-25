@@ -67,6 +67,14 @@ export class DiscoveryEngine {
       timestamp: Date.now(),
     });
 
+    // Seed user message to satisfy AI SDK requirement (messages must not be empty)
+    this.messages.push({
+      id: nanoid(),
+      role: 'user',
+      content: 'Hello! I just set you up. Please start asking your questions.',
+      timestamp: Date.now(),
+    });
+
     // First turn: agent asks the first question
     let agentResponse = await this.getAgentResponse();
     this.callbacks.sendMessage(agentResponse);
@@ -166,7 +174,8 @@ export class DiscoveryEngine {
     let role = 'general-purpose assistant';
     const traits: string[] = [];
 
-    const userMessages = this.messages.filter((m) => m.role === 'user');
+    // Skip the seed message (first user message is the kickoff prompt)
+    const userMessages = this.messages.filter((m) => m.role === 'user').slice(1);
     if (userMessages.length > 0) name = userMessages[0].content.trim().split('\n')[0];
     if (userMessages.length > 1) role = userMessages[1].content.trim();
 
