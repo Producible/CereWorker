@@ -249,8 +249,8 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
         try {
           await new Promise<void>((resolve, reject) => {
             const args = dockerPrefix
-              ? ['docker', 'pull', fullImage]
-              : ['pull', fullImage];
+              ? ['docker', 'pull', '--progress=plain', fullImage]
+              : ['pull', '--progress=plain', fullImage];
             const cmd = dockerPrefix ? 'sudo' : 'docker';
             const proc = nodeSpawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
