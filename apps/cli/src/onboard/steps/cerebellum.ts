@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process';
+import { execSync, spawn as nodeSpawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { totalmem, homedir } from 'node:os';
 import { join } from 'node:path';
@@ -244,14 +244,59 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
         if (dockerPrefix) {
           clack.log.info('Docker requires elevated privileges. You may be prompted for your password.');
         }
+        const pullSpinner = clack.spinner();
+        pullSpinner.start(`Pulling ${fullImage} from Docker Hub...`);
         try {
-          clack.log.info(`Pulling ${fullImage} from Docker Hub...`);
-          execSync(
-            `${dockerPrefix}docker pull ${fullImage}`,
-            { stdio: 'inherit', timeout: 3_600_000 },
-          );
-          clack.log.success('Cerebellum image ready.');
+          await new Promise<void>((resolve, reject) => {
+            const args = dockerPrefix
+              ? ['docker', 'pull', fullImage]
+              : ['pull', fullImage];
+            const cmd = dockerPrefix ? 'sudo' : 'docker';
+            const proc = nodeSpawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+            const timer = setTimeout(() => {
+              proc.kill();
+              reject(new Error('Pull timed out'));
+            }, 3_600_000);
+
+            // Docker pull writes progress to stdout — parse layer progress
+            let layersDone = 0;
+            let layersTotal = 0;
+            const layerStatus = new Map<string, string>();
+
+            const parseDockerProgress = (data: Buffer) => {
+              for (const line of data.toString().split('\n')) {
+                // Lines like: "abc123: Downloading [==>   ] 23.4MB/156MB"
+                // or: "abc123: Pull complete"
+                const match = line.match(/^([a-f0-9]+):\s+(.+)/);
+                if (match) {
+                  const [, id, status] = match;
+                  layerStatus.set(id, status);
+                  layersTotal = layerStatus.size;
+                  layersDone = [...layerStatus.values()].filter(s => s.includes('complete') || s.includes('exists')).length;
+                  // Check for download progress in this line
+                  const dlMatch = status.match(/Downloading.*?(\d+(?:\.\d+)?[kMG]?B)\/(\d+(?:\.\d+)?[kMG]?B)/);
+                  if (dlMatch) {
+                    pullSpinner.message(`Pulling ${fullImage} — layer ${layersDone}/${layersTotal} (${dlMatch[1]}/${dlMatch[2]})`);
+                  } else if (layersDone > 0) {
+                    pullSpinner.message(`Pulling ${fullImage} — layer ${layersDone}/${layersTotal}`);
+                  }
+                }
+              }
+            };
+
+            proc.stdout.on('data', parseDockerProgress);
+            proc.stderr.on('data', parseDockerProgress);
+
+            proc.on('close', (code) => {
+              clearTimeout(timer);
+              code === 0 ? resolve() : reject(new Error(`docker pull exited with code ${code}`));
+            });
+            proc.on('error', (err) => { clearTimeout(timer); reject(err); });
+          });
+          pullSpinner.stop('Cerebellum image ready.');
         } catch {
+          pullSpinner.stop();
           // Pull may have succeeded despite error — check before reporting failure
           try {
             const pulled = execSync(`${dockerPrefix}docker images -q ${fullImage}`, { stdio: 'pipe' }).toString().trim();
@@ -276,20 +321,84 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
       const modelsDir = join(homedir(), '.cereworker', 'models');
       mkdirSync(modelsDir, { recursive: true });
 
-      clack.log.info(`Downloading ${model.id} model weights (this may take a few minutes)...`);
+      // Python script that prints structured progress as HuggingFace downloads files
+      const downloadScript = [
+        'import sys, json',
+        'from huggingface_hub import snapshot_download',
+        'from huggingface_hub.utils import tqdm as hf_tqdm',
+        '',
+        'model_id = sys.argv[1]',
+        '',
+        '# Monkey-patch tqdm to emit progress JSON to stderr',
+        '_orig_tqdm = hf_tqdm.tqdm',
+        '',
+        'class ProgressTqdm(_orig_tqdm):',
+        '    def update(self, n=1):',
+        '        super().update(n)',
+        '        if self.total and self.total > 1024 * 1024:',  // Only report file downloads, not tiny metadata
+        '            pct = self.n / self.total * 100 if self.total else 0',
+        '            mb_done = self.n / 1024 / 1024',
+        '            mb_total = self.total / 1024 / 1024',
+        '            desc = self.desc or ""',
+        '            print(json.dumps({"pct": round(pct, 1), "done_mb": round(mb_done, 1), "total_mb": round(mb_total, 1), "file": desc}), file=sys.stderr, flush=True)',
+        '',
+        'hf_tqdm.tqdm = ProgressTqdm',
+        '',
+        'snapshot_download(model_id)',
+        'print("OK", flush=True)',
+      ].join('\n');
+
+      const spinner = clack.spinner();
+      spinner.start(`Downloading ${model.id} model weights...`);
+
       try {
-        execSync(
-          `${dockerPrefix}docker run --rm` +
-          ` -v "${modelsDir}:/root/.cache/huggingface"` +
-          ` ${fullImage}` +
-          ` python -c "from transformers import AutoModelForCausalLM, AutoTokenizer;` +
-          ` AutoTokenizer.from_pretrained('${model.id}');` +
-          ` AutoModelForCausalLM.from_pretrained('${model.id}')"`,
-          { stdio: 'inherit', timeout: 600_000 },
-        );
-        clack.log.success('Model weights downloaded.');
+        await new Promise<void>((resolve, reject) => {
+          const args = dockerPrefix
+            ? ['docker', 'run', '--rm', '-v', `${modelsDir}:/root/.cache/huggingface`, fullImage, 'python', '-c', downloadScript, model.id!]
+            : ['docker', 'run', '--rm', '-v', `${modelsDir}:/root/.cache/huggingface`, fullImage, 'python', '-c', downloadScript, model.id!];
+          const cmd = dockerPrefix ? 'sudo' : args.shift()!;
+          const proc = nodeSpawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+          let lastProgress = '';
+          const timer = setTimeout(() => {
+            proc.kill();
+            reject(new Error('Download timed out after 10 minutes'));
+          }, 600_000);
+
+          proc.stderr.on('data', (chunk: Buffer) => {
+            const lines = chunk.toString().split('\n').filter(Boolean);
+            for (const line of lines) {
+              try {
+                const p = JSON.parse(line) as { pct: number; done_mb: number; total_mb: number; file: string };
+                const fileName = p.file ? p.file.replace(/.*\//, '') : '';
+                lastProgress = `Downloading ${model.id} — ${fileName} ${p.pct}% (${p.done_mb}/${p.total_mb} MB)`;
+                spinner.message(lastProgress);
+              } catch {
+                // Non-JSON stderr output, ignore
+              }
+            }
+          });
+
+          let stdout = '';
+          proc.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString(); });
+
+          proc.on('close', (code) => {
+            clearTimeout(timer);
+            if (code === 0 && stdout.includes('OK')) {
+              resolve();
+            } else {
+              reject(new Error(`Download process exited with code ${code}`));
+            }
+          });
+
+          proc.on('error', (err) => {
+            clearTimeout(timer);
+            reject(err);
+          });
+        });
+        spinner.stop('Model weights downloaded.');
       } catch {
-        clack.log.warn('Model download failed. It will be downloaded on first startup (may take a few minutes).');
+        spinner.stop('Model download failed. It will be downloaded on first startup (may take a few minutes).', 1);
       }
     }
   }
