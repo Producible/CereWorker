@@ -172,7 +172,7 @@ export class CerebrumProvider {
                   type: 'tool-result',
                   toolCallId: m.toolResult?.callId ?? '',
                   toolName: m.metadata?.toolName as string ?? 'unknown',
-                  result: m.content,
+                  output: m.content,
                 },
               ],
             } as unknown as ModelMessage;

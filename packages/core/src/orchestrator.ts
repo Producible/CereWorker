@@ -649,6 +649,7 @@ export class Orchestrator extends TypedEventEmitter {
 
           this.conversations.appendMessage(convId, 'tool', result.output, {
             toolResult: result,
+            metadata: { toolName: toolCall.name },
           });
 
           return result;
