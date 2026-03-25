@@ -157,25 +157,13 @@ export class CerebrumProvider {
 
   private convertMessages(messages: Message[]): ModelMessage[] {
     return messages
-      .filter((m) => m.role !== 'system' && m.role !== 'cerebellum')
+      .filter((m) => m.role !== 'system' && m.role !== 'cerebellum' && m.role !== 'tool')
       .map((m): ModelMessage => {
         switch (m.role) {
           case 'user':
             return { role: 'user', content: m.content } as ModelMessage;
           case 'cerebrum':
             return { role: 'assistant', content: m.content } as ModelMessage;
-          case 'tool':
-            return {
-              role: 'tool',
-              content: [
-                {
-                  type: 'tool-result',
-                  toolCallId: m.toolResult?.callId ?? '',
-                  toolName: m.metadata?.toolName as string ?? 'unknown',
-                  output: m.content,
-                },
-              ],
-            } as unknown as ModelMessage;
           default:
             return { role: 'user', content: m.content } as ModelMessage;
         }
