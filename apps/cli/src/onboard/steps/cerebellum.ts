@@ -321,32 +321,30 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
       const modelsDir = join(homedir(), '.cereworker', 'models');
       mkdirSync(modelsDir, { recursive: true });
 
-      // Python script that prints structured progress as HuggingFace downloads files
-      const downloadScript = [
-        'import sys, json',
-        'from huggingface_hub import snapshot_download',
-        'from huggingface_hub.utils import tqdm as hf_tqdm',
-        '',
-        'model_id = sys.argv[1]',
-        '',
-        '# Monkey-patch tqdm to emit progress JSON to stderr',
-        '_orig_tqdm = hf_tqdm.tqdm',
-        '',
-        'class ProgressTqdm(_orig_tqdm):',
-        '    def update(self, n=1):',
-        '        super().update(n)',
-        '        if self.total and self.total > 1024 * 1024:',  // Only report file downloads, not tiny metadata
-        '            pct = self.n / self.total * 100 if self.total else 0',
-        '            mb_done = self.n / 1024 / 1024',
-        '            mb_total = self.total / 1024 / 1024',
-        '            desc = self.desc or ""',
-        '            print(json.dumps({"pct": round(pct, 1), "done_mb": round(mb_done, 1), "total_mb": round(mb_total, 1), "file": desc}), file=sys.stderr, flush=True)',
-        '',
-        'hf_tqdm.tqdm = ProgressTqdm',
-        '',
-        'snapshot_download(model_id)',
-        'print("OK", flush=True)',
-      ].join('\n');
+      // Python script that prints structured progress as HuggingFace downloads files.
+      // Uses huggingface_hub.snapshot_download with a patched tqdm that emits JSON to stderr.
+      const downloadScript = `
+import sys, json, os
+os.environ['HF_HUB_DISABLE_SYMLINKS_WARNING'] = '1'
+from huggingface_hub import snapshot_download
+try:
+    from huggingface_hub.utils import tqdm as hf_tqdm
+    _orig_tqdm = hf_tqdm.tqdm
+    class ProgressTqdm(_orig_tqdm):
+        def update(self, n=1):
+            super().update(n)
+            if self.total and self.total > 1048576:
+                pct = self.n / self.total * 100 if self.total else 0
+                mb_done = self.n / 1048576
+                mb_total = self.total / 1048576
+                desc = self.desc or ""
+                print(json.dumps({"pct": round(pct, 1), "done_mb": round(mb_done, 1), "total_mb": round(mb_total, 1), "file": desc}), file=sys.stderr, flush=True)
+    hf_tqdm.tqdm = ProgressTqdm
+except Exception:
+    pass
+snapshot_download(sys.argv[1])
+print("OK", flush=True)
+`.trim();
 
       const spinner = clack.spinner();
       spinner.start(`Downloading ${model.id} model weights...`);
@@ -359,22 +357,24 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
           const cmd = dockerPrefix ? 'sudo' : args.shift()!;
           const proc = nodeSpawn(cmd, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
-          let lastProgress = '';
           const timer = setTimeout(() => {
             proc.kill();
             reject(new Error('Download timed out after 10 minutes'));
           }, 600_000);
 
+          let stderrTail = '';
           proc.stderr.on('data', (chunk: Buffer) => {
-            const lines = chunk.toString().split('\n').filter(Boolean);
+            const text = chunk.toString();
+            // Keep last 2KB of stderr for error reporting
+            stderrTail = (stderrTail + text).slice(-2048);
+            const lines = text.split('\n').filter(Boolean);
             for (const line of lines) {
               try {
                 const p = JSON.parse(line) as { pct: number; done_mb: number; total_mb: number; file: string };
                 const fileName = p.file ? p.file.replace(/.*\//, '') : '';
-                lastProgress = `Downloading ${model.id} — ${fileName} ${p.pct}% (${p.done_mb}/${p.total_mb} MB)`;
-                spinner.message(lastProgress);
+                spinner.message(`Downloading ${model.id} — ${fileName} ${p.pct}% (${p.done_mb}/${p.total_mb} MB)`);
               } catch {
-                // Non-JSON stderr output, ignore
+                // Non-JSON stderr (tqdm bars, warnings) — ignore
               }
             }
           });
@@ -387,7 +387,7 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
             if (code === 0 && stdout.includes('OK')) {
               resolve();
             } else {
-              reject(new Error(`Download process exited with code ${code}`));
+              reject(new Error(`exit code ${code}${stderrTail ? '\n' + stderrTail.trim() : ''}`));
             }
           });
 
@@ -397,8 +397,10 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
           });
         });
         spinner.stop('Model weights downloaded.');
-      } catch {
-        spinner.stop('Model download failed. It will be downloaded on first startup (may take a few minutes).', 1);
+      } catch (err) {
+        spinner.stop('Model download failed. It will be downloaded on first startup.', 1);
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg) clack.log.warn(msg);
       }
     }
   }
