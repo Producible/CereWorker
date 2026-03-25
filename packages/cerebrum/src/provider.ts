@@ -155,11 +155,28 @@ export class CerebrumProvider {
     }
   }
 
+  /**
+   * Convert CereWorker messages to AI SDK v6 ModelMessage format.
+   *
+   * DB order:  [user, tool(A), tool(B), cerebrum(toolCalls:[A,B])]
+   * SDK order: [user, assistant(toolCalls:[A,B]), tool(A), tool(B)]
+   *
+   * Tool results are stored during streaming (before the cerebrum message),
+   * so we buffer them and emit after the matching cerebrum/assistant message.
+   */
   private convertMessages(messages: Message[]): ModelMessage[] {
+    // Index tool results by callId for fast lookup
+    const toolResultsByCallId = new Map<string, Message>();
+    for (const m of messages) {
+      if (m.role === 'tool' && m.toolResult) {
+        toolResultsByCallId.set(m.toolResult.callId, m);
+      }
+    }
+
     const result: ModelMessage[] = [];
 
     for (const m of messages) {
-      if (m.role === 'system' || m.role === 'cerebellum') continue;
+      if (m.role === 'system' || m.role === 'cerebellum' || m.role === 'tool') continue;
 
       if (m.role === 'user') {
         result.push({ role: 'user', content: m.content } as ModelMessage);
@@ -168,6 +185,7 @@ export class CerebrumProvider {
 
       if (m.role === 'cerebrum') {
         if (m.toolCalls?.length) {
+          // Build assistant message with tool call parts
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const content: any[] = [];
           if (m.content) {
@@ -182,52 +200,32 @@ export class CerebrumProvider {
             });
           }
           result.push({ role: 'assistant', content } as ModelMessage);
+
+          // Emit matching tool results immediately after the assistant message
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const toolResults: any[] = [];
+          for (const tc of m.toolCalls) {
+            const tr = toolResultsByCallId.get(tc.id);
+            if (tr?.toolResult) {
+              toolResults.push({
+                type: 'tool-result',
+                toolCallId: tr.toolResult.callId,
+                toolName: (tr.metadata?.toolName as string) ?? tc.name,
+                output: { type: 'text', value: tr.content },
+              });
+            }
+          }
+          if (toolResults.length > 0) {
+            result.push({ role: 'tool', content: toolResults } as unknown as ModelMessage);
+          }
         } else {
           result.push({ role: 'assistant', content: m.content } as ModelMessage);
         }
         continue;
       }
 
-      if (m.role === 'tool' && m.toolResult) {
-        result.push({
-          role: 'tool',
-          content: [{
-            type: 'tool-result',
-            toolCallId: m.toolResult.callId,
-            toolName: (m.metadata?.toolName as string) ?? 'unknown',
-            output: { type: 'text', value: m.content },
-          }],
-        } as unknown as ModelMessage);
-        continue;
-      }
-
       // Fallback: treat unknown roles as user
       result.push({ role: 'user', content: m.content } as ModelMessage);
-    }
-
-    return result;
-  }
-
-  /** Drop tool messages not preceded by an assistant message with matching tool calls. */
-  private sanitizeToolPairing(messages: ModelMessage[]): ModelMessage[] {
-    const result: ModelMessage[] = [];
-
-    for (const msg of messages) {
-      if (msg.role === 'tool') {
-        const prev = result[result.length - 1];
-        if (prev?.role === 'assistant' && Array.isArray(prev.content)) {
-          const hasToolCalls = (prev.content as Array<{ type: string }>).some(
-            (p) => p.type === 'tool-call',
-          );
-          if (hasToolCalls) {
-            result.push(msg);
-            continue;
-          }
-        }
-        // Drop orphaned tool messages
-        continue;
-      }
-      result.push(msg);
     }
 
     return result;
@@ -243,7 +241,7 @@ export class CerebrumProvider {
     const nonSystemMessages = messages.filter((m) => m.role !== 'system');
 
     const model = await this.getModel(options?.provider, options?.model);
-    const coreMessages = this.sanitizeToolPairing(this.convertMessages(nonSystemMessages));
+    const coreMessages = this.convertMessages(nonSystemMessages);
 
     const systemParts: string[] = [];
     if (options?.systemPrompt) systemParts.push(options.systemPrompt);
