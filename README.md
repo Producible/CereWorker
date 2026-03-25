@@ -345,7 +345,7 @@ git clone https://github.com/Producible/CereWorker.git
 
 ```bash
 # Find the installed package location
-EXT_DIR="$(node -e "console.log(require.resolve('@cereworker/browser/package.json').replace('/package.json',''))")/extension"
+EXT_DIR="$(node -e "const p=require.resolve('@cereworker/browser');console.log(p.substring(0,p.lastIndexOf('dist'))+'extension')")"
 echo "Extension located at: $EXT_DIR"
 ```
 
