@@ -1,6 +1,5 @@
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, cpSync } from 'node:fs';
-import { createRequire } from 'node:module';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -87,20 +86,6 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
       instanceStore.setConversationCount(existing.length);
     }
     needsDiscovery = true;
-  }
-
-  // Copy browser extension to ~/.cereworker/extension/ for easy access
-  const extensionDest = join(homedir(), '.cereworker', 'extension');
-  try {
-    const req = createRequire(import.meta.url);
-    const browserPkg = req.resolve('@cereworker/browser');
-    const extensionSrc = join(browserPkg.substring(0, browserPkg.lastIndexOf('dist')), 'extension');
-    if (existsSync(extensionSrc) && !existsSync(join(extensionDest, 'manifest.json'))) {
-      cpSync(extensionSrc, extensionDest, { recursive: true });
-      log.info('Copied browser extension to ~/.cereworker/extension/');
-    }
-  } catch {
-    // Non-critical — extension is optional
   }
 
   const orchestrator = new Orchestrator({
