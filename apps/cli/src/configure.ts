@@ -140,60 +140,48 @@ export async function runConfigureBrowser(): Promise<void> {
 }
 
 export async function runConfigureModel(): Promise<void> {
+  const { cerebrumStep } = await import('./onboard/steps/cerebrum.js');
+
   const raw = loadRawConfig();
-  const cerebrum = raw.cerebrum as { defaultProvider?: string; defaultModel?: string } | undefined;
-  const currentProvider = cerebrum?.defaultProvider ?? 'anthropic';
-  const currentModel = cerebrum?.defaultModel ?? 'claude-sonnet-4-6';
+  const cerebrum = raw.cerebrum as Record<string, unknown> | undefined;
+  clack.log.info(`Current: ${cerebrum?.defaultProvider ?? 'anthropic'} / ${cerebrum?.defaultModel ?? 'claude-sonnet-4-6'}`);
 
-  clack.log.info(`Current: ${currentProvider} / ${currentModel}`);
+  const result = await cerebrumStep();
 
-  const provider = guardCancel(
-    await clack.select({
-      message: 'LLM Provider',
-      options: PROVIDERS,
-      initialValue: currentProvider,
-    }),
-  ) as string;
+  // Write cerebrum settings from onboarding result into existing config
+  if (!raw.cerebrum) raw.cerebrum = {};
+  const cfg = raw.cerebrum as Record<string, unknown>;
+  cfg.defaultProvider = result.provider;
+  cfg.defaultModel = result.model;
 
-  let model: string;
-
-  if (provider === 'local') {
-    model = guardCancel(
-      await clack.text({
-        message: 'Model name',
-        initialValue: currentProvider === 'local' ? currentModel : 'llama3.3',
-        placeholder: 'e.g., llama3.3, qwen3, codellama, mistral',
-      }),
-    ) as string;
-  } else {
-    const models = PROVIDER_MODELS[provider] ?? [];
-    const selected = guardCancel(
-      await clack.select({
-        message: 'Model',
-        options: [
-          ...models,
-          { value: '__custom__', label: 'Other (enter model ID)' },
-        ],
-        initialValue: provider === currentProvider ? currentModel : undefined,
-      }),
-    ) as string;
-
-    if (selected === '__custom__') {
-      model = guardCancel(
-        await clack.text({
-          message: 'Enter model ID',
-          validate: (v) => (v.length > 0 ? undefined : 'Model ID is required'),
-        }),
-      ) as string;
+  // Handle API key
+  if (result.apiKey) {
+    if (!cfg.providers) cfg.providers = {};
+    const providers = cfg.providers as Record<string, Record<string, unknown>>;
+    if (!providers[result.provider]) providers[result.provider] = {};
+    if ('envRef' in result.apiKey) {
+      providers[result.provider].apiKey = `\${${result.apiKey.envRef}}`;
     } else {
-      model = selected;
+      providers[result.provider].apiKey = result.apiKey.plaintext;
     }
   }
 
-  if (!raw.cerebrum) raw.cerebrum = {};
-  (raw.cerebrum as Record<string, unknown>).defaultProvider = provider;
-  (raw.cerebrum as Record<string, unknown>).defaultModel = model;
+  // Handle auth method
+  if (result.auth) {
+    if (!cfg.providers) cfg.providers = {};
+    const providers = cfg.providers as Record<string, Record<string, unknown>>;
+    if (!providers[result.provider]) providers[result.provider] = {};
+    providers[result.provider].auth = result.auth;
+  }
+
+  // Handle local base URL
+  if (result.localBaseUrl) {
+    if (!cfg.providers) cfg.providers = {};
+    const providers = cfg.providers as Record<string, Record<string, unknown>>;
+    if (!providers[result.provider]) providers[result.provider] = {};
+    providers[result.provider].baseUrl = result.localBaseUrl;
+  }
 
   writeConfig(raw);
-  clack.outro(`Model set to ${provider} / ${model} in ${GLOBAL_CONFIG}`);
+  clack.outro(`Cerebrum set to ${result.provider} / ${result.model} in ${GLOBAL_CONFIG}`);
 }
