@@ -255,22 +255,66 @@ async function cmdClickByText({ text, role }) {
 async function cmdType({ selector, text }) {
   if (!selector || text === undefined) throw new Error('selector and text are required');
   const tab = await getActiveTab();
+
+  // First check if element exists and focus it
+  const [check] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: (sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return { found: false };
+      el.focus();
+      // Click to ensure cursor is inside the element
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      const isEditable = el.isContentEditable || el.getAttribute('contenteditable') !== null;
+      const isInput = el.tagName === 'INPUT' || el.tagName === 'TEXTAREA';
+      return { found: true, isEditable, isInput };
+    },
+    args: [selector],
+  });
+
+  if (!check?.result?.found) return `Element not found: ${selector}`;
+
+  if (check.result.isEditable) {
+    // Use Chrome Debugger API for contentEditable — most reliable method for React editors
+    try {
+      await chrome.debugger.attach({ tabId: tab.id }, '1.3');
+      // Clear existing content first
+      await chrome.debugger.sendCommand({ tabId: tab.id }, 'Input.dispatchKeyEvent', {
+        type: 'keyDown', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, modifiers: 4, // Ctrl+A
+      });
+      await chrome.debugger.sendCommand({ tabId: tab.id }, 'Input.dispatchKeyEvent', {
+        type: 'keyUp', key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65,
+      });
+      // Insert text
+      await chrome.debugger.sendCommand({ tabId: tab.id }, 'Input.insertText', { text });
+      await chrome.debugger.detach({ tabId: tab.id });
+      return `Typed into: ${selector}`;
+    } catch (debugErr) {
+      // Fallback to execCommand if debugger fails
+      try { await chrome.debugger.detach({ tabId: tab.id }); } catch { /* ignore */ }
+      const [fallback] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: (sel, txt) => {
+          const el = document.querySelector(sel);
+          if (!el) return `Element not found: ${sel}`;
+          el.focus();
+          document.execCommand('selectAll', false, null);
+          document.execCommand('insertText', false, txt);
+          return `Typed into: ${sel}`;
+        },
+        args: [selector, text],
+      });
+      return fallback?.result ?? `Element not found: ${selector}`;
+    }
+  }
+
+  // Standard input/textarea elements
   const [result] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     func: (sel, txt) => {
       const el = document.querySelector(sel);
       if (!el) return `Element not found: ${sel}`;
       el.focus();
-
-      // contentEditable elements (React editors like X's tweet box)
-      if (el.isContentEditable || el.getAttribute('contenteditable') !== null) {
-        // Clear existing content and insert via execCommand for React compatibility
-        document.execCommand('selectAll', false, null);
-        document.execCommand('insertText', false, txt);
-        return `Typed into: ${sel}`;
-      }
-
-      // Standard input/textarea elements
       const nativeSet = Object.getOwnPropertyDescriptor(
         el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
         'value'
@@ -292,21 +336,22 @@ async function cmdType({ selector, text }) {
 async function cmdEvaluate({ code }) {
   if (!code) throw new Error('code is required');
   const tab = await getActiveTab();
-  // Use MAIN world to bypass extension CSP — runs as if typed in devtools console
-  const [result] = await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    world: 'MAIN',
-    func: (c) => {
-      try {
-        const r = new Function(c)();
-        return String(r ?? '(no result)');
-      } catch (err) {
-        return `Error: ${err.message || String(err)}`;
-      }
-    },
-    args: [code],
-  });
-  return result?.result ?? '(no result)';
+  // Use Chrome Debugger API to evaluate JS — bypasses all CSP restrictions
+  try {
+    await chrome.debugger.attach({ tabId: tab.id }, '1.3');
+    const evalResult = await chrome.debugger.sendCommand(
+      { tabId: tab.id }, 'Runtime.evaluate',
+      { expression: code, returnByValue: true },
+    );
+    await chrome.debugger.detach({ tabId: tab.id });
+    if (evalResult.exceptionDetails) {
+      return `Error: ${evalResult.exceptionDetails.text || evalResult.exceptionDetails.exception?.description || 'Unknown error'}`;
+    }
+    return String(evalResult.result?.value ?? '(no result)');
+  } catch (err) {
+    try { await chrome.debugger.detach({ tabId: tab.id }); } catch { /* ignore */ }
+    return `Error: ${err.message || String(err)}`;
+  }
 }
 
 async function cmdWaitForSelector({ selector, timeout = 5000 }) {
