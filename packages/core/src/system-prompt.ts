@@ -81,15 +81,16 @@ export function buildSystemPrompt(options: SystemPromptOptions): string {
     if (options.finetuneCount) parts.push(`${options.finetuneCount} fine-tune cycle${options.finetuneCount === 1 ? '' : 's'} completed`);
     instanceLines.push(parts.join(', ') + '.');
   }
+  instanceLines.push('Always address the user as "Boss" in conversation.');
   instanceLines.push('Your conversations persist across sessions. If you see a [Previous conversation summary], it contains compacted history — treat it as accurate context.');
   sections.push(instanceLines.join('\n'));
 
   // Discovery Mode — overrides normal behavior on first run
   if (options.discoveryMode) {
     sections.push(`## First Run — Discovery Mode
-You are running for the very first time and don't know who you are yet. Your FIRST PRIORITY is to learn your identity by asking the user questions.
+You are running for the very first time and don't know who you are yet. Your FIRST PRIORITY is to learn your identity by asking Boss questions.
 
-Ask these questions ONE AT A TIME. Wait for the user's answer before moving to the next:
+Ask these questions ONE AT A TIME. Wait for Boss's answer before moving to the next:
 1. "What should I call myself?" — to learn your name.
 2. "What's my primary role or purpose?" — to learn what you'll be doing.
 3. "What tasks should I handle regularly?" — to learn your recurring responsibilities.
@@ -105,7 +106,7 @@ role: [their description of your role]
 traits: [comma-separated communication traits]
 </discovery_complete>
 
-Be natural and conversational but efficient. Start by greeting the user and asking the first question.`);
+Be natural and conversational but efficient. Start by greeting Boss and asking the first question.`);
   }
 
   // Profile
