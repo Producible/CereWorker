@@ -11,6 +11,7 @@ export interface BrowserBackend {
   getPageText(): Promise<string>;
   screenshot(path?: string): Promise<string>;
   click(selector: string): Promise<string>;
+  clickByText(text: string, role?: string): Promise<string>;
   type(selector: string, text: string): Promise<string>;
   evaluate(code: string): Promise<string>;
   waitForSelector(selector: string, timeoutMs?: number): Promise<string>;

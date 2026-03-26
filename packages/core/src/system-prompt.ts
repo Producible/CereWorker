@@ -27,9 +27,9 @@ const TOOL_CATEGORIES: Record<string, string[]> = {
   'Network': ['httpFetch', 'webSearch'],
   'Browser': [
     'browserNavigate', 'browserGetText', 'browserScreenshot', 'browserClick',
-    'browserType', 'browserEval', 'browserWait', 'browserGetUrl',
-    'browserListTabs', 'browserSwitchTab', 'browserNewTab', 'browserCloseTab',
-    'browserConnect', 'browserDisconnect',
+    'browserClickByText', 'browserType', 'browserEval', 'browserWait',
+    'browserGetUrl', 'browserListTabs', 'browserSwitchTab', 'browserNewTab',
+    'browserCloseTab', 'browserConnect', 'browserDisconnect',
   ],
   'Agents': ['spawn_agent', 'query_agents', 'cancel_agent'],
 };

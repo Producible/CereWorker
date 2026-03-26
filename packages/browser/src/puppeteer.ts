@@ -64,6 +64,23 @@ export class PuppeteerBackend implements BrowserBackend {
     }
   }
 
+  async clickByText(text: string, role?: string): Promise<string> {
+    const s = await this.getSession();
+    try {
+      const selector = role ? `[role="${role}"]` : 'button, [role="button"], a';
+      const clicked = await s.page.evaluate((sel: string, txt: string) => {
+        const els = Array.from(document.querySelectorAll(sel));
+        for (const el of els) {
+          if (el.textContent?.trim() === txt) { (el as HTMLElement).click(); return true; }
+        }
+        return false;
+      }, selector, text);
+      return clicked ? `Clicked element with text: "${text}"` : `No clickable element found with text: "${text}"`;
+    } catch {
+      return `No clickable element found with text: "${text}"`;
+    }
+  }
+
   async type(selector: string, text: string): Promise<string> {
     const s = await this.getSession();
     try {

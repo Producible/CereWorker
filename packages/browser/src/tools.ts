@@ -33,11 +33,19 @@ export function createBrowserTools(backend: BrowserBackend) {
       execute: wrap(async (args: { path?: string }) => backend.screenshot(args.path)),
     },
     browserClick: {
-      description: 'Click an element on the page by CSS selector',
+      description: 'Click an element on the page by CSS selector. Uses full mouse event sequence for React/SPA compatibility.',
       parameters: z.object({
         selector: z.string().describe('CSS selector of the element to click'),
       }),
       execute: wrap(async (args: { selector: string }) => backend.click(args.selector)),
+    },
+    browserClickByText: {
+      description: 'Click a button or link by its visible text. More reliable than CSS selectors for dynamic SPAs like X/Twitter. Optionally filter by ARIA role.',
+      parameters: z.object({
+        text: z.string().describe('Exact visible text of the element to click (e.g. "Next", "Post", "Log in")'),
+        role: z.string().optional().describe('Optional ARIA role filter (e.g. "button")'),
+      }),
+      execute: wrap(async (args: { text: string; role?: string }) => backend.clickByText(args.text, args.role)),
     },
     browserType: {
       description: 'Type text into an input element on the page',

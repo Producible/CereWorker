@@ -139,6 +139,7 @@ async function handleCommand(method, params) {
     case 'click': return cmdClick(params);
     case 'type': return cmdType(params);
     case 'evaluate': return cmdEvaluate(params);
+    case 'clickByText': return cmdClickByText(params);
     case 'waitForSelector': return cmdWaitForSelector(params);
     case 'getPageUrl': return cmdGetPageUrl();
     case 'listTabs': return cmdListTabs();
@@ -203,12 +204,52 @@ async function cmdClick({ selector }) {
     func: (sel) => {
       const el = document.querySelector(sel);
       if (!el) return `Element not found: ${sel}`;
-      el.click();
+      // Use full mouse event sequence for React/SPA compatibility
+      const rect = el.getBoundingClientRect();
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      const opts = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y };
+      el.dispatchEvent(new MouseEvent('pointerdown', opts));
+      el.dispatchEvent(new MouseEvent('mousedown', opts));
+      el.dispatchEvent(new MouseEvent('pointerup', opts));
+      el.dispatchEvent(new MouseEvent('mouseup', opts));
+      el.dispatchEvent(new MouseEvent('click', opts));
       return `Clicked: ${sel}`;
     },
     args: [selector],
   });
   return result?.result ?? `Element not found: ${selector}`;
+}
+
+async function cmdClickByText({ text, role }) {
+  if (!text) throw new Error('text is required');
+  const tab = await getActiveTab();
+  const [result] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: (txt, roleFilter) => {
+      // Find clickable elements containing the target text
+      const candidates = roleFilter
+        ? document.querySelectorAll(`[role="${roleFilter}"]`)
+        : document.querySelectorAll('button, [role="button"], a, [tabindex]');
+      for (const el of candidates) {
+        if (el.textContent.trim() === txt || el.innerText.trim() === txt) {
+          const rect = el.getBoundingClientRect();
+          const x = rect.left + rect.width / 2;
+          const y = rect.top + rect.height / 2;
+          const opts = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y };
+          el.dispatchEvent(new MouseEvent('pointerdown', opts));
+          el.dispatchEvent(new MouseEvent('mousedown', opts));
+          el.dispatchEvent(new MouseEvent('pointerup', opts));
+          el.dispatchEvent(new MouseEvent('mouseup', opts));
+          el.dispatchEvent(new MouseEvent('click', opts));
+          return `Clicked element with text: "${txt}"`;
+        }
+      }
+      return `No clickable element found with text: "${txt}"`;
+    },
+    args: [text, role || null],
+  });
+  return result?.result ?? `No clickable element found with text: "${text}"`;
 }
 
 async function cmdType({ selector, text }) {
@@ -220,8 +261,25 @@ async function cmdType({ selector, text }) {
       const el = document.querySelector(sel);
       if (!el) return `Element not found: ${sel}`;
       el.focus();
-      // Set value and dispatch input event
-      el.value = txt;
+
+      // contentEditable elements (React editors like X's tweet box)
+      if (el.isContentEditable || el.getAttribute('contenteditable') !== null) {
+        // Clear existing content and insert via execCommand for React compatibility
+        document.execCommand('selectAll', false, null);
+        document.execCommand('insertText', false, txt);
+        return `Typed into: ${sel}`;
+      }
+
+      // Standard input/textarea elements
+      const nativeSet = Object.getOwnPropertyDescriptor(
+        el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype,
+        'value'
+      )?.set;
+      if (nativeSet) {
+        nativeSet.call(el, txt);
+      } else {
+        el.value = txt;
+      }
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
       return `Typed into: ${sel}`;
@@ -234,11 +292,13 @@ async function cmdType({ selector, text }) {
 async function cmdEvaluate({ code }) {
   if (!code) throw new Error('code is required');
   const tab = await getActiveTab();
+  // Use MAIN world to bypass extension CSP — runs as if typed in devtools console
   const [result] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
+    world: 'MAIN',
     func: (c) => {
       try {
-        const r = eval(c);
+        const r = new Function(c)();
         return String(r ?? '(no result)');
       } catch (err) {
         return `Error: ${err.message || String(err)}`;

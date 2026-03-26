@@ -24,6 +24,10 @@ export class ExtensionBackend implements BrowserBackend {
     return this.relay.send('click', { selector });
   }
 
+  async clickByText(text: string, role?: string): Promise<string> {
+    return this.relay.send('clickByText', { text, role });
+  }
+
   async type(selector: string, text: string): Promise<string> {
     return this.relay.send('type', { selector, text });
   }
