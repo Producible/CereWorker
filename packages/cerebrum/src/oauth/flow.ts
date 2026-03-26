@@ -44,7 +44,9 @@ export async function runOAuthFlow(
   const codeChallenge = generateCodeChallenge(codeVerifier);
 
   // Use verifier as state (same pattern as OpenClaw)
-  const authUrl = buildAuthorizationUrl(config, codeChallenge, codeVerifier, clientId);
+  // OpenAI requires 'originator' param, 'audience' for token requests
+  const extraParams = provider === 'openai' ? { originator: 'cereworker' } : undefined;
+  const authUrl = buildAuthorizationUrl(config, codeChallenge, codeVerifier, clientId, extraParams);
 
   let code: string;
   if (isRemoteEnvironment()) {

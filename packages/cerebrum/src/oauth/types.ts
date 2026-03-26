@@ -29,7 +29,7 @@ export const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
     authorizationUrl: 'https://auth.openai.com/oauth/authorize',
     tokenUrl: 'https://auth.openai.com/oauth/token',
     clientId: 'app_EGHCdX7rkVuFnqAqtCp6L',
-    scopes: ['openid', 'profile', 'email', 'offline_access', 'api.responses.write'],
+    scopes: ['openid', 'profile', 'email', 'offline_access'],
     callbackPort: 1455,
     callbackPath: '/auth/callback',
   },

@@ -14,6 +14,7 @@ export function buildAuthorizationUrl(
   codeChallenge: string,
   state: string,
   clientIdOverride?: string,
+  extraParams?: Record<string, string>,
 ): string {
   const params = new URLSearchParams({
     response_type: 'code',
@@ -23,6 +24,7 @@ export function buildAuthorizationUrl(
     code_challenge_method: 'S256',
     scope: config.scopes.join(' '),
     state,
+    ...extraParams,
   });
   return `${config.authorizationUrl}?${params}`;
 }
