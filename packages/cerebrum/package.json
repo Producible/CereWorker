@@ -1,6 +1,6 @@
 {
   "name": "@cereworker/cerebrum",
-  "version": "26.325.31",
+  "version": "26.325.32",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -29,6 +29,9 @@
     "@cereworker/core": "workspace:*",
     "ai": "^6.0.134",
     "zod": "^3.24.0"
+  },
+  "optionalDependencies": {
+    "@mariozechner/pi-ai": "*"
   },
   "devDependencies": {
     "typescript": "^5.7.3"
