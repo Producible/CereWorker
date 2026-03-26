@@ -42,6 +42,16 @@ export function InputBar({ onSubmit, onCommand, disabled }: InputBarProps) {
   }, [input]);
 
   useInput((ch, key) => {
+    // Ctrl+C clears input (or exits if input is already empty)
+    if (key.ctrl && ch === 'c') {
+      if (input.length > 0) {
+        setInput('');
+      } else {
+        onCommand('quit', '');
+      }
+      return;
+    }
+
     if (key.return) {
       const trimmed = input.trim();
       if (!trimmed) return;

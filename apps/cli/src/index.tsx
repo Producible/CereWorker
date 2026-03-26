@@ -132,7 +132,7 @@ async function main() {
       const { configureLogger } = await import('@cereworker/core');
       configureLogger({ level: 'debug', stderr: true });
     }
-    render(<App config={config} resumeConversationId={resumeId} />);
+    render(<App config={config} resumeConversationId={resumeId} />, { exitOnCtrlC: false });
   } catch (err) {
     render(
       <Box flexDirection="column" padding={1}>
