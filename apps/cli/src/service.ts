@@ -327,41 +327,47 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
 
   // Wire channels to orchestrator
   channelManager.setHandler(async (msg) => {
-    // Check for slash commands from channels
-    const parsed = parseCommand(msg.text);
-    if (parsed) {
-      const cmdCtx: CommandContext = {
-        orchestrator, cerebrum, channelManager, skillRegistry, config,
-        service: { runTask, getTaskState, getEnabledTasks } as unknown as ServiceInstance,
-        currentModel: cerebrum.getDefaultModel(),
-        currentProvider: cerebrum.getDefaultProvider(),
-        autoMode: orchestrator.getAutoMode(),
-      };
-      const result = handleSlashCommand(parsed.command, parsed.args, cmdCtx);
-      if (result.type === 'message') return result.text;
-      if (result.type === 'async') return await result.promise;
-      if (result.type === 'tuiOnly') return `/${parsed.command} is only available in the TUI.`;
-      return `Unknown command: /${parsed.command}. Type /help for available commands.`;
+    try {
+      // Check for slash commands from channels
+      const parsed = parseCommand(msg.text);
+      if (parsed) {
+        const cmdCtx: CommandContext = {
+          orchestrator, cerebrum, channelManager, skillRegistry, config,
+          service: { runTask, getTaskState, getEnabledTasks } as unknown as ServiceInstance,
+          currentModel: cerebrum.getDefaultModel(),
+          currentProvider: cerebrum.getDefaultProvider(),
+          autoMode: orchestrator.getAutoMode(),
+        };
+        const result = handleSlashCommand(parsed.command, parsed.args, cmdCtx);
+        if (result.type === 'message') return result.text;
+        if (result.type === 'async') return await result.promise;
+        if (result.type === 'tuiOnly') return `/${parsed.command} is only available in the TUI.`;
+        return `Unknown command: /${parsed.command}. Type /help for available commands.`;
+      }
+
+      // Regular message — send to orchestrator
+      let proactiveReply = '';
+      const unsub = orchestrator.on('message:proactive', ({ content }) => {
+        proactiveReply += (proactiveReply ? '\n\n' : '') + content;
+      });
+
+      await orchestrator.sendMessage(msg.text);
+
+      unsub();
+
+      const messages = orchestrator.getMessages();
+      const lastMsg = messages[messages.length - 1];
+      const reply = lastMsg?.role === 'cerebrum' ? lastMsg.content : undefined;
+
+      if (proactiveReply) {
+        return reply ? `${reply}\n\n${proactiveReply}` : proactiveReply;
+      }
+      return reply;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      log.error('Channel handler error', { error: message });
+      return `Error: ${message}`;
     }
-
-    // Regular message — send to orchestrator
-    let proactiveReply = '';
-    const unsub = orchestrator.on('message:proactive', ({ content }) => {
-      proactiveReply += (proactiveReply ? '\n\n' : '') + content;
-    });
-
-    await orchestrator.sendMessage(msg.text);
-
-    unsub();
-
-    const messages = orchestrator.getMessages();
-    const lastMsg = messages[messages.length - 1];
-    const reply = lastMsg?.role === 'cerebrum' ? lastMsg.content : undefined;
-
-    if (proactiveReply) {
-      return reply ? `${reply}\n\n${proactiveReply}` : proactiveReply;
-    }
-    return reply;
   });
 
   // Wire discovery mode for first run
