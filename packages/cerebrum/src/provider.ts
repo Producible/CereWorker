@@ -130,9 +130,12 @@ export class CerebrumProvider {
         return anthropic(modelName);
       }
       case 'openai': {
+        // OAuth tokens work with ChatGPT backend, not the platform API
+        const baseURL = providerConfig?.baseUrl
+          ?? (providerConfig?.auth === 'oauth' ? 'https://chatgpt.com/backend-api' : undefined);
         const openai = createOpenAI({
           apiKey,
-          ...(providerConfig?.baseUrl ? { baseURL: providerConfig.baseUrl } : {}),
+          ...(baseURL ? { baseURL } : {}),
         });
         return openai(modelName);
       }
