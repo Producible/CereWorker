@@ -1,6 +1,6 @@
 {
   "name": "@cereworker/channels",
-  "version": "26.325.25",
+  "version": "26.325.26",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
