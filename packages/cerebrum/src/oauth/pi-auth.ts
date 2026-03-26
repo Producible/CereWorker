@@ -6,8 +6,7 @@
  *
  * Google: Falls back to @mariozechner/pi-ai for Gemini CLI OAuth.
  */
-import { OAUTH_PROVIDERS, type OAuthTokens } from './types.js';
-import { runOAuthFlow } from './flow.js';
+import type { OAuthTokens } from './types.js';
 
 type PiCreds = { access: string; refresh: string; expires: number; [k: string]: unknown };
 
@@ -42,10 +41,17 @@ export interface PiAuthCallbacks {
 }
 
 export async function loginOpenAI(callbacks: PiAuthCallbacks): Promise<OAuthTokens> {
-  // Use CereWorker's own PKCE flow with correct scopes (api.responses.write)
-  return runOAuthFlow('openai', {
-    onReady: (url) => callbacks.onAuth(url),
+  const { loginOpenAICodex } = await loadPiAuth();
+  const creds = await loginOpenAICodex({
+    onAuth: (info: { url: string; instructions?: string }) => callbacks.onAuth(info.url, info.instructions),
+    onPrompt: async (prompt: { message: string }) => {
+      if (!callbacks.onPrompt) throw new Error('Manual input required but no prompt handler');
+      return callbacks.onPrompt(prompt.message);
+    },
+    onProgress: callbacks.onProgress,
+    onManualCodeInput: callbacks.onManualCodeInput,
   });
+  return toTokens(creds);
 }
 
 export async function loginGoogle(callbacks: PiAuthCallbacks): Promise<OAuthTokens> {
@@ -59,27 +65,8 @@ export async function loginGoogle(callbacks: PiAuthCallbacks): Promise<OAuthToke
 }
 
 export async function refreshOpenAIToken(refreshToken: string): Promise<OAuthTokens> {
-  const config = OAUTH_PROVIDERS.openai;
-  const res = await fetch(config.tokenUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-      client_id: config.clientId,
-    }),
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Token refresh failed: ${res.status} ${body}`);
-  }
-  const data = (await res.json()) as Record<string, unknown>;
-  return {
-    accessToken: data.access_token as string,
-    refreshToken: (data.refresh_token as string) ?? refreshToken,
-    expiresAt: Date.now() + ((data.expires_in as number) ?? 3600) * 1000,
-    tokenType: (data.token_type as string) ?? 'bearer',
-  };
+  const { refreshOpenAICodexToken } = await loadPiAuth();
+  return toTokens(await refreshOpenAICodexToken(refreshToken));
 }
 
 export async function refreshGoogleToken(
