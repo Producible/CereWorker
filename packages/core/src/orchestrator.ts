@@ -758,7 +758,14 @@ export class Orchestrator extends TypedEventEmitter {
 
   async start(): Promise<void> {
     if (!this.activeConversationId) {
-      this.startConversation();
+      // Resume the most recent conversation, or create a new one
+      const convs = this.conversations.list();
+      if (convs.length > 0) {
+        this.resumeConversation(convs[0].id);
+        log.info('Auto-resumed last conversation', { id: convs[0].id });
+      } else {
+        this.startConversation();
+      }
     }
 
     // Start sub-agent monitoring loop if cerebellum + sub-agents are enabled
