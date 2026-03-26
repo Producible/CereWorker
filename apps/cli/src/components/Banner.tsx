@@ -5,7 +5,7 @@ interface BannerProps {
   version: string;
 }
 
-// "Cere" in cyan, "Worker" in magenta — standard figlet-style
+// "Cere" in red, "Worker" in orange
 const CERE = [
   '   ____              ',
   '  / ___|___ _ __ ___ ',
@@ -28,8 +28,8 @@ export function Banner({ version }: BannerProps) {
       <Box flexDirection="column">
         {CERE.map((line, i) => (
           <Text key={i}>
-            <Text color="cyan" bold>{line}</Text>
-            <Text color="magenta" bold>{WORKER[i]}</Text>
+            <Text color="red" bold>{line}</Text>
+            <Text color="#FF8C00" bold>{WORKER[i]}</Text>
           </Text>
         ))}
       </Box>
