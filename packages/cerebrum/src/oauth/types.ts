@@ -26,12 +26,12 @@ export interface OAuthTokens {
  */
 export const OAUTH_PROVIDERS: Record<string, OAuthProviderConfig> = {
   openai: {
-    authorizationUrl: 'https://auth0.openai.com/authorize',
-    tokenUrl: 'https://auth0.openai.com/oauth/token',
-    clientId: '', // Must be provided by user in config
-    scopes: ['openai.organization.read', 'openai.api'],
-    callbackPort: 18888,
-    callbackPath: '/callback',
+    authorizationUrl: 'https://auth.openai.com/oauth/authorize',
+    tokenUrl: 'https://auth.openai.com/oauth/token',
+    clientId: 'app_EGHCdX7rkVuFnqAqtCp6L',
+    scopes: ['openid', 'profile', 'email', 'offline_access', 'api.responses.write'],
+    callbackPort: 1455,
+    callbackPath: '/auth/callback',
   },
   google: {
     authorizationUrl: 'https://accounts.google.com/o/oauth2/v2/auth',

@@ -1,6 +1,6 @@
 {
   "name": "@cereworker/browser",
-  "version": "26.325.33",
+  "version": "26.325.34",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

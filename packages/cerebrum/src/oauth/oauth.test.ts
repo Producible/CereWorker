@@ -202,7 +202,7 @@ describe('OAUTH_PROVIDERS', () => {
     expect(OAUTH_PROVIDERS.openai).toBeDefined();
     expect(OAUTH_PROVIDERS.openai.authorizationUrl).toContain('openai.com');
     expect(OAUTH_PROVIDERS.openai.tokenUrl).toContain('openai.com');
-    expect(OAUTH_PROVIDERS.openai.callbackPort).toBe(18888);
+    expect(OAUTH_PROVIDERS.openai.callbackPort).toBe(1455);
   });
 
   it('has google configured with correct endpoints', () => {
