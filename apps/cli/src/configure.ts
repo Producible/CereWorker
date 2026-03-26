@@ -184,4 +184,5 @@ export async function runConfigureModel(): Promise<void> {
 
   writeConfig(raw);
   clack.outro(`Cerebrum set to ${result.provider} / ${result.model} in ${GLOBAL_CONFIG}`);
+  process.exit(0);
 }
