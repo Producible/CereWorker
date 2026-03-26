@@ -1,7 +1,9 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
 import type { CerebellumStatus } from '@cereworker/core';
 import type { CerebellumLoading } from '../hooks/useCerebellum.js';
+
+const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 interface StatusBarProps {
   provider: string;
@@ -24,6 +26,24 @@ interface StatusBarProps {
   cerebellumEnabled?: boolean;
 }
 
+function CerebellumLoadingText({ loading }: { loading?: CerebellumLoading | null }) {
+  const [frame, setFrame] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setFrame((f) => (f + 1) % SPINNER_FRAMES.length);
+    }, 80);
+    return () => clearInterval(timer);
+  }, []);
+
+  const spinner = SPINNER_FRAMES[frame];
+  const phase = loading?.phase || 'loading';
+  const attempt = loading?.attempt && loading?.maxAttempts
+    ? ` (${loading.attempt}/${loading.maxAttempts})`
+    : '';
+
+  return <Text color="yellow">{spinner} Cerebellum: {phase}{attempt}</Text>;
+}
+
 function CerebellumIndicator({
   status,
   loading,
@@ -43,7 +63,7 @@ function CerebellumIndicator({
   }
 
   if (enabled && !status) {
-    return <Text color="yellow">Cerebellum: {loading?.phase || 'loading...'}</Text>;
+    return <CerebellumLoadingText loading={loading} />;
   }
 
   return (

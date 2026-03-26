@@ -133,18 +133,11 @@ cereworker onboard
 ```
 
 The wizard walks you through:
-- **Worker profile** -- name, role, and personality traits for your agent
 - **LLM provider** -- Anthropic, OpenAI, Google, or local (Ollama/vLLM)
 - **Cerebellum model** -- choose from Qwen3, SmolLM2, Phi-4 Mini, or a custom checkpoint, with hardware-aware recommendations
 - **Fine-tuning** -- method (Auto/LoRA/QLoRA/Full) and schedule, with GPU/RAM detection
 - **Messaging channels** -- enable Slack, Discord, Telegram, Matrix, Feishu, or WeChat
 - **Config output** -- writes `~/.cereworker/config.yaml` with env var references for secrets
-
-To update your worker profile after onboarding:
-
-```bash
-cereworker configure profile
-```
 
 After onboarding, start the agent:
 
@@ -152,6 +145,8 @@ After onboarding, start the agent:
 cereworker              # interactive TUI
 cereworker serve        # headless service (for production/systemd)
 ```
+
+On **first run**, CereWorker discovers its identity through conversation — it asks your name for it, its role, recurring tasks, and communication style. The answers are saved to `~/.cereworker/instance.json` and seeded as training data for the Cerebellum's first fine-tune cycle. Each instance develops a unique identity through fine-tuning that persists across sessions.
 
 Or configure manually:
 
@@ -444,6 +439,7 @@ When a message arrives from Slack/Discord/Telegram/Matrix/Feishu/WeChat:
 | Context limits | Summarize and hope | Knowledge survives in model weights |
 | Sub-agents | Manual orchestration or none | Cerebellum-monitored parallel workers with isolated memory |
 | Multi-node | Custom gateway or none | Built-in WebSocket gateway with remote tool proxying |
+| Identity | Static config, swappable profiles | Learned through conversation, fine-tuned into weights |
 | Cost | Every request hits giant LLM | Routine decisions handled by local 0.6B model |
 
 ## Self-Improvement: Beyond Prompt Engineering
@@ -571,10 +567,12 @@ Config is loaded with cascading precedence:
 Full config example:
 
 ```yaml
-profile:
-  name: Cere
-  role: full-stack developer
-  traits: [concise, proactive]
+# profile is learned through discovery on first run
+# override here if needed:
+# profile:
+#   name: Cere
+#   role: full-stack developer
+#   traits: [concise, proactive]
 
 cerebrum:
   defaultProvider: anthropic

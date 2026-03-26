@@ -681,9 +681,14 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     const retryDelay = 5000;
     let lastError = '';
 
-    orchestrator.emit({ type: 'cerebellum:loading', phase: 'Connecting...', attempt: 0, maxAttempts: maxRetries });
+    orchestrator.emit({ type: 'cerebellum:loading', phase: 'Waiting for model (first run downloads weights)...', attempt: 0, maxAttempts: maxRetries });
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      orchestrator.emit({ type: 'cerebellum:loading', phase: 'Connecting...', attempt, maxAttempts: maxRetries });
+      const phase = attempt <= 3
+        ? 'Waiting for model (first run downloads weights)...'
+        : attempt <= 20
+          ? 'Downloading model weights...'
+          : 'Loading model into memory...';
+      orchestrator.emit({ type: 'cerebellum:loading', phase, attempt, maxAttempts: maxRetries });
       try {
         await client.connect();
       } catch (err) {
