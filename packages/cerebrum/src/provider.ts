@@ -131,11 +131,20 @@ export class CerebrumProvider {
       }
       case 'openai': {
         // OAuth tokens work with ChatGPT backend, not the platform API
+        const isOAuth = providerConfig?.auth === 'oauth';
         const baseURL = providerConfig?.baseUrl
-          ?? (providerConfig?.auth === 'oauth' ? 'https://chatgpt.com/backend-api' : undefined);
+          ?? (isOAuth ? 'https://chatgpt.com/backend-api' : undefined);
         const openai = createOpenAI({
           apiKey,
           ...(baseURL ? { baseURL } : {}),
+          ...(isOAuth ? {
+            fetch: (url: string | URL | Request, init?: RequestInit) => {
+              const headers = new Headers(init?.headers);
+              headers.set('originator', 'cereworker');
+              headers.set('User-Agent', 'cereworker');
+              return globalThis.fetch(url, { ...init, headers });
+            },
+          } : {}),
         });
         return openai(modelName);
       }
