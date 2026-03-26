@@ -102,10 +102,19 @@ async function main() {
   }
 
   if (subcommand === 'extension-dir') {
-    const { createRequire: cr } = await import('node:module');
-    const r = cr(import.meta.url);
-    const p = r.resolve('@cereworker/browser');
-    console.log(p.substring(0, p.lastIndexOf('dist')) + 'extension');
+    const { homedir: hd } = await import('node:os');
+    const { join: pj } = await import('node:path');
+    const { existsSync: ex } = await import('node:fs');
+    const local = pj(hd(), '.cereworker', 'extension');
+    if (ex(pj(local, 'manifest.json'))) {
+      console.log(local);
+    } else {
+      // Fallback to npm package location
+      const { createRequire: cr } = await import('node:module');
+      const r = cr(import.meta.url);
+      const p = r.resolve('@cereworker/browser');
+      console.log(p.substring(0, p.lastIndexOf('dist')) + 'extension');
+    }
     return;
   }
 
