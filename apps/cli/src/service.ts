@@ -326,10 +326,25 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
 
   // Wire channels to orchestrator
   channelManager.setHandler(async (msg) => {
+    // Capture any proactive messages emitted during this turn
+    let proactiveReply = '';
+    const unsub = orchestrator.on('message:proactive', ({ content }) => {
+      proactiveReply += (proactiveReply ? '\n\n' : '') + content;
+    });
+
     await orchestrator.sendMessage(msg.text);
+
+    unsub();
+
     const messages = orchestrator.getMessages();
     const lastMsg = messages[messages.length - 1];
-    return lastMsg?.role === 'cerebrum' ? lastMsg.content : undefined;
+    const reply = lastMsg?.role === 'cerebrum' ? lastMsg.content : undefined;
+
+    // Append proactive message (e.g. discovery confirmation) to the reply
+    if (proactiveReply) {
+      return reply ? `${reply}\n\n${proactiveReply}` : proactiveReply;
+    }
+    return reply;
   });
 
   // Wire discovery mode for first run

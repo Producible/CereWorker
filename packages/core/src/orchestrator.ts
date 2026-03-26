@@ -722,21 +722,27 @@ export class Orchestrator extends TypedEventEmitter {
           return result;
         },
         onFinish: (content, toolCalls) => {
-          const cerebrumMessage = this.conversations.appendMessage(
-            convId, 'cerebrum', content,
-            toolCalls?.length ? { toolCalls } : undefined,
-          );
-          this.emit({ type: 'message:cerebrum:end', message: cerebrumMessage });
+          let displayContent = content;
 
-          // Check for discovery completion
+          // Check for discovery completion — parse and strip the tag before storing
           if (this.discoveryMode && content.includes('<discovery_complete>')) {
             const parsed = this.parseDiscoveryCompletion(content);
+            // Strip the tag block from the displayed/stored content
+            displayContent = content
+              .replace(/<discovery_complete>[\s\S]*?<\/discovery_complete>/g, '')
+              .trim();
             if (parsed && this.onDiscoveryComplete) {
               this.discoveryMode = false;
               this.onDiscoveryComplete(parsed);
               log.info('Discovery completed', { name: parsed.name });
             }
           }
+
+          const cerebrumMessage = this.conversations.appendMessage(
+            convId, 'cerebrum', displayContent,
+            toolCalls?.length ? { toolCalls } : undefined,
+          );
+          this.emit({ type: 'message:cerebrum:end', message: cerebrumMessage });
         },
         onError: (error) => {
           log.error('Cerebrum stream error', { error: error.message });
