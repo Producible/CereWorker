@@ -11,6 +11,7 @@ import type { CereWorkerConfig } from '@cereworker/config';
 import { createChannelManager, type ChannelManager } from '@cereworker/channels';
 import { createBrowserTools, PuppeteerBackend, CdpBackend, BrowserRelay, ExtensionBackend } from '@cereworker/browser';
 import { loadSkills, filterEligibleSkills, SkillRegistry } from '@cereworker/skills';
+import { parseCommand, handleSlashCommand, type CommandContext } from './commands.js';
 import {
   HippocampusStore,
   HippocampusCurator,
@@ -326,7 +327,24 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
 
   // Wire channels to orchestrator
   channelManager.setHandler(async (msg) => {
-    // Capture any proactive messages emitted during this turn
+    // Check for slash commands from channels
+    const parsed = parseCommand(msg.text);
+    if (parsed) {
+      const cmdCtx: CommandContext = {
+        orchestrator, cerebrum, channelManager, skillRegistry, config,
+        service: { runTask, getTaskState, getEnabledTasks } as unknown as ServiceInstance,
+        currentModel: cerebrum.getDefaultModel(),
+        currentProvider: cerebrum.getDefaultProvider(),
+        autoMode: orchestrator.getAutoMode(),
+      };
+      const result = handleSlashCommand(parsed.command, parsed.args, cmdCtx);
+      if (result.type === 'message') return result.text;
+      if (result.type === 'async') return await result.promise;
+      if (result.type === 'tuiOnly') return `/${parsed.command} is only available in the TUI.`;
+      return `Unknown command: /${parsed.command}. Type /help for available commands.`;
+    }
+
+    // Regular message — send to orchestrator
     let proactiveReply = '';
     const unsub = orchestrator.on('message:proactive', ({ content }) => {
       proactiveReply += (proactiveReply ? '\n\n' : '') + content;
@@ -340,7 +358,6 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     const lastMsg = messages[messages.length - 1];
     const reply = lastMsg?.role === 'cerebrum' ? lastMsg.content : undefined;
 
-    // Append proactive message (e.g. discovery confirmation) to the reply
     if (proactiveReply) {
       return reply ? `${reply}\n\n${proactiveReply}` : proactiveReply;
     }

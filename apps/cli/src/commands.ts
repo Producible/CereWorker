@@ -1,0 +1,330 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import type { Orchestrator } from '@cereworker/core';
+import type { CerebrumProvider } from '@cereworker/cerebrum';
+import type { ChannelManager } from '@cereworker/channels';
+import type { SkillRegistry } from '@cereworker/skills';
+import type { CereWorkerConfig } from '@cereworker/config';
+import type { GatewayServer, GatewayNodeClient } from '@cereworker/gateway';
+import type { ServiceInstance } from './service.js';
+
+export interface CommandContext {
+  orchestrator: Orchestrator;
+  cerebrum: CerebrumProvider;
+  channelManager: ChannelManager;
+  skillRegistry: SkillRegistry;
+  config: CereWorkerConfig;
+  service: ServiceInstance;
+  gatewayServer?: GatewayServer | null;
+  gatewayClient?: GatewayNodeClient | null;
+  currentModel: string;
+  currentProvider: string;
+  autoMode: boolean;
+}
+
+export type CommandResult =
+  | { type: 'message'; text: string; sticky?: boolean }
+  | { type: 'tuiOnly' }
+  | { type: 'unknown' }
+  | { type: 'async'; promise: Promise<string> };
+
+export const SLASH_COMMANDS: Array<{ name: string; hint: string }> = [
+  { name: '/agents', hint: 'list sub-agents' },
+  { name: '/approve', hint: 'approve pairing code' },
+  { name: '/auth', hint: 'authenticate provider' },
+  { name: '/auto', hint: 'toggle auto mode' },
+  { name: '/channels', hint: 'list channels' },
+  { name: '/clear', hint: 'new conversation' },
+  { name: '/config', hint: 'show config' },
+  { name: '/conversations', hint: 'list conversations' },
+  { name: '/exit', hint: 'quit' },
+  { name: '/finetune', hint: 'fine-tune controls' },
+  { name: '/help', hint: 'show help' },
+  { name: '/memory', hint: 'show memory' },
+  { name: '/model', hint: 'switch model' },
+  { name: '/nodes', hint: 'gateway nodes' },
+  { name: '/pairing', hint: 'list pairings' },
+  { name: '/provider', hint: 'switch provider' },
+  { name: '/quit', hint: 'quit' },
+  { name: '/resume', hint: 'resume conversation' },
+  { name: '/skills', hint: 'list skills' },
+  { name: '/stop', hint: 'emergency stop' },
+  { name: '/task', hint: 'run task' },
+];
+
+/** Parse a raw message into command + args. Returns null if not a slash command. */
+export function parseCommand(text: string): { command: string; args: string } | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('/')) return null;
+  const spaceIdx = trimmed.indexOf(' ');
+  const command = spaceIdx === -1 ? trimmed.slice(1) : trimmed.slice(1, spaceIdx);
+  const args = spaceIdx === -1 ? '' : trimmed.slice(spaceIdx + 1);
+  return { command, args };
+}
+
+/**
+ * Handle a slash command. Returns a result that both TUI and channels can use.
+ * TUI-only commands return { type: 'tuiOnly' }.
+ */
+export function handleSlashCommand(command: string, args: string, ctx: CommandContext): CommandResult {
+  const { orchestrator, cerebrum, channelManager, skillRegistry, config, service } = ctx;
+
+  switch (command) {
+    // --- TUI-only commands ---
+    case 'quit':
+    case 'exit':
+    case 'clear':
+    case 'resume':
+    case 'approve':
+    case 'pairing':
+    case 'auth':
+      return { type: 'tuiOnly' };
+
+    // --- Shared commands ---
+    case 'help':
+      return {
+        type: 'message',
+        text: `Available commands:
+  /model [name]         Show or switch the current model
+  /provider [name]      Show or switch the current provider
+  /agents               Show sub-agent summary
+  /memory               Show MEMORY.md contents
+  /skills               List loaded skills
+  /config               Show current configuration
+  /conversations        List past conversations
+  /channels             Show channel status
+  /nodes                Show connected nodes
+  /auto [on|off]        Toggle auto mode
+  /finetune [sub]       Fine-tuning: start, status, config, history
+  /task [sub]           Recurring tasks: list, run <id>, history <id>
+  /stop                 Emergency stop
+  /clear                Start a new conversation (TUI only)
+  /resume <id>          Resume a conversation (TUI only)
+  /help                 Show this help
+  /quit                 Exit (TUI only)`,
+      };
+
+    case 'model':
+      if (args.trim()) {
+        cerebrum.setModel(args.trim());
+        return { type: 'message', text: `Model switched to: ${args.trim()}` };
+      }
+      return { type: 'message', text: `Current model: ${ctx.currentModel}` };
+
+    case 'provider':
+      if (args.trim()) {
+        cerebrum.setProvider(args.trim());
+        return { type: 'message', text: `Provider switched to: ${args.trim()}` };
+      }
+      return { type: 'message', text: `Current provider: ${ctx.currentProvider}` };
+
+    case 'auto': {
+      const arg = args.trim().toLowerCase();
+      if (arg === 'on') {
+        orchestrator.setAutoMode(true);
+        return { type: 'message', text: 'Auto mode ENABLED. Commands execute without approval.' };
+      } else if (arg === 'off') {
+        orchestrator.setAutoMode(false);
+        return { type: 'message', text: 'Auto mode DISABLED. Unknown commands require approval.' };
+      }
+      return { type: 'message', text: `Auto mode: ${ctx.autoMode ? 'ON' : 'OFF'}. Usage: /auto [on|off]` };
+    }
+
+    case 'channels': {
+      const connected = channelManager.listConnected();
+      const all = channelManager.list();
+      const info = all.map((ch) => `  ${ch.meta.emoji} ${ch.meta.name}: ${ch.isConnected() ? 'connected' : 'offline'}`).join('\n');
+      return { type: 'message', text: `Channels (${connected.length}/${all.length} connected):\n${info || '  (none registered)'}` };
+    }
+
+    case 'agents': {
+      const mgr = orchestrator.getSubAgentManager();
+      if (!mgr) return { type: 'message', text: 'Sub-agents are not enabled.' };
+      const summary = mgr.getSummary();
+      const agents = mgr.listAgents();
+      const lines = [`Agents: ${summary.total} total, ${summary.running} running, ${summary.completed} completed, ${summary.failed} failed`];
+      for (const a of agents.slice(0, 10)) {
+        const elapsed = Math.round((Date.now() - a.spawnedAt) / 1000);
+        lines.push(`  [${a.status}] ${a.label ?? a.id} - ${a.task.slice(0, 60)} (${elapsed}s)`);
+      }
+      return { type: 'message', text: lines.join('\n') };
+    }
+
+    case 'memory': {
+      const memPath = join(config.hippocampus.directory.replace('~', homedir()), 'MEMORY.md');
+      try {
+        if (existsSync(memPath)) {
+          const content = readFileSync(memPath, 'utf-8');
+          return { type: 'message', text: `--- MEMORY.md ---\n${content.slice(0, 2000)}` };
+        }
+        return { type: 'message', text: 'No MEMORY.md found.' };
+      } catch {
+        return { type: 'message', text: 'Failed to read MEMORY.md' };
+      }
+    }
+
+    case 'skills': {
+      const skills = skillRegistry.list();
+      if (skills.length === 0) return { type: 'message', text: 'No skills loaded.' };
+      const lines = skills.map((s) => {
+        const emoji = s.metadata?.cereworker?.emoji ?? '';
+        return `  ${emoji} ${s.name} - ${s.description}`;
+      });
+      return { type: 'message', text: `Loaded skills (${skills.length}):\n${lines.join('\n')}` };
+    }
+
+    case 'config': {
+      const lines = [
+        `Provider: ${ctx.currentProvider}`,
+        `Model: ${ctx.currentModel}`,
+        `Temperature: ${config.cerebrum.temperature}`,
+        `Max steps: ${config.cerebrum.maxSteps}`,
+        `Cerebellum: ${config.cerebellum.enabled ? 'enabled' : 'disabled'}`,
+        `Hippocampus: ${config.hippocampus.enabled ? config.hippocampus.directory : 'disabled'}`,
+        `Sub-agents: ${config.subAgents.enabled ? `max ${config.subAgents.maxConcurrent}` : 'disabled'}`,
+        `Logging: ${config.logging.level}${config.logging.file ? ` -> ${config.logging.file}` : ''}`,
+      ];
+      return { type: 'message', text: `Configuration:\n${lines.map((l) => `  ${l}`).join('\n')}` };
+    }
+
+    case 'conversations': {
+      const store = orchestrator.getConversationStore();
+      const convs = store.list().slice(0, 20);
+      if (convs.length === 0) return { type: 'message', text: 'No conversations found.' };
+      const activeId = orchestrator.getActiveConversationId();
+      const lines = convs.map((c) => {
+        const date = new Date(c.updatedAt).toLocaleString();
+        const preview = store.getPreview(c.id)?.slice(0, 50) ?? '(empty)';
+        const marker = c.id === activeId ? ' *' : '';
+        return `  ${c.id.slice(0, 8)}${marker} | ${date} | ${preview}`;
+      });
+      return { type: 'message', text: `Conversations (${convs.length}):\n${lines.join('\n')}`, sticky: true };
+    }
+
+    case 'nodes': {
+      const gwMode = config.gateway.mode;
+      if (gwMode === 'gateway' && ctx.gatewayServer) {
+        const nodes = ctx.gatewayServer.listNodes();
+        if (nodes.length === 0) return { type: 'message', text: 'No nodes connected.' };
+        const lines = nodes.map((n) => {
+          const elapsed = Math.round((Date.now() - n.connectedAt) / 1000);
+          return `  ${n.nodeId} (${n.status}, ${n.capabilities.length} tools, ${elapsed}s)`;
+        });
+        return { type: 'message', text: `Connected nodes (${nodes.length}):\n${lines.join('\n')}` };
+      } else if (gwMode === 'node' && ctx.gatewayClient) {
+        return { type: 'message', text: `Node mode: ${ctx.gatewayClient.isConnected() ? 'connected' : 'disconnected'} to ${config.gateway.gatewayUrl}` };
+      }
+      return { type: 'message', text: 'Gateway not active. Set gateway.mode in config.' };
+    }
+
+    case 'stop':
+      orchestrator.emergencyStop();
+      ctx.gatewayServer?.emergencyStopAll();
+      return { type: 'message', text: 'Emergency stop triggered. All operations aborted.' };
+
+    case 'finetune': {
+      const ftArgs = args.trim().split(/\s+/);
+      const ftSub = ftArgs[0] || '';
+
+      if (ftSub === 'start') {
+        return {
+          type: 'async',
+          promise: orchestrator.triggerFineTune()
+            .then(() => 'Fine-tuning started.')
+            .catch((err: Error) => `Fine-tune error: ${err.message}`),
+        };
+      } else if (ftSub === 'status' || ftSub === '') {
+        return {
+          type: 'async',
+          promise: orchestrator.getFineTuneStatus().then((st) => {
+            const lines = [
+              `Status: ${st.status}`,
+              st.jobId ? `Job: ${st.jobId}` : null,
+              st.status === 'running' ? `Progress: ${Math.round(st.progress * 100)}% (step ${st.currentStep}/${st.totalSteps})` : null,
+              st.currentLoss ? `Loss: ${st.currentLoss.toFixed(4)}` : null,
+              st.checkpointPath ? `Checkpoint: ${st.checkpointPath}` : null,
+              st.error ? `Error: ${st.error}` : null,
+            ].filter(Boolean);
+            return `Fine-Tuning Status:\n  ${lines.join('\n  ')}`;
+          }).catch((err: Error) => `Fine-tune status error: ${err.message}`),
+        };
+      } else if (ftSub === 'config') {
+        const configKey = ftArgs[1] || '';
+        const configVal = ftArgs[2] || '';
+        if (configKey === 'method' && configVal) {
+          const valid = ['auto', 'lora', 'qlora', 'full'];
+          if (valid.includes(configVal)) {
+            orchestrator.setFineTuneMethod(configVal);
+            return { type: 'message', text: `Fine-tune method set to: ${configVal}` };
+          }
+          return { type: 'message', text: `Invalid method. Valid: ${valid.join(', ')}` };
+        } else if (configKey === 'schedule' && configVal) {
+          const valid = ['auto', 'hourly', 'daily', 'weekly'];
+          if (valid.includes(configVal)) {
+            orchestrator.setFineTuneSchedule(configVal);
+            return { type: 'message', text: `Fine-tune schedule set to: ${configVal}` };
+          }
+          return { type: 'message', text: `Invalid schedule. Valid: ${valid.join(', ')}` };
+        }
+        return {
+          type: 'message',
+          text: `Fine-Tune Config:\n  Method: ${orchestrator.getFineTuneMethod()}\n  Schedule: ${orchestrator.getFineTuneSchedule()}\n\nUsage: /finetune config method|schedule <value>`,
+        };
+      } else if (ftSub === 'history') {
+        const history = orchestrator.getFineTuneHistory();
+        if (history.length === 0) return { type: 'message', text: 'No fine-tune history yet.' };
+        const lines = history.slice(-10).map((h) => {
+          const date = new Date(h.completedAt).toLocaleString();
+          return `  ${h.jobId} | ${h.status} | loss: ${h.loss.toFixed(4)} | ${date}`;
+        });
+        return { type: 'message', text: `Fine-Tune History (last ${lines.length}):\n${lines.join('\n')}`, sticky: true };
+      }
+      return {
+        type: 'message',
+        text: 'Usage: /finetune [start|status|config|history]',
+      };
+    }
+
+    case 'task': {
+      const taskArgs = args.trim().split(/\s+/);
+      const taskSub = taskArgs[0] || '';
+      const taskTarget = taskArgs[1] || '';
+
+      if (taskSub === 'run' && taskTarget) {
+        return {
+          type: 'async',
+          promise: service.runTask(taskTarget).then((result) =>
+            result.success ? `Task "${taskTarget}" completed.` : `Task "${taskTarget}" failed: ${result.error}`,
+          ),
+        };
+      } else if (taskSub === 'history' && taskTarget) {
+        const convId = orchestrator.getTaskConversation(taskTarget);
+        if (!convId) return { type: 'message', text: `No conversation history for task "${taskTarget}".` };
+        const messages = orchestrator.getMessages(convId);
+        if (messages.length === 0) return { type: 'message', text: `Task "${taskTarget}" has an empty conversation.` };
+        const lines = messages.slice(-10).map((m) => {
+          const prefix = m.role === 'user' ? '[GOAL]' : '[AGENT]';
+          const text = m.content.length > 200 ? m.content.slice(0, 200) + '...' : m.content;
+          return `  ${prefix} ${text}`;
+        });
+        return { type: 'message', text: `Task "${taskTarget}" — last ${lines.length} messages:\n${lines.join('\n')}`, sticky: true };
+      } else if (taskSub === '' || taskSub === 'list') {
+        const tasks = service.getEnabledTasks();
+        if (tasks.length === 0) return { type: 'message', text: 'No recurring tasks configured.' };
+        const state = service.getTaskState();
+        const lines = tasks.map((t) => {
+          const s = state[t.id];
+          const running = orchestrator.isTaskRunning(t.id) ? ' [RUNNING]' : '';
+          const lastRun = s?.lastRunAt ? ` (last: ${new Date(s.lastRunAt).toLocaleString()}, runs: ${s.runCount ?? 0})` : ' (never run)';
+          return `  ${t.id} (${t.schedule})${running}${lastRun}\n    ${t.goal.split('\n')[0]}`;
+        });
+        return { type: 'message', text: `Recurring Tasks:\n${lines.join('\n')}`, sticky: true };
+      }
+      return { type: 'message', text: 'Usage: /task [list|run|history]\n  /task run <id>     Manually trigger a task\n  /task history <id> Show recent messages' };
+    }
+
+    default:
+      return { type: 'unknown' };
+  }
+}
