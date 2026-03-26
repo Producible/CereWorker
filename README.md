@@ -651,7 +651,7 @@ pnpm dev -- serve     # run headless service in dev mode
 
 ## Acknowledgments
 
-CereWorker is built on the shoulders of [OpenClaw](https://github.com/openclaw/openclaw), which pioneered a tangible, open-source form of what AI agents can be -- multi-platform, skill-driven, and genuinely useful in daily work. Its architecture for channels, skills, and autonomous task execution provided the foundation that CereWorker extends with the Cerebellum/Cerebrum dual-LLM approach. Without OpenClaw demonstrating that a personal AI agent could be real and practical, CereWorker would not exist.
+CereWorker is built on the inspiration from [OpenClaw](https://github.com/openclaw/openclaw), which pioneered a tangible, open-source form of what AI agents can be -- multi-platform, skill-driven, and genuinely useful in daily work. Its architecture for channels, skills, and autonomous task execution provided the foundation that CereWorker extends with the Cerebellum/Cerebrum dual-LLM approach. Without OpenClaw demonstrating that a personal AI agent could be real and practical, CereWorker would not exist.
 
 ## License
 
