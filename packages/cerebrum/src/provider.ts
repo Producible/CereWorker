@@ -185,37 +185,44 @@ export class CerebrumProvider {
 
       if (m.role === 'cerebrum') {
         if (m.toolCalls?.length) {
-          // Build assistant message with tool call parts
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const content: any[] = [];
-          if (m.content) {
-            content.push({ type: 'text', text: m.content });
-          }
-          for (const tc of m.toolCalls) {
-            content.push({
-              type: 'tool-call',
-              toolCallId: tc.id,
-              toolName: tc.name,
-              input: tc.args,
-            });
-          }
-          result.push({ role: 'assistant', content } as ModelMessage);
+          // Check if ALL tool calls have matching results — if not, drop the
+          // tool calls to avoid AI SDK MissingToolResultsError on resume
+          const allHaveResults = m.toolCalls.every((tc) => toolResultsByCallId.has(tc.id));
 
-          // Emit matching tool results immediately after the assistant message
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const toolResults: any[] = [];
-          for (const tc of m.toolCalls) {
-            const tr = toolResultsByCallId.get(tc.id);
-            if (tr?.toolResult) {
+          if (!allHaveResults) {
+            // Orphaned tool calls — emit as plain text assistant message
+            if (m.content) {
+              result.push({ role: 'assistant', content: m.content } as ModelMessage);
+            }
+          } else {
+            // Build assistant message with tool call parts
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const content: any[] = [];
+            if (m.content) {
+              content.push({ type: 'text', text: m.content });
+            }
+            for (const tc of m.toolCalls) {
+              content.push({
+                type: 'tool-call',
+                toolCallId: tc.id,
+                toolName: tc.name,
+                input: tc.args,
+              });
+            }
+            result.push({ role: 'assistant', content } as ModelMessage);
+
+            // Emit matching tool results immediately after
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const toolResults: any[] = [];
+            for (const tc of m.toolCalls) {
+              const tr = toolResultsByCallId.get(tc.id)!;
               toolResults.push({
                 type: 'tool-result',
-                toolCallId: tr.toolResult.callId,
+                toolCallId: tr.toolResult!.callId,
                 toolName: (tr.metadata?.toolName as string) ?? tc.name,
                 output: { type: 'text', value: tr.content },
               });
             }
-          }
-          if (toolResults.length > 0) {
             result.push({ role: 'tool', content: toolResults } as unknown as ModelMessage);
           }
         } else {
