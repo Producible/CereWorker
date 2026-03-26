@@ -45,6 +45,24 @@ export function createTelegramChannel(config: TelegramChannelConfig): ChannelPlu
         }
       });
 
+      // Register slash commands with Telegram for autocomplete
+      await bot.telegram.setMyCommands([
+        { command: 'help', description: 'Show help' },
+        { command: 'model', description: 'Show or switch model' },
+        { command: 'provider', description: 'Show or switch provider' },
+        { command: 'config', description: 'Show config' },
+        { command: 'auto', description: 'Toggle auto mode' },
+        { command: 'memory', description: 'Show memory' },
+        { command: 'skills', description: 'List skills' },
+        { command: 'agents', description: 'List sub-agents' },
+        { command: 'channels', description: 'List channels' },
+        { command: 'nodes', description: 'Gateway nodes' },
+        { command: 'finetune', description: 'Fine-tune controls' },
+        { command: 'task', description: 'Run or list tasks' },
+        { command: 'conversations', description: 'List conversations' },
+        { command: 'stop', description: 'Emergency stop' },
+      ]).catch(() => { /* non-critical */ });
+
       // Use polling (simpler than webhooks for dev)
       await bot.launch();
       connected = true;

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 import { SLASH_COMMANDS } from '../commands.js';
 
@@ -10,6 +10,8 @@ interface InputBarProps {
 
 export function InputBar({ onSubmit, onCommand, disabled }: InputBarProps) {
   const [input, setInput] = useState('');
+  const ctrlCCount = useRef(0);
+  const ctrlCTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const { suggestion, hint, allMatches } = useMemo(() => {
     if (!input.startsWith('/')) return { suggestion: '', hint: '', allMatches: [] };
@@ -42,11 +44,17 @@ export function InputBar({ onSubmit, onCommand, disabled }: InputBarProps) {
   }, [input]);
 
   useInput((ch, key) => {
-    // Ctrl+C clears input (or exits if input is already empty)
+    // Ctrl+C: clears input first, 3 rapid presses on empty input exits
     if (key.ctrl && ch === 'c') {
       if (input.length > 0) {
         setInput('');
-      } else {
+        ctrlCCount.current = 0;
+        return;
+      }
+      ctrlCCount.current++;
+      if (ctrlCTimer.current) clearTimeout(ctrlCTimer.current);
+      ctrlCTimer.current = setTimeout(() => { ctrlCCount.current = 0; }, 1500);
+      if (ctrlCCount.current >= 3) {
         onCommand('quit', '');
       }
       return;
