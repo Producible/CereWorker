@@ -1,6 +1,6 @@
 {
   "name": "@cereworker/hippocampus",
-  "version": "26.325.24",
+  "version": "26.325.25",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
