@@ -1,0 +1,51 @@
+name: Feature Request
+description: Suggest a new feature or improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea for CereWorker? We'd love to hear it.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What would you like?
+      description: Describe the feature or improvement
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Why is this needed? What's the current pain point?
+    validations:
+      required: false
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Area
+      options:
+        - TUI (terminal interface)
+        - Cerebrum (LLM provider)
+        - Cerebellum (small model / Docker)
+        - Browser automation
+        - Channels (Telegram/Slack/Discord/etc.)
+        - Gateway (multi-node)
+        - Skills
+        - Hippocampus (memory)
+        - Configuration
+        - New integration
+        - Other
+    validations:
+      required: false
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Have you tried any workarounds?
+    validations:
+      required: false

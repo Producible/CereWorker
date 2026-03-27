@@ -1,0 +1,96 @@
+name: Bug Report
+description: Report a bug or unexpected behavior
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug! Please fill out the details below.
+
+  - type: input
+    id: version
+    attributes:
+      label: CereWorker Version
+      description: Run `cereworker -v` to get the version
+      placeholder: "26.327.x"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - TUI (terminal interface)
+        - Cerebrum (LLM provider)
+        - Cerebellum (small model / Docker)
+        - Browser automation
+        - Channels (Telegram/Slack/Discord/etc.)
+        - Gateway (multi-node)
+        - Skills
+        - Hippocampus (memory)
+        - Onboarding / Configuration
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug clearly
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: How can we reproduce this?
+      placeholder: |
+        1. Run `cereworker`
+        2. Type ...
+        3. See error
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error output / logs
+      description: Paste any error messages or stack traces
+      render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: os
+    attributes:
+      label: OS / Platform
+      placeholder: "Ubuntu 24.04 / macOS 15 / Windows 11"
+    validations:
+      required: false
+
+  - type: input
+    id: node
+    attributes:
+      label: Node.js version
+      placeholder: "v22.22.1"
+    validations:
+      required: false
+
+  - type: input
+    id: provider
+    attributes:
+      label: LLM Provider / Model
+      placeholder: "openai-codex / gpt-5.2-codex"
+    validations:
+      required: false
