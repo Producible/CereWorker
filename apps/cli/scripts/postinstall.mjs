@@ -1,11 +1,16 @@
 #!/usr/bin/env node
 // Post-install: copy browser extension + pull Cerebellum Docker image
+// Uses stderr for output — npm suppresses stdout for global installs
 
 import { existsSync, cpSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
 import { execSync } from 'node:child_process';
+
+function log(msg) {
+  process.stderr.write(`${msg}\n`);
+}
 
 // --- 1. Copy browser extension to ~/.cereworker/extension/ ---
 
@@ -19,8 +24,7 @@ try {
   if (existsSync(extensionSrc)) {
     mkdirSync(dest, { recursive: true });
     cpSync(extensionSrc, dest, { recursive: true });
-    console.log(`CereWorker: Browser extension copied to ${dest}`);
-    console.log('           Load it in Chrome: chrome://extensions → Load unpacked → select that folder');
+    log(`CereWorker: Browser extension installed to ${dest}`);
   }
 } catch {
   // Non-critical — don't fail the install
@@ -29,20 +33,19 @@ try {
 // --- 2. Pull latest Cerebellum Docker image ---
 
 // npm postinstall may have a restricted PATH — check common locations
-let dockerBin = 'docker';
+let dockerBin = '';
 try {
   execSync('docker --version', { stdio: 'pipe', timeout: 5_000 });
+  dockerBin = 'docker';
 } catch {
-  const candidates = ['/usr/bin/docker', '/usr/local/bin/docker', '/snap/bin/docker'];
-  dockerBin = '';
-  for (const c of candidates) {
+  for (const c of ['/usr/bin/docker', '/usr/local/bin/docker', '/snap/bin/docker']) {
     if (existsSync(c)) { dockerBin = c; break; }
   }
-  if (!dockerBin) {
-    console.log('CereWorker: Docker not found — skipping Cerebellum image pull.');
-    console.log('           Install Docker and run "cereworker images upgrade" to pull the image later.');
-    process.exit(0);
-  }
+}
+
+if (!dockerBin) {
+  log('CereWorker: Docker not found — Cerebellum image will be pulled on first run.');
+  process.exit(0);
 }
 
 let dockerCmd = dockerBin;
@@ -50,22 +53,21 @@ let dockerCmd = dockerBin;
 try {
   execSync(`${dockerBin} info`, { stdio: 'pipe', timeout: 10_000 });
 } catch {
-  // Docker not available directly — try with sudo
   try {
     execSync(`sudo -n ${dockerBin} info`, { stdio: 'pipe', timeout: 10_000 });
     dockerCmd = `sudo ${dockerBin}`;
   } catch {
-    console.log('CereWorker: Docker permission denied — skipping Cerebellum image pull.');
-    console.log('           Run "cereworker images upgrade" (with sudo or after adding user to docker group).');
+    log('CereWorker: Docker requires sudo — Cerebellum image will be pulled on first run.');
+    log('           Or run: cereworker images upgrade');
     process.exit(0);
   }
 }
 
 const image = 'cereworker/cerebellum:latest';
-console.log(`CereWorker: Pulling ${image} (via ${dockerCmd})...`);
+log(`CereWorker: Pulling ${image}...`);
 try {
   execSync(`${dockerCmd} pull ${image}`, { stdio: 'inherit', timeout: 3_600_000 });
-  console.log(`CereWorker: Cerebellum image updated.`);
+  log('CereWorker: Cerebellum image updated.');
 } catch {
-  console.log(`CereWorker: Could not pull ${image} (non-fatal). Run "cereworker images upgrade" to retry.`);
+  log(`CereWorker: Could not pull ${image}. Run "cereworker images upgrade" to retry.`);
 }

@@ -1,4 +1,4 @@
-import { execFileSync, execSync } from 'node:child_process';
+import { execFileSync, execSync, spawn } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -620,12 +620,28 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     const image = config.cerebellum.docker.image;
     try {
       const exists = execSync(`${dockerPrefix}docker images -q ${image}`, { stdio: 'pipe' }).toString().trim();
-      if (exists) return true;
+      if (exists) {
+        // Image exists — try background pull for updates (non-blocking)
+        try {
+          const pullCmd = dockerPrefix ? 'sudo' : 'docker';
+          const pullArgs = dockerPrefix ? ['docker', 'pull', image] : ['pull', image];
+          const child = spawn(pullCmd, pullArgs, { stdio: 'ignore', detached: true });
+          child.unref();
+          child.on('exit', (code) => {
+            if (code === 0) {
+              log.info('Background pull completed — new Cerebellum image available. Restart to use it.');
+            }
+          });
+        } catch {
+          // Background pull setup failed — non-critical
+        }
+        return true;
+      }
     } catch {
       return false;
     }
 
-    // Try pulling from Docker Hub
+    // Image missing — pull synchronously
     try {
       log.info(`Pulling Cerebellum image ${image} from Docker Hub...`);
       execSync(`${dockerPrefix}docker pull ${image}`, { stdio: 'pipe', timeout: 3_600_000 });
