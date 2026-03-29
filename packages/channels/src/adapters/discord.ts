@@ -54,12 +54,17 @@ export function createDiscordChannel(config: DiscordChannelConfig): ChannelPlugi
 
     try {
       const rest = new REST({ version: '10' }).setToken(config.token);
-      const commands = config.commands.map((cmd) =>
-        new SlashCommandBuilder()
+      const commands = config.commands.map((cmd) => {
+        const builder = new SlashCommandBuilder()
           .setName(cmd.name)
-          .setDescription(cmd.description)
-          .toJSON(),
-      );
+          .setDescription(cmd.description);
+        if (cmd.hasArgs) {
+          builder.addStringOption((opt) =>
+            opt.setName('args').setDescription('Arguments').setRequired(false),
+          );
+        }
+        return builder.toJSON();
+      });
 
       await rest.put(
         Routes.applicationCommands(config.applicationId),
@@ -133,24 +138,46 @@ export function createDiscordChannel(config: DiscordChannelConfig): ChannelPlugi
           return;
         }
 
-        // Convert to the same format as a text message: /commandname
-        const text = `/${cmd.commandName}`;
+        // Enforce same channel routing as text messages
+        const isDM = !cmd.inGuild();
+        if (!isDM && config.channelIds.length > 0) {
+          const routeIds = [cmd.channelId ?? ''];
+          if (!routeIds.some((id) => config.channelIds.includes(id))) {
+            await cmd.reply({ content: 'Not available in this channel.', ephemeral: true });
+            return;
+          }
+        }
+
+        // Read arguments for commands that accept them
+        const args = cmd.options.getString('args') ?? '';
+        const text = args ? `/${cmd.commandName} ${args}` : `/${cmd.commandName}`;
+
+        // Match session IDs with text message logic
+        const isThread = cmd.channel?.isThread?.() ?? false;
+        const sessionId = isDM
+          ? `dm:${cmd.channelId}`
+          : isThread
+            ? `thread:${cmd.channelId}`
+            : `channel:${cmd.channelId}`;
+
         const inbound: InboundMessage = {
           channelId: 'discord',
           senderId: cmd.user.id,
           senderName: cmd.user.username,
           text,
-          sessionId: cmd.channelId ? `channel:${cmd.channelId}` : `dm:${cmd.user.id}`,
+          sessionId,
+          threadId: isThread ? cmd.channelId ?? undefined : undefined,
           timestamp: cmd.createdTimestamp,
         };
 
-        await cmd.deferReply();
+        // All slash command replies are ephemeral (only visible to invoking user)
+        await cmd.deferReply({ ephemeral: true });
         const response = await handler(inbound);
         if (response) {
           const chunks = chunkMarkdown(response, limit);
           await cmd.editReply(chunks[0]);
           for (let i = 1; i < chunks.length; i++) {
-            await cmd.followUp(chunks[i]);
+            await cmd.followUp({ content: chunks[i], ephemeral: true });
           }
         } else {
           await cmd.editReply('Done.');

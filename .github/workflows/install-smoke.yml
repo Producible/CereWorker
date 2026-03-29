@@ -1,0 +1,46 @@
+name: Install Smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_spec:
+        description: npm package spec to install
+        required: false
+        default: '@cereworker/cli@latest'
+  schedule:
+    - cron: '0 10 * * *'
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  install-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CEREWORKER_PACKAGE_SPEC: ${{ inputs.package_spec || '@cereworker/cli@latest' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Run install smoke
+        run: bash scripts/e2e/install-smoke.sh
+
+  docker-image-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Pull Cerebellum image
+        run: docker pull cereworker/cerebellum:latest
+
+      - name: Validate image runtime dependencies
+        run: |
+          docker run --rm --entrypoint python cereworker/cerebellum:latest -c \
+            "import grpc, transformers, torch; print('cerebellum-image-ok')"

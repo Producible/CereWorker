@@ -49,6 +49,7 @@ export type ChannelId = 'slack' | 'discord' | 'telegram' | 'matrix' | 'feishu' |
 export interface CommandDef {
   name: string;
   description: string;
+  hasArgs?: boolean;
 }
 
 export interface ChannelConfig {

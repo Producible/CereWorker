@@ -54,10 +54,15 @@ export const SLASH_COMMANDS: Array<{ name: string; hint: string }> = [
   { name: '/tasks', hint: 'cerebellum heartbeat tasks' },
 ];
 
+const COMMANDS_WITH_ARGS = new Set(['model', 'provider', 'auto', 'agents', 'finetune', 'task']);
+
 /** Commands available on IM channels (excludes TUI-only commands). */
-export const CHANNEL_COMMANDS: Array<{ name: string; description: string }> = SLASH_COMMANDS
+export const CHANNEL_COMMANDS: Array<{ name: string; description: string; hasArgs?: boolean }> = SLASH_COMMANDS
   .filter((c) => !['clear', 'exit', 'quit', 'resume', 'approve', 'pairing', 'auth'].includes(c.name.slice(1)))
-  .map((c) => ({ name: c.name.slice(1), description: c.hint }));
+  .map((c) => {
+    const name = c.name.slice(1);
+    return { name, description: c.hint, ...(COMMANDS_WITH_ARGS.has(name) ? { hasArgs: true } : {}) };
+  });
 
 /** Parse a raw message into command + args. Returns null if not a slash command. */
 export function parseCommand(text: string): { command: string; args: string } | null {

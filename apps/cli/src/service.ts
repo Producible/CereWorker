@@ -1,4 +1,4 @@
-import { execFileSync, execSync, spawn } from 'node:child_process';
+import { execFileSync, execSync, spawn, type SpawnOptions, type ChildProcess } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -70,7 +70,30 @@ export interface ServiceInstance {
   shutdown(): Promise<void>;
 }
 
-export function createService(config: CereWorkerConfig): ServiceInstance {
+export interface ServiceDeps {
+  createCerebrum?: (
+    config: ConstructorParameters<typeof CerebrumProvider>[0],
+    options: ConstructorParameters<typeof CerebrumProvider>[1],
+  ) => CerebrumProvider;
+  createChannelManager?: typeof createChannelManager;
+  createCerebellumClient?: (address: string) => CerebellumClient;
+  execSync?: typeof execSync;
+  execFileSync?: typeof execFileSync;
+  spawn?: (command: string, args?: readonly string[], options?: SpawnOptions) => ChildProcess;
+  homeDir?: () => string;
+}
+
+export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}): ServiceInstance {
+  const execSyncImpl = deps.execSync ?? execSync;
+  const execFileSyncImpl = deps.execFileSync ?? execFileSync;
+  const spawnImpl = deps.spawn ?? spawn;
+  const homeDir = deps.homeDir ?? homedir;
+  const createCerebrumImpl = deps.createCerebrum
+    ?? ((providerConfig, options) => new CerebrumProvider(providerConfig, options));
+  const createChannelManagerImpl = deps.createChannelManager ?? createChannelManager;
+  const createCerebellumClientImpl = deps.createCerebellumClient
+    ?? ((address: string) => new CerebellumClient(address));
+
   // Create persistent conversation store
   const conversationStore = new ConversationStore();
 
@@ -120,7 +143,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     temperature: config.cerebrum.temperature,
   };
 
-  const cerebrum = new CerebrumProvider(cerebrumConfig, {
+  const cerebrum = createCerebrumImpl(cerebrumConfig, {
     denyList: config.tools.shell.denyList,
     timeout: config.tools.shell.timeout,
     maxOutputSize: config.tools.shell.maxOutputSize,
@@ -148,7 +171,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
   const skillRegistry = new SkillRegistry();
   const skillDirs = [
     ...config.skills.directories,
-    join(homedir(), '.cereworker', 'skills'),
+    join(homeDir(), '.cereworker', 'skills'),
     join(process.cwd(), 'skills'),
   ];
   const allSkills = loadSkills(skillDirs);
@@ -169,7 +192,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
   }
 
   // Load persisted task state (conversationId mappings)
-  const taskStateFile = join(homedir(), '.cereworker', 'task-state.json');
+  const taskStateFile = join(homeDir(), '.cereworker', 'task-state.json');
   type TaskState = Record<string, { conversationId: string; lastRunAt?: string; runCount?: number }>;
   let taskState: TaskState = {};
   try {
@@ -195,7 +218,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     }
   }
 
-  const channelConversationStateFile = join(homedir(), '.cereworker', 'channel-conversations.json');
+  const channelConversationStateFile = join(homeDir(), '.cereworker', 'channel-conversations.json');
   let channelConversationState = loadChannelConversationState(channelConversationStateFile);
 
   for (const [sessionKey, conversationId] of Object.entries(channelConversationState)) {
@@ -380,7 +403,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
   }
 
   // Create channel manager
-  const channelManager = createChannelManager(config, CHANNEL_COMMANDS);
+  const channelManager = createChannelManagerImpl(config, CHANNEL_COMMANDS);
 
   // Create pairing store and wire to channel manager
   const pairingStore = new PairingStore();
@@ -465,7 +488,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
 
       // Write training pairs from the discovery conversation to pending.jsonl
       try {
-        const pendingPath = join(homedir(), '.cereworker', 'finetune', 'pending.jsonl');
+        const pendingPath = join(homeDir(), '.cereworker', 'finetune', 'pending.jsonl');
         mkdirSync(dirname(pendingPath), { recursive: true });
         const messages = orchestrator.getMessages();
         for (let i = 0; i < messages.length - 1; i++) {
@@ -553,13 +576,13 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     // Check if Docker is installed (check PATH, then common locations)
     let dockerBin = '';
     try {
-      dockerBin = execSync('which docker', { stdio: 'pipe' }).toString().trim();
+      dockerBin = execSyncImpl('which docker', { stdio: 'pipe' }).toString().trim();
     } catch {
       // Not in PATH — check common install locations
       const candidates = ['/usr/bin/docker', '/usr/local/bin/docker', '/snap/bin/docker'];
       for (const c of candidates) {
         try {
-          execSync(`test -x ${c}`, { stdio: 'pipe' });
+          execSyncImpl(`test -x ${c}`, { stdio: 'pipe' });
           dockerBin = c;
           break;
         } catch {}
@@ -573,7 +596,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
 
     // Try without sudo first
     try {
-      execSync(`${dockerBin} info`, { stdio: 'pipe', timeout: 10_000 });
+      execSyncImpl(`${dockerBin} info`, { stdio: 'pipe', timeout: 10_000 });
       return true;
     } catch (err) {
       const msg = (err as Error).message;
@@ -581,9 +604,9 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
       if (msg.includes('Is the docker daemon running') || msg.includes('Cannot connect to the Docker daemon')) {
         // Try to start the service
         try {
-          execSync('sudo -n systemctl start docker', { stdio: 'pipe', timeout: 15_000 });
+          execSyncImpl('sudo -n systemctl start docker', { stdio: 'pipe', timeout: 15_000 });
           log.info('Started Docker service');
-          execSync(`${dockerBin} info`, { stdio: 'pipe', timeout: 10_000 });
+          execSyncImpl(`${dockerBin} info`, { stdio: 'pipe', timeout: 10_000 });
           return true;
         } catch {
           log.warn('Docker service is not running. Start it with: sudo systemctl start docker');
@@ -593,7 +616,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
 
       // Permission denied — try with sudo
       try {
-        execSync(`sudo -n ${dockerBin} info`, { stdio: 'pipe', timeout: 10_000 });
+        execSyncImpl(`sudo -n ${dockerBin} info`, { stdio: 'pipe', timeout: 10_000 });
         dockerPrefix = 'sudo ';
         log.info('Using sudo for Docker commands (add user to docker group to avoid this)');
         return true;
@@ -602,7 +625,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
         const user = process.env.USER || process.env.LOGNAME;
         if (user) {
           try {
-            execSync(`sudo -n usermod -aG docker ${user}`, { stdio: 'pipe' });
+            execSyncImpl(`sudo -n usermod -aG docker ${user}`, { stdio: 'pipe' });
             dockerPrefix = 'sudo ';
             log.info('Added user to docker group. Using sudo for this session — re-login to use Docker without sudo.');
             return true;
@@ -619,13 +642,13 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
   function ensureImageExists(): boolean {
     const image = config.cerebellum.docker.image;
     try {
-      const exists = execSync(`${dockerPrefix}docker images -q ${image}`, { stdio: 'pipe' }).toString().trim();
+      const exists = execSyncImpl(`${dockerPrefix}docker images -q ${image}`, { stdio: 'pipe' }).toString().trim();
       if (exists) {
         // Image exists — try background pull for updates (non-blocking)
         try {
           const pullCmd = dockerPrefix ? 'sudo' : 'docker';
           const pullArgs = dockerPrefix ? ['docker', 'pull', image] : ['pull', image];
-          const child = spawn(pullCmd, pullArgs, { stdio: ['ignore', 'pipe', 'ignore'], detached: true });
+          const child = spawnImpl(pullCmd, pullArgs, { stdio: ['ignore', 'pipe', 'ignore'], detached: true });
           child.unref();
           let pullOutput = '';
           child.stdout?.on('data', (data: Buffer) => { pullOutput += data.toString(); });
@@ -646,7 +669,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     // Image missing — pull synchronously
     try {
       log.info(`Pulling Cerebellum image ${image} from Docker Hub...`);
-      execSync(`${dockerPrefix}docker pull ${image}`, { stdio: 'pipe', timeout: 3_600_000 });
+      execSyncImpl(`${dockerPrefix}docker pull ${image}`, { stdio: 'pipe', timeout: 3_600_000 });
       log.info('Cerebellum image pulled from Docker Hub');
       return true;
     } catch (err) {
@@ -658,7 +681,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     if (composeFile) {
       log.info('Building Cerebellum Docker image from source...');
       try {
-        execSync(`${dockerPrefix}docker compose -f "${composeFile}" build cerebellum`, {
+        execSyncImpl(`${dockerPrefix}docker compose -f "${composeFile}" build cerebellum`, {
           cwd: dirname(composeFile),
           stdio: 'pipe',
           timeout: 600_000,
@@ -680,7 +703,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
 
     const getConfiguredModelPath = (): string | null => {
       try {
-        const envLines = execSync(
+        const envLines = execSyncImpl(
           `${dockerPrefix}docker inspect -f "{{range .Config.Env}}{{println .}}{{end}}" cereworker-cerebellum`,
           { stdio: 'pipe' },
         ).toString().trim().split('\n');
@@ -693,7 +716,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
 
     // Check if already running
     try {
-      const out = execSync(`${dockerPrefix}docker ps -q -f name=cereworker-cerebellum`, {
+      const out = execSyncImpl(`${dockerPrefix}docker ps -q -f name=cereworker-cerebellum`, {
         stdio: 'pipe',
       }).toString().trim();
       if (out) {
@@ -706,19 +729,19 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
 
     // Check if container exists but stopped
     try {
-      const stopped = execSync(`${dockerPrefix}docker ps -aq -f name=cereworker-cerebellum`, {
+      const stopped = execSyncImpl(`${dockerPrefix}docker ps -aq -f name=cereworker-cerebellum`, {
         stdio: 'pipe',
       }).toString().trim();
       if (stopped) {
         const configuredModelPath = getConfiguredModelPath();
         if (configuredModelPath && configuredModelPath !== resolvedModel.modelPath) {
-          execSync(`${dockerPrefix}docker rm -f cereworker-cerebellum`, { stdio: 'pipe' });
+          execSyncImpl(`${dockerPrefix}docker rm -f cereworker-cerebellum`, { stdio: 'pipe' });
           log.info('Removed stale Cerebellum container to refresh model path', {
             previousModelPath: configuredModelPath,
             nextModelPath: resolvedModel.modelPath,
           });
         } else {
-          execSync(`${dockerPrefix}docker start cereworker-cerebellum`, { stdio: 'pipe' });
+          execSyncImpl(`${dockerPrefix}docker start cereworker-cerebellum`, { stdio: 'pipe' });
           log.info('Restarted stopped Cerebellum container');
           return true;
         }
@@ -736,7 +759,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
       try {
         const composeEnv = buildCerebellumComposeEnv(config);
         const command = buildCerebellumComposeCommand(composeFile, composeEnv, Boolean(dockerPrefix));
-        execFileSync(command.command, command.args, {
+        execFileSyncImpl(command.command, command.args, {
           ...(command.env ? { env: command.env } : {}),
           stdio: 'pipe',
           cwd: dirname(composeFile),
@@ -757,12 +780,12 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
 
       // Use host models directory if it exists (pre-downloaded during onboarding),
       // otherwise fall back to Docker named volume
-      const modelsPath = config.cerebellum.docker.modelsPath.replace(/^~/, homedir());
+      const modelsPath = config.cerebellum.docker.modelsPath.replace(/^~/, homeDir());
       const modelsVolume = existsSync(modelsPath)
         ? `"${modelsPath}":/root/.cache/huggingface`
         : 'cerebellum-models:/root/.cache/huggingface';
 
-      execSync(
+      execSyncImpl(
         `${dockerPrefix}docker run -d --name cereworker-cerebellum` +
         ` -p ${port}:50051` +
         ` -e MODEL_PATH=${modelId}` +
@@ -792,10 +815,10 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
       if (!isDockerAvailable()) {
         // Determine specific reason
         try {
-          execSync('which docker', { stdio: 'pipe' });
+          execSyncImpl('which docker', { stdio: 'pipe' });
           // Docker binary found but daemon not running or permission denied
           try {
-            execSync('docker info', { stdio: 'pipe', timeout: 5000 });
+            execSyncImpl('docker info', { stdio: 'pipe', timeout: 5000 });
           } catch (e) {
             const msg = (e as Error).message;
             if (msg.includes('Is the docker daemon running') || msg.includes('Cannot connect to the Docker daemon')) {
@@ -811,7 +834,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
       } else if (!ensureDockerRunning()) {
         // Gather container logs for diagnostics
         try {
-          const logs = execSync(
+          const logs = execSyncImpl(
             `${dockerPrefix}docker logs --tail 20 cereworker-cerebellum 2>&1`,
             { stdio: 'pipe', timeout: 5000 },
           ).toString().trim();
@@ -825,7 +848,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     // Connect gRPC client with retries
     // First run downloads model weights (~1.2 GB for Qwen3 0.6B) and loads them,
     // which can take 2-5 minutes depending on network and hardware.
-    const client = new CerebellumClient(config.cerebellum.address);
+    const client = createCerebellumClientImpl(config.cerebellum.address);
     const maxRetries = 60;
     const retryDelay = 5000;
     let lastError = '';
@@ -867,7 +890,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
       } else {
         // Docker started fine but gRPC failed — grab container logs for clues
         try {
-          const logs = execSync(
+          const logs = execSyncImpl(
             `${dockerPrefix}docker logs --tail 20 cereworker-cerebellum 2>&1`,
             { stdio: 'pipe', timeout: 5000 },
           ).toString().trim();

@@ -797,11 +797,38 @@ channels:
 ```bash
 pnpm install          # install deps
 pnpm build            # build all packages
-pnpm test             # run test suite (vitest)
+pnpm test             # run the full local test suite
 pnpm typecheck        # type-check without emitting
 pnpm dev              # run CLI in dev mode (tsx)
 pnpm dev -- serve     # run headless service in dev mode
 ```
+
+### Testing
+
+```bash
+pnpm test:unit             # unit and focused integration tests
+pnpm test:e2e:integration  # in-process service/orchestrator end-to-end tests
+pnpm test:e2e:cli          # built CLI smoke tests
+pnpm test:e2e:install      # clean-install smoke against a published package
+```
+
+The test layers are split intentionally:
+
+- `test:unit` covers the normal Vitest suite without the heavier end-to-end cases.
+- `test:e2e:integration` exercises the real `createService(...)` bridge with fake providers and channel inputs, including watchdog retry behavior and channel conversation routing.
+- `test:e2e:cli` builds the CLI and spawns the real `cereworker` binary to cover flows like `cereworker -v`, `cereworker images`, `cereworker images upgrade`, `cereworker serve`, and rerunning onboarding with "keep current configuration".
+- `test:e2e:install` installs a published CLI into a temporary prefix and runs a blank-machine smoke flow. Override the package under test with `CEREWORKER_PACKAGE_SPEC`, for example:
+
+```bash
+CEREWORKER_PACKAGE_SPEC=@cereworker/cli@latest pnpm test:e2e:install
+```
+
+### CI
+
+GitHub Actions runs the new test layers in two stages:
+
+- [`.github/workflows/ci.yml`](/home/vincent/Projects/CereWorker/.github/workflows/ci.yml) runs on pull requests and pushes to `main`, and gates changes on `typecheck`, `test:unit`, `test:e2e:integration`, and `test:e2e:cli`.
+- [`.github/workflows/install-smoke.yml`](/home/vincent/Projects/CereWorker/.github/workflows/install-smoke.yml) runs nightly, on manual dispatch, and on release tags. It validates a fresh npm install of the published CLI and performs a Docker image smoke check against the public Cerebellum image.
 
 ## Acknowledgments
 
