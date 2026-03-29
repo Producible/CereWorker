@@ -136,8 +136,8 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
 
   // Bridge CerebrumProvider to Orchestrator's CerebrumAdapter interface
   orchestrator.setCerebrum({
-    stream: async (messages, tools, callbacks) => {
-      await cerebrum.stream(messages, tools, callbacks);
+    stream: async (...args: Parameters<typeof cerebrum.stream>) => {
+      await cerebrum.stream(...args);
     },
     summarize: async (messages) => {
       return cerebrum.summarize(messages);
@@ -625,10 +625,12 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
         try {
           const pullCmd = dockerPrefix ? 'sudo' : 'docker';
           const pullArgs = dockerPrefix ? ['docker', 'pull', image] : ['pull', image];
-          const child = spawn(pullCmd, pullArgs, { stdio: 'ignore', detached: true });
+          const child = spawn(pullCmd, pullArgs, { stdio: ['ignore', 'pipe', 'ignore'], detached: true });
           child.unref();
+          let pullOutput = '';
+          child.stdout?.on('data', (data: Buffer) => { pullOutput += data.toString(); });
           child.on('exit', (code) => {
-            if (code === 0) {
+            if (code === 0 && pullOutput.includes('Downloaded newer image')) {
               log.info('Background pull completed — new Cerebellum image available. Restart to use it.');
             }
           });

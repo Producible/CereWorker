@@ -20,7 +20,10 @@ async function main() {
     console.log(version);
     try {
       const { checkForUpdate } = await import('./update-check.js');
-      const latest = await checkForUpdate(version);
+      const latest = await Promise.race([
+        checkForUpdate(version),
+        new Promise<null>((r) => setTimeout(() => r(null), 500)),
+      ]);
       if (latest) {
         console.log(`Update available: ${latest} — run: npm install -g @cereworker/cli`);
       }
