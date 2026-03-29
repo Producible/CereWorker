@@ -2,6 +2,7 @@
 
 The AgentMonitor runs deterministic health checks on sub-agent states and
 only uses the small LLM for ambiguous stall decisions (binary yes/no).
+Progress-aware: agents reporting recent progress are given more patience.
 """
 
 import logging
@@ -19,6 +20,7 @@ class AgentHealthCheck:
     is_alive: bool
     is_stalled: bool
     is_timed_out: bool
+    has_recent_progress: bool
     seconds_since_activity: int
     status: str
 
@@ -42,21 +44,36 @@ class AgentMonitor:
         now = int(time.time() * 1000)  # milliseconds to match TypeScript timestamps
         last_activity = agent_state.get("last_activity_at", 0)
         spawned_at = agent_state.get("spawned_at", 0)
-        timeout_ms = agent_state.get("timeout_ms", 300_000)
+        deadline_at = agent_state.get("deadline_at", 0)
+        last_progress_at = agent_state.get("last_progress_at", 0)
         status = agent_state.get("status", "unknown")
 
         elapsed_since_activity = (now - last_activity) // 1000 if last_activity > 0 else (now - spawned_at) // 1000
-        elapsed_since_spawn = (now - spawned_at) // 1000
 
         is_alive = status in ("running", "pending")
-        is_timed_out = is_alive and (elapsed_since_spawn * 1000 > timeout_ms)
-        is_stalled = is_alive and not is_timed_out and (elapsed_since_activity > self.stall_threshold)
+
+        # Timeout: use deadline_at instead of computing from timeout_ms
+        # deadline_at == 0 means unlimited — never times out from elapsed time
+        if deadline_at > 0:
+            is_timed_out = is_alive and (now > deadline_at)
+        else:
+            is_timed_out = False
+
+        # Progress-aware stall detection: recent progress means not stalled
+        has_recent_progress = last_progress_at > 0 and (now - last_progress_at) < self.stall_threshold * 1000
+        is_stalled = (
+            is_alive
+            and not is_timed_out
+            and not has_recent_progress
+            and (elapsed_since_activity > self.stall_threshold)
+        )
 
         return AgentHealthCheck(
             agent_id=agent_state["id"],
             is_alive=is_alive,
             is_stalled=is_stalled,
             is_timed_out=is_timed_out,
+            has_recent_progress=has_recent_progress,
             seconds_since_activity=max(0, elapsed_since_activity),
             status=status,
         )
@@ -73,12 +90,30 @@ class AgentMonitor:
                 reason=f"agent is {check.status}",
             )
 
-        # Timed out — report timeout
+        # Timed out — but check if it's making progress first
         if check.is_timed_out:
+            progress_note = agent_state.get("progress_note", "")
+            progress_percent = agent_state.get("progress_percent", -1)
+
+            if check.has_recent_progress and progress_note:
+                # Agent exceeded deadline but is actively working — ask LLM
+                pct_str = f" ({progress_percent}%)" if progress_percent >= 0 else ""
+                should_continue = self.inference.verify_checks(
+                    f"sub-agent-{check.agent_id}",
+                    f"Agent exceeded its deadline but reports recent progress: "
+                    f"'{progress_note}'{pct_str}. Should it continue? yes/no",
+                )
+                if should_continue:
+                    return AgentHealthAction(
+                        agent_id=check.agent_id,
+                        action="ok",
+                        reason=f"exceeded deadline but making progress: {progress_note}",
+                    )
+
             return AgentHealthAction(
                 agent_id=check.agent_id,
                 action="timeout",
-                reason=f"exceeded timeout after {check.seconds_since_activity}s",
+                reason=f"exceeded deadline after {check.seconds_since_activity}s with no recent progress",
             )
 
         # Not stalled — everything is fine

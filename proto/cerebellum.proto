@@ -132,6 +132,10 @@ message AgentState {
   int32 messages_count = 7;
   int32 tool_calls_count = 8;
   int32 retry_count = 9;
+  string progress_note = 10;         // latest progress description from agent
+  int32 progress_percent = 11;       // 0-100, -1 if unset
+  int64 last_progress_at = 12;       // timestamp of last progress report (ms)
+  int64 deadline_at = 13;            // absolute deadline (ms since epoch), 0 = unlimited
 }
 
 message AgentHealthAction {

@@ -1126,6 +1126,8 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
   }
 
   async function shutdown(): Promise<void> {
+    // Persist running agent state before shutdown for recovery on restart
+    orchestrator.getSubAgentManager()?.persistAllRunning();
     proactiveController?.stop();
     if (cerebellumPoller) {
       clearInterval(cerebellumPoller);

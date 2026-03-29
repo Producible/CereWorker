@@ -17,6 +17,8 @@ export type OrchestratorEvent =
   | { type: 'agent:completed'; agentId: string; result: string }
   | { type: 'agent:failed'; agentId: string; error: string }
   | { type: 'agent:health'; actions: AgentHealthAction[] }
+  | { type: 'agent:progress'; agentId: string; note: string; percent?: number }
+  | { type: 'agent:recovered'; agentId: string; task: string }
   | { type: 'exec:approval-required'; command: string }
   | { type: 'exec:blocked'; command: string; reason: string }
   | { type: 'emergency:stop' }

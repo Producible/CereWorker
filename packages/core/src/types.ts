@@ -81,6 +81,10 @@ export interface SubAgentState {
   toolCallsCount: number;
   retryCount: number;
   memoryDir: string;
+  progressNote?: string;
+  progressPercent?: number;
+  lastProgressAt?: number;
+  deadlineAt: number;
 }
 
 export interface SubAgentSummary {

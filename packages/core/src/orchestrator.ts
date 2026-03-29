@@ -195,6 +195,9 @@ export class Orchestrator extends TypedEventEmitter {
       maxConcurrent: options?.maxConcurrent,
       baseDir: options?.baseDir,
       toolRuntime: this.toolRuntime,
+      onProgress: (agentId, note, percent) => {
+        this.emit({ type: 'agent:progress', agentId, note, percent });
+      },
     });
 
     // Register sub-agent tools with the orchestrator
@@ -803,6 +806,20 @@ export class Orchestrator extends TypedEventEmitter {
     if (this.subAgentManager && this.cerebellum?.reportAgentStates) {
       this.startMonitorLoop();
     }
+
+    // Recover interrupted sub-agents from disk
+    if (this.subAgentManager) {
+      const recovered = await this.subAgentManager.recoverFromDisk();
+      for (const agentId of recovered) {
+        const agent = this.subAgentManager.getAgent(agentId);
+        if (agent) {
+          this.emit({ type: 'agent:recovered', agentId, task: agent.task });
+        }
+      }
+      if (recovered.length > 0) {
+        log.info(`Recovered ${recovered.length} interrupted sub-agent(s)`);
+      }
+    }
   }
 
   async stop(): Promise<void> {
@@ -837,6 +854,10 @@ export class Orchestrator extends TypedEventEmitter {
             messagesCount: a.messagesCount,
             toolCallsCount: a.toolCallsCount,
             retryCount: a.retryCount,
+            progressNote: a.progressNote ?? '',
+            progressPercent: a.progressPercent ?? -1,
+            lastProgressAt: a.lastProgressAt ?? 0,
+            deadlineAt: a.deadlineAt,
           })),
         );
 

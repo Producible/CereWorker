@@ -32,6 +32,7 @@ interface SubAgentInstance {
   spawnedAt: number;
   lastActivityAt: number;
   timeoutMs: number;
+  deadlineAt: number;
   retryCount: number;
   conversation: ConversationStore;
   conversationId: string;
@@ -41,6 +42,9 @@ interface SubAgentInstance {
   error?: string;
   messagesCount: number;
   toolCallsCount: number;
+  progressNote?: string;
+  progressPercent?: number;
+  lastProgressAt?: number;
 }
 
 export interface SubAgentManagerOptions {
@@ -49,6 +53,7 @@ export interface SubAgentManagerOptions {
   maxConcurrent?: number;
   baseDir?: string;
   toolRuntime?: ToolRuntime;
+  onProgress?: (agentId: string, note: string, percent?: number) => void;
 }
 
 export class SubAgentManager {
@@ -58,6 +63,7 @@ export class SubAgentManager {
   private maxConcurrent: number;
   private baseDir: string;
   private toolRuntime: ToolRuntime;
+  private onProgress?: (agentId: string, note: string, percent?: number) => void;
 
   constructor(opts: SubAgentManagerOptions) {
     this.cerebrum = opts.cerebrum;
@@ -65,6 +71,7 @@ export class SubAgentManager {
     this.maxConcurrent = opts.maxConcurrent ?? 5;
     this.baseDir = opts.baseDir ?? join(homedir(), '.cereworker', 'agents');
     this.toolRuntime = opts.toolRuntime ?? new ToolRuntime();
+    this.onProgress = opts.onProgress;
     this.ensureDir(this.baseDir);
   }
 
@@ -102,6 +109,7 @@ export class SubAgentManager {
     const conversation = new ConversationStore(join(agentDir, 'conversations.db'));
     const conv = conversation.create();
 
+    const timeoutMs = opts?.timeoutMs ?? 5 * 60_000;
     const instance: SubAgentInstance = {
       id,
       sessionKey,
@@ -112,7 +120,8 @@ export class SubAgentManager {
       cleanup: opts?.cleanup ?? 'delete',
       spawnedAt: Date.now(),
       lastActivityAt: Date.now(),
-      timeoutMs: opts?.timeoutMs ?? 5 * 60_000,
+      timeoutMs,
+      deadlineAt: timeoutMs > 0 ? Date.now() + timeoutMs : 0,
       retryCount: 0,
       conversation,
       conversationId: conv.id,
@@ -231,31 +240,44 @@ export class SubAgentManager {
     instance.status = 'running';
     this.saveSessionMeta(instance);
 
-    // Set up timeout
-    const timeoutId = setTimeout(() => {
-      instance.abortController.abort();
-    }, instance.timeoutMs);
+    // No setTimeout — the Cerebellum monitors agent lifecycle via heartbeat
 
     try {
-      const agentTools = this.createAgentTools(instance.agentDir);
+      const agentTools = this.createAgentTools(instance);
 
-      // Send the task as the first message
-      const toolNames = Array.from(agentTools.keys()).join(', ');
-      const timeoutMin = Math.round(instance.timeoutMs / 60000);
-      const systemMsg =
-        `You are a sub-agent with a focused task. You have ${timeoutMin} minutes.\n` +
-        `Available tools: ${toolNames}\n` +
-        `Work autonomously — do not ask questions. Use memory_write to save findings.\n` +
-        `When done, clearly state: what you found, what you did, and whether it succeeded.`;
-      instance.conversation.appendMessage(
-        instance.conversationId,
-        'system',
-        systemMsg,
-      );
-      instance.conversation.appendMessage(instance.conversationId, 'user', instance.task);
-      instance.messagesCount += 2;
-      this.appendTranscript(instance, { role: 'system', content: systemMsg });
-      this.appendTranscript(instance, { role: 'user', content: instance.task });
+      // Check if this is a resume (conversation already has messages)
+      const existingMessages = instance.conversation.getMessages(instance.conversationId);
+      const isResume = existingMessages.length > 0;
+
+      if (isResume) {
+        instance.conversation.appendMessage(
+          instance.conversationId,
+          'system',
+          'You are being resumed after a restart. Review the conversation above and continue working on your task. Use report_progress to report your current status.',
+        );
+        instance.messagesCount++;
+      } else {
+        // Send the task as the first message
+        const toolNames = Array.from(agentTools.keys()).join(', ');
+        const timeLimit = instance.timeoutMs > 0
+          ? `You have ${Math.round(instance.timeoutMs / 60000)} minutes.`
+          : 'You have no time limit — take as long as needed.';
+        const systemMsg =
+          `You are a sub-agent with a focused task. ${timeLimit}\n` +
+          `Available tools: ${toolNames}\n` +
+          `Work autonomously — do not ask questions. Use memory_write to save findings.\n` +
+          `For long tasks, call report_progress periodically to report your status.\n` +
+          `When done, clearly state: what you found, what you did, and whether it succeeded.`;
+        instance.conversation.appendMessage(
+          instance.conversationId,
+          'system',
+          systemMsg,
+        );
+        instance.conversation.appendMessage(instance.conversationId, 'user', instance.task);
+        instance.messagesCount += 2;
+        this.appendTranscript(instance, { role: 'system', content: systemMsg });
+        this.appendTranscript(instance, { role: 'user', content: instance.task });
+      }
 
       // Stream the cerebrum response
       const messages = instance.conversation.getMessages(instance.conversationId);
@@ -333,13 +355,13 @@ export class SubAgentManager {
         instance.error = err instanceof Error ? err.message : String(err);
       }
     } finally {
-      clearTimeout(timeoutId);
       this.saveSessionMeta(instance);
     }
   }
 
-  private createAgentTools(agentDir: string): Map<string, ToolDefinition> {
+  private createAgentTools(instance: SubAgentInstance): Map<string, ToolDefinition> {
     const agentTools = new Map<string, ToolDefinition>();
+    const agentDir = instance.agentDir;
     const memoryDir = join(agentDir, 'memory');
 
     // Copy shared tools (shell, file ops, etc.) but NOT sub-agent tools (no recursion)
@@ -422,6 +444,24 @@ export class SubAgentManager {
       },
     });
 
+    agentTools.set('report_progress', {
+      description: 'Report your current progress. Call periodically during long-running tasks so the system knows you are active.',
+      parameters: {
+        note: { type: 'string', description: 'Brief description of current status', required: true },
+        percent: { type: 'number', description: 'Estimated completion percentage (0-100)', required: false },
+      },
+      execute: async (args) => {
+        const { note, percent } = args as { note: string; percent?: number };
+        instance.progressNote = note;
+        instance.progressPercent = percent;
+        instance.lastProgressAt = Date.now();
+        instance.lastActivityAt = Date.now();
+        this.saveSessionMeta(instance);
+        this.onProgress?.(instance.id, note, percent);
+        return 'Progress reported.';
+      },
+    });
+
     return agentTools;
   }
 
@@ -437,11 +477,16 @@ export class SubAgentManager {
       spawnedAt: instance.spawnedAt,
       lastActivityAt: instance.lastActivityAt,
       timeoutMs: instance.timeoutMs,
+      deadlineAt: instance.deadlineAt,
+      conversationId: instance.conversationId,
       result: instance.result,
       error: instance.error,
       messagesCount: instance.messagesCount,
       toolCallsCount: instance.toolCallsCount,
       retryCount: instance.retryCount,
+      progressNote: instance.progressNote,
+      progressPercent: instance.progressPercent,
+      lastProgressAt: instance.lastProgressAt,
     };
 
     try {
@@ -467,6 +512,83 @@ export class SubAgentManager {
     }
   }
 
+  async recoverFromDisk(): Promise<string[]> {
+    const recovered: string[] = [];
+    if (!existsSync(this.baseDir)) return recovered;
+
+    const dirs = readdirSync(this.baseDir, { withFileTypes: true })
+      .filter((d) => d.isDirectory());
+
+    for (const dir of dirs) {
+      const sessionPath = join(this.baseDir, dir.name, 'session.json');
+      if (!existsSync(sessionPath)) continue;
+
+      try {
+        const meta = JSON.parse(readFileSync(sessionPath, 'utf-8'));
+        if (meta.status !== 'running' && meta.status !== 'pending') continue;
+        if (this.agents.has(meta.id)) continue;
+
+        // Check if deadline expired with no recent progress
+        const now = Date.now();
+        if (meta.deadlineAt && meta.deadlineAt > 0 && now > meta.deadlineAt) {
+          const hasRecentProgress = meta.lastProgressAt && (now - meta.lastProgressAt) < 5 * 60_000;
+          if (!hasRecentProgress) {
+            meta.status = 'timeout';
+            writeFileSync(sessionPath, JSON.stringify(meta, null, 2), 'utf-8');
+            continue;
+          }
+        }
+
+        const agentDir = join(this.baseDir, dir.name);
+        const dbPath = join(agentDir, 'conversations.db');
+        if (!existsSync(dbPath)) continue;
+
+        const conversation = new ConversationStore(dbPath);
+        const instance: SubAgentInstance = {
+          id: meta.id,
+          sessionKey: meta.sessionKey,
+          parentSessionKey: meta.parentSessionKey ?? 'agent:main',
+          task: meta.task,
+          label: meta.label,
+          status: 'pending',
+          cleanup: meta.cleanup ?? 'keep',
+          spawnedAt: meta.spawnedAt,
+          lastActivityAt: now,
+          timeoutMs: meta.timeoutMs ?? 0,
+          deadlineAt: meta.deadlineAt ?? 0,
+          retryCount: meta.retryCount ?? 0,
+          conversation,
+          conversationId: meta.conversationId,
+          agentDir,
+          abortController: new AbortController(),
+          messagesCount: meta.messagesCount ?? 0,
+          toolCallsCount: meta.toolCallsCount ?? 0,
+          progressNote: meta.progressNote,
+          progressPercent: meta.progressPercent,
+          lastProgressAt: meta.lastProgressAt,
+          result: undefined,
+          error: undefined,
+        };
+
+        this.agents.set(meta.id, instance);
+        this.runAgent(instance).catch(() => {});
+        recovered.push(meta.id);
+      } catch {
+        // Skip malformed session files
+      }
+    }
+
+    return recovered;
+  }
+
+  persistAllRunning(): void {
+    for (const instance of this.agents.values()) {
+      if (instance.status === 'running' || instance.status === 'pending') {
+        this.saveSessionMeta(instance);
+      }
+    }
+  }
+
   private toState(instance: SubAgentInstance): SubAgentState {
     return {
       id: instance.id,
@@ -485,6 +607,10 @@ export class SubAgentManager {
       toolCallsCount: instance.toolCallsCount,
       retryCount: instance.retryCount,
       memoryDir: join(instance.agentDir, 'memory'),
+      progressNote: instance.progressNote,
+      progressPercent: instance.progressPercent,
+      lastProgressAt: instance.lastProgressAt,
+      deadlineAt: instance.deadlineAt,
     };
   }
 }

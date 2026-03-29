@@ -8,27 +8,36 @@ export function createSubAgentTools(manager: SubAgentManager): Record<string, To
         'Spawn a sub-agent to handle a task in the background. Returns the agent ID. The sub-agent has its own isolated memory and conversation.',
       parameters: {
         task: { type: 'string', description: 'The task for the sub-agent to complete', required: true },
-        timeoutMinutes: { type: 'number', description: 'Max lifetime in minutes (default: 5)', required: false },
+        timeoutMinutes: { type: 'number', description: 'Max lifetime in minutes (default: 5, 0 = unlimited)', required: false },
         label: { type: 'string', description: 'Optional short label for the agent', required: false },
         cleanup: {
           type: 'string',
           description: '"delete" to remove after completion, "keep" to persist (default: delete)',
           required: false,
         },
+        longRunning: {
+          type: 'boolean',
+          description: 'Set true for long-running tasks — sets unlimited timeout and keeps session files for recovery',
+          required: false,
+        },
       },
       execute: async (args) => {
-        const { task, timeoutMinutes, label, cleanup } = args as {
+        const { task, timeoutMinutes, label, cleanup, longRunning } = args as {
           task: string;
           timeoutMinutes?: number;
           label?: string;
           cleanup?: string;
+          longRunning?: boolean;
         };
+
+        const effectiveTimeout = longRunning ? 0 : (timeoutMinutes || 5) * 60_000;
+        const effectiveCleanup = longRunning ? 'keep' : (cleanup === 'keep' ? 'keep' : 'delete');
 
         try {
           const id = await manager.spawn(task, {
-            timeoutMs: (timeoutMinutes || 5) * 60_000,
+            timeoutMs: effectiveTimeout,
             label,
-            cleanup: cleanup === 'keep' ? 'keep' : 'delete',
+            cleanup: effectiveCleanup,
           });
           return `Sub-agent ${id} spawned${label ? ` (${label})` : ''}. Use query_agents to check status.`;
         } catch (err) {
@@ -62,6 +71,10 @@ export function createSubAgentTools(manager: SubAgentManager): Record<string, To
           .map((a) => {
             const elapsed = Math.round((Date.now() - a.spawnedAt) / 1000);
             const line = `- [${a.status}] ${a.id}${a.label ? ` (${a.label})` : ''}: ${a.task.slice(0, 80)}${a.task.length > 80 ? '...' : ''} (${elapsed}s)`;
+            if (a.progressNote) {
+              const pct = a.progressPercent != null ? ` [${a.progressPercent}%]` : '';
+              return `${line}\n  Progress: ${a.progressNote}${pct}`;
+            }
             if (a.status === 'completed' && a.result) {
               return `${line}\n  Result: ${a.result.slice(0, 200)}${a.result.length > 200 ? '...' : ''}`;
             }

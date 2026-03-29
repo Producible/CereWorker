@@ -30,7 +30,7 @@ export type CommandResult =
   | { type: 'async'; promise: Promise<string> };
 
 export const SLASH_COMMANDS: Array<{ name: string; hint: string }> = [
-  { name: '/agents', hint: 'list sub-agents' },
+  { name: '/agents', hint: 'manage sub-agents' },
   { name: '/approve', hint: 'approve pairing code' },
   { name: '/auth', hint: 'authenticate provider' },
   { name: '/auto', hint: 'toggle auto mode' },
@@ -89,7 +89,7 @@ export function handleSlashCommand(command: string, args: string, ctx: CommandCo
         text: `Available commands:
   /model [name]         Show or switch the current model
   /provider [name]      Show or switch the current provider
-  /agents               Show sub-agent summary
+  /agents [sub]         Sub-agents: list, stop <id|all>, info <id>
   /memory               Show MEMORY.md contents
   /skills               List loaded skills
   /config               Show current configuration
@@ -143,12 +143,62 @@ export function handleSlashCommand(command: string, args: string, ctx: CommandCo
     case 'agents': {
       const mgr = orchestrator.getSubAgentManager();
       if (!mgr) return { type: 'message', text: 'Sub-agents are not enabled.' };
+
+      const agentArgs = args.trim().split(/\s+/);
+      const agentSub = agentArgs[0] || '';
+      const agentTarget = agentArgs[1] || '';
+
+      if (agentSub === 'stop') {
+        if (agentTarget === 'all') {
+          const agents = mgr.listAgents().filter((a) => a.status === 'running' || a.status === 'pending');
+          agents.forEach((a) => mgr.cancel(a.id));
+          return { type: 'message', text: `Stopped ${agents.length} agent(s).` };
+        }
+        if (agentTarget) {
+          const agent = mgr.listAgents().find((a) => a.id.startsWith(agentTarget));
+          if (!agent) return { type: 'message', text: `Agent "${agentTarget}" not found.` };
+          mgr.cancel(agent.id);
+          return { type: 'message', text: `Stopped agent ${agent.id}${agent.label ? ` (${agent.label})` : ''}.` };
+        }
+        return { type: 'message', text: 'Usage: /agents stop <id|all>' };
+      }
+
+      if (agentSub === 'info' && agentTarget) {
+        const agent = mgr.listAgents().find((a) => a.id.startsWith(agentTarget));
+        if (!agent) return { type: 'message', text: `Agent "${agentTarget}" not found.` };
+        const elapsed = Math.round((Date.now() - agent.spawnedAt) / 1000);
+        const deadline = agent.deadlineAt > 0
+          ? `${Math.round((agent.deadlineAt - Date.now()) / 60000)}m remaining`
+          : 'unlimited';
+        const lines = [
+          `Agent: ${agent.id}${agent.label ? ` (${agent.label})` : ''}`,
+          `Status: ${agent.status}`,
+          `Task: ${agent.task}`,
+          `Elapsed: ${elapsed}s | Timeout: ${deadline}`,
+          `Messages: ${agent.messagesCount} | Tool calls: ${agent.toolCallsCount} | Retries: ${agent.retryCount}`,
+        ];
+        if (agent.progressNote) {
+          const pct = agent.progressPercent != null ? ` [${agent.progressPercent}%]` : '';
+          lines.push(`Progress: ${agent.progressNote}${pct}`);
+        }
+        if (agent.result) lines.push(`Result: ${agent.result.slice(0, 300)}`);
+        if (agent.error) lines.push(`Error: ${agent.error}`);
+        return { type: 'message', text: lines.join('\n') };
+      }
+
+      // Default: list
       const summary = mgr.getSummary();
       const agents = mgr.listAgents();
       const lines = [`Agents: ${summary.total} total, ${summary.running} running, ${summary.completed} completed, ${summary.failed} failed`];
-      for (const a of agents.slice(0, 10)) {
+      for (const a of agents.slice(0, 15)) {
         const elapsed = Math.round((Date.now() - a.spawnedAt) / 1000);
-        lines.push(`  [${a.status}] ${a.label ?? a.id} - ${a.task.slice(0, 60)} (${elapsed}s)`);
+        const elapsedStr = elapsed >= 60 ? `${Math.round(elapsed / 60)}m` : `${elapsed}s`;
+        let line = `  [${a.status}] ${a.label ?? a.id} - ${a.task.slice(0, 60)} (${elapsedStr})`;
+        if (a.progressNote) {
+          const pct = a.progressPercent != null ? ` [${a.progressPercent}%]` : '';
+          line += `\n    Progress: ${a.progressNote}${pct}`;
+        }
+        lines.push(line);
       }
       return { type: 'message', text: lines.join('\n') };
     }

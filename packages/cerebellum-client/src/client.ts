@@ -59,6 +59,10 @@ export interface AgentStateInput {
   messagesCount: number;
   toolCallsCount: number;
   retryCount: number;
+  progressNote?: string;
+  progressPercent?: number;
+  lastProgressAt?: number;
+  deadlineAt?: number;
 }
 
 export interface SystemStatus {
@@ -314,6 +318,10 @@ export class CerebellumClient {
       messagesCount: a.messagesCount,
       toolCallsCount: a.toolCallsCount,
       retryCount: a.retryCount,
+      progressNote: a.progressNote ?? '',
+      progressPercent: a.progressPercent ?? -1,
+      lastProgressAt: a.lastProgressAt ?? 0,
+      deadlineAt: a.deadlineAt ?? 0,
     }));
 
     return new Promise((resolve, reject) => {
