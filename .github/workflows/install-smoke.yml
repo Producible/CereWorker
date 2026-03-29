@@ -18,7 +18,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
+      # On tag pushes (v26.329.13), install that exact version from npm
       CEREWORKER_PACKAGE_SPEC: ${{ inputs.package_spec || '@cereworker/cli@latest' }}
+      CEREWORKER_TAG_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
 
     steps:
       - name: Checkout

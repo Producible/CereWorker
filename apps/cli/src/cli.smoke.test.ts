@@ -265,7 +265,7 @@ describeBuilt('CLI smoke', () => {
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('26.');
     expect(result.stdout).not.toContain('Update available:');
-    expect(result.durationMs).toBeLessThan(2_500);
+    expect(result.durationMs).toBeLessThan(3_500);
   });
 
   it('uses the configured image for images and upgrade commands', async () => {

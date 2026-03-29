@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PACKAGE_SPEC="${CEREWORKER_PACKAGE_SPEC:-@cereworker/cli@latest}"
+# If triggered by a tag push (e.g. v26.329.13), install that exact version
+if [[ -n "${CEREWORKER_TAG_VERSION:-}" ]]; then
+  TAG_VER="${CEREWORKER_TAG_VERSION#v}"  # strip leading v
+  PACKAGE_SPEC="@cereworker/cli@${TAG_VER}"
+else
+  PACKAGE_SPEC="${CEREWORKER_PACKAGE_SPEC:-@cereworker/cli@latest}"
+fi
 TMP_DIR="$(mktemp -d)"
 PREFIX_DIR="$TMP_DIR/prefix"
 HOME_DIR="$TMP_DIR/home"

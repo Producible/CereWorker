@@ -138,11 +138,15 @@ export function createDiscordChannel(config: DiscordChannelConfig): ChannelPlugi
           return;
         }
 
-        // Enforce same channel routing as text messages
+        // Enforce same channel routing as text messages:
+        // DMs always allowed; guild messages require mention OR configured channel
         const isDM = !cmd.inGuild();
-        if (!isDM && config.channelIds.length > 0) {
+        const isThread = cmd.channel?.isThread?.() ?? false;
+        const parentId = isThread ? (cmd.channel as { parentId?: string | null }).parentId ?? '' : '';
+        if (!isDM) {
           const routeIds = [cmd.channelId ?? ''];
-          if (!routeIds.some((id) => config.channelIds.includes(id))) {
+          if (parentId) routeIds.push(parentId);
+          if (!shouldHandleDiscordMessage({ isDM: false, isMentioned: false, routeIds, channelIds: config.channelIds })) {
             await cmd.reply({ content: 'Not available in this channel.', ephemeral: true });
             return;
           }
@@ -153,7 +157,6 @@ export function createDiscordChannel(config: DiscordChannelConfig): ChannelPlugi
         const text = args ? `/${cmd.commandName} ${args}` : `/${cmd.commandName}`;
 
         // Match session IDs with text message logic
-        const isThread = cmd.channel?.isThread?.() ?? false;
         const sessionId = isDM
           ? `dm:${cmd.channelId}`
           : isThread
