@@ -39,7 +39,7 @@ try {
     dockerCmd = 'sudo docker';
   } catch {
     console.log('CereWorker: Docker not available — skipping Cerebellum image pull.');
-    console.log('           Install Docker and run "cereworker upgrade" to pull the image later.');
+    console.log('           Install Docker and run "cereworker images upgrade" to pull the image later.');
     process.exit(0);
   }
 }
@@ -50,5 +50,5 @@ try {
   execSync(`${dockerCmd} pull ${image}`, { stdio: 'inherit', timeout: 3_600_000 });
   console.log(`CereWorker: Cerebellum image updated.`);
 } catch {
-  console.log(`CereWorker: Could not pull ${image} (non-fatal). Run "cereworker upgrade" to retry.`);
+  console.log(`CereWorker: Could not pull ${image} (non-fatal). Run "cereworker images upgrade" to retry.`);
 }

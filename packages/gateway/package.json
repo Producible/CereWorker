@@ -1,6 +1,6 @@
 {
   "name": "@cereworker/gateway",
-  "version": "26.328.11",
+  "version": "26.328.12",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

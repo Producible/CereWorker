@@ -28,7 +28,7 @@ export async function runImages(): Promise<void> {
 
     if (!output || output.split('\n').length <= 1) {
       console.log('No Cerebellum images found locally.');
-      console.log(`Run "cereworker upgrade" to pull ${image}.`);
+      console.log(`Run "cereworker images upgrade" to pull ${image}.`);
       return;
     }
 
@@ -36,7 +36,7 @@ export async function runImages(): Promise<void> {
     console.log(output);
   } catch {
     console.log('No Cerebellum images found locally.');
-    console.log(`Run "cereworker upgrade" to pull ${image}.`);
+    console.log(`Run "cereworker images upgrade" to pull ${image}.`);
     return;
   }
 
@@ -71,7 +71,7 @@ export async function runImages(): Promise<void> {
       ).toString().trim();
 
       if (remoteDigest && !remoteDigest.includes(localDigest.replace('sha256:', ''))) {
-        console.log('\nA newer image may be available. Run "cereworker upgrade" to update.');
+        console.log('\nA newer image may be available. Run "cereworker images upgrade" to update.');
       }
     }
   } catch {
