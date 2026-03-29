@@ -875,8 +875,10 @@ export class Orchestrator extends TypedEventEmitter {
               await this.subAgentManager.retry(action.agentId);
               break;
             case 'cancel':
-            case 'timeout':
               this.subAgentManager.cancel(action.agentId);
+              break;
+            case 'timeout':
+              this.subAgentManager.timeout(action.agentId);
               break;
           }
         }

@@ -172,6 +172,16 @@ export class SubAgentManager {
     this.saveSessionMeta(instance);
   }
 
+  timeout(id: string): void {
+    const instance = this.agents.get(id);
+    if (!instance) return;
+    if (instance.status !== 'running' && instance.status !== 'pending') return;
+
+    instance.abortController.abort();
+    instance.status = 'timeout';
+    this.saveSessionMeta(instance);
+  }
+
   async retry(id: string): Promise<string> {
     const instance = this.agents.get(id);
     if (!instance) throw new Error(`Agent ${id} not found`);

@@ -188,6 +188,10 @@ class CerebellumServicer(cerebellum_pb2_grpc.CerebellumServicer):
                 "messages_count": agent.messages_count,
                 "tool_calls_count": agent.tool_calls_count,
                 "retry_count": agent.retry_count,
+                "progress_note": agent.progress_note,
+                "progress_percent": agent.progress_percent,
+                "last_progress_at": agent.last_progress_at,
+                "deadline_at": agent.deadline_at,
             }
             health_action = self.agent_monitor.evaluate_agent(agent_state)
             actions.append(health_action)

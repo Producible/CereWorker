@@ -41,7 +41,7 @@ export async function runUpgrade(): Promise<void> {
   // Pull latest image
   console.log(`Pulling ${image}...`);
   try {
-    execSync(`${prefix}docker pull ${image}`, { stdio: 'inherit', timeout: 3_600_000 });
+    execSync(`${prefix}${dockerBin} pull ${image}`, { stdio: 'inherit', timeout: 3_600_000 });
   } catch {
     console.error(`Failed to pull ${image}`);
     process.exit(1);
@@ -50,13 +50,13 @@ export async function runUpgrade(): Promise<void> {
   // Recreate container if it exists
   try {
     const existing = execSync(
-      `${prefix}docker ps -aq -f name=cereworker-cerebellum`,
+      `${prefix}${dockerBin} ps -aq -f name=cereworker-cerebellum`,
       { stdio: 'pipe' },
     ).toString().trim();
 
     if (existing) {
       console.log('Stopping old container...');
-      execSync(`${prefix}docker rm -f cereworker-cerebellum`, { stdio: 'pipe' });
+      execSync(`${prefix}${dockerBin} rm -f cereworker-cerebellum`, { stdio: 'pipe' });
       console.log('Old container removed. It will be recreated on next start.');
     }
   } catch {

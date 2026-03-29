@@ -4,6 +4,8 @@ import { loadConfig } from '@cereworker/config';
 export async function runImages(): Promise<void> {
   const config = loadConfig();
   const image = config.cerebellum.docker.image;
+  // Strip tag for docker images query (e.g. "cereworker/cerebellum:gpu" → "cereworker/cerebellum")
+  const repo = image.includes(':') ? image.slice(0, image.lastIndexOf(':')) : image;
 
   // Detect docker
   let dockerCmd = 'docker';
@@ -22,7 +24,7 @@ export async function runImages(): Promise<void> {
   // List local images
   try {
     const output = execSync(
-      `${dockerCmd} images cereworker/cerebellum --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.Size}}\t{{.CreatedSince}}"`,
+      `${dockerCmd} images ${repo} --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.Size}}\t{{.CreatedSince}}"`,
       { stdio: 'pipe' },
     ).toString().trim();
 
@@ -60,18 +62,18 @@ export async function runImages(): Promise<void> {
   // Check remote digest vs local
   try {
     const localDigest = execSync(
-      `${dockerCmd} images cereworker/cerebellum:latest --format "{{.Digest}}"`,
+      `${dockerCmd} images ${image} --format "{{.Digest}}"`,
       { stdio: 'pipe' },
     ).toString().trim();
 
     if (localDigest && localDigest !== '<none>') {
       const remoteDigest = execSync(
-        `${dockerCmd} manifest inspect cereworker/cerebellum:latest 2>/dev/null | grep -o '"digest": "sha256:[a-f0-9]*"' | head -1`,
+        `${dockerCmd} manifest inspect ${image} 2>/dev/null | grep -o '"digest": "sha256:[a-f0-9]*"' | head -1`,
         { stdio: 'pipe', timeout: 15_000 },
       ).toString().trim();
 
       if (remoteDigest && !remoteDigest.includes(localDigest.replace('sha256:', ''))) {
-        console.log('\nA newer image may be available. Run "cereworker images upgrade" to update.');
+        console.log(`\nA newer image may be available. Run "cereworker images upgrade" to update.`);
       }
     }
   } catch {
