@@ -279,6 +279,7 @@ export class CerebellumClient {
     if (!this.connected) return null;
 
     return new Promise((resolve, reject) => {
+      const deadline = new Date(Date.now() + 5_000);
       this.client.verifyToolResult(
         {
           toolName,
@@ -286,6 +287,7 @@ export class CerebellumClient {
           toolOutput,
           claimedSuccess,
         },
+        { deadline },
         (err: Error | null, response: GrpcClient) => {
           if (err) {
             reject(err);
