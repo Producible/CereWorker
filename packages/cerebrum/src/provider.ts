@@ -423,7 +423,7 @@ export class CerebrumProvider {
     messages: Message[],
     externalTools: Record<string, ToolDefinition>,
     callbacks: StreamCallbacks,
-    options?: { provider?: string; model?: string; systemPrompt?: string; maxSteps?: number },
+    options?: { provider?: string; model?: string; systemPrompt?: string; maxSteps?: number; abortSignal?: AbortSignal },
   ): Promise<void> {
     const systemMessages = messages.filter((m) => m.role === 'system');
     const nonSystemMessages = messages.filter((m) => m.role !== 'system');
@@ -479,6 +479,7 @@ export class CerebrumProvider {
           tools: convertedTools,
           stopWhen: stepCountIs(options?.maxSteps ?? 10),
           ...modelRequestOptions,
+          ...(options?.abortSignal ? { abortSignal: options.abortSignal } : {}),
         });
 
         let fullContent = '';

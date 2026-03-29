@@ -143,7 +143,7 @@ export function createIrcChannel(config: IrcChannelConfig): ChannelPlugin {
               for (const chunk of chunks) {
                 // IRC uses \r\n as line delimiter — send each line as separate PRIVMSG
                 for (const line of chunk.replace(/\r/g, '').split('\n')) {
-                  if (line.trim()) send(`PRIVMSG ${replyTarget} :${line}`);
+                  send(`PRIVMSG ${replyTarget} :${line || ' '}`);
                 }
               }
             }
@@ -166,7 +166,7 @@ export function createIrcChannel(config: IrcChannelConfig): ChannelPlugin {
       const chunks = chunkMarkdown(msg.text, limit);
       for (const chunk of chunks) {
         for (const line of chunk.replace(/\r/g, '').split('\n')) {
-          if (line.trim()) send(`PRIVMSG ${msg.to} :${line}`);
+          send(`PRIVMSG ${msg.to} :${line || ' '}`);
         }
       }
     },

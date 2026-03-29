@@ -22,6 +22,7 @@ export interface CerebrumAdapter {
     messages: Message[],
     tools: Record<string, ToolDefinition>,
     callbacks: StreamCallbacks,
+    options?: { abortSignal?: AbortSignal },
   ): Promise<void>;
   summarize?(messages: Message[]): Promise<string>;
 }
@@ -873,7 +874,7 @@ export class Orchestrator extends TypedEventEmitter {
           log.error('Cerebrum stream error', { error: error.message });
           this.emit({ type: 'error', error });
         },
-      });
+      }, { abortSignal: this.abortController?.signal });
     } catch (error) {
       this.stopStreamWatchdog();
 
