@@ -108,6 +108,8 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
       contextWindow: config.cerebrum.contextWindow,
     },
     toolRuntime: config.tools.runtime,
+    streamStallThreshold: config.cerebrum.streamStallThreshold,
+    maxNudgeRetries: config.cerebrum.maxNudgeRetries,
   });
 
   const cerebrumConfig = {

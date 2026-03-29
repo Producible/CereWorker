@@ -24,7 +24,7 @@ export { Orchestrator } from './orchestrator.js';
 export { ToolRuntime } from './tool-runtime.js';
 export { createLogger, configureLogger } from './logger.js';
 export type { Logger, LogLevel } from './logger.js';
-export type { CerebrumAdapter, CerebellumAdapter, ToolDefinition, StreamCallbacks, OrchestratorOptions, CompactionConfig, FineTuneStatus, TrainingPair } from './orchestrator.js';
+export type { CerebrumAdapter, CerebellumAdapter, ToolDefinition, StreamCallbacks, OrchestratorOptions, CompactionConfig, FineTuneStatus, TrainingPair, StreamState } from './orchestrator.js';
 export type {
   ToolRuntimeConfig,
   ToolRuntimeEngine,

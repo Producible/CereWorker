@@ -25,6 +25,7 @@ interface StatusBarProps {
   taskRunning?: number;
   extensionConnected?: boolean;
   cerebellumEnabled?: boolean;
+  streamStall?: boolean;
 }
 
 function CerebellumLoadingText({ loading }: { loading?: CerebellumLoading | null }) {
@@ -100,6 +101,7 @@ export function StatusBar({
   taskRunning = 0,
   extensionConnected = false,
   cerebellumEnabled = true,
+  streamStall = false,
 }: StatusBarProps) {
   return (
     <Box borderStyle="single" borderColor="gray" paddingX={1} justifyContent="space-between">
@@ -140,7 +142,8 @@ export function StatusBar({
           <Text color="red" bold>AUTO</Text>
         )}
       </Box>
-      <Box>
+      <Box gap={1}>
+        {streamStall && <Text color="red" bold>[STALL]</Text>}
         {showActivity && isStreaming && <Text color="yellow">streaming...</Text>}
       </Box>
     </Box>

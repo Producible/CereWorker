@@ -99,10 +99,19 @@ export interface CompactionConfig {
   contextWindow: number;
 }
 
+export interface StreamState {
+  streaming: boolean;
+  lastActivityAt: number;
+  stallDetected: boolean;
+  nudgeCount: number;
+}
+
 export interface OrchestratorOptions {
   conversationStore?: ConversationStore;
   compaction?: Partial<CompactionConfig>;
   toolRuntime?: Partial<ToolRuntimeConfig>;
+  streamStallThreshold?: number;
+  maxNudgeRetries?: number;
 }
 
 export class Orchestrator extends TypedEventEmitter {
@@ -137,6 +146,11 @@ export class Orchestrator extends TypedEventEmitter {
   private proactiveEnabled = false;
   private discoveryMode = false;
   private onDiscoveryComplete: ((result: { name: string; role: string; traits: string[] }) => void) | null = null;
+  private lastStreamActivityAt = 0;
+  private streamWatchdog: ReturnType<typeof setInterval> | null = null;
+  private streamNudgeCount = 0;
+  private streamStallThreshold = 30_000;
+  private maxNudgeRetries = 2;
   private taskConversations = new Map<string, string>();
   private taskRunning = new Set<string>();
   private recurringTasks: Array<{ id: string; goal: string; schedule: string }> = [];
@@ -155,6 +169,8 @@ export class Orchestrator extends TypedEventEmitter {
     if (options?.compaction) {
       this.compactionConfig = { ...this.compactionConfig, ...options.compaction };
     }
+    if (options?.streamStallThreshold) this.streamStallThreshold = options.streamStallThreshold * 1000;
+    if (options?.maxNudgeRetries) this.maxNudgeRetries = options.maxNudgeRetries;
   }
 
   setCerebrum(cerebrum: CerebrumAdapter): void {
@@ -605,15 +621,91 @@ export class Orchestrator extends TypedEventEmitter {
     }
   }
 
+  getStreamState(): StreamState {
+    return {
+      streaming: this.streamWatchdog !== null,
+      lastActivityAt: this.lastStreamActivityAt,
+      stallDetected: this.streamWatchdog !== null && (Date.now() - this.lastStreamActivityAt) > this.streamStallThreshold,
+      nudgeCount: this.streamNudgeCount,
+    };
+  }
+
+  private startStreamWatchdog(convId: string): void {
+    this.stopStreamWatchdog();
+    this.lastStreamActivityAt = Date.now();
+    this.streamNudgeCount = 0;
+
+    this.streamWatchdog = setInterval(() => {
+      const elapsed = Date.now() - this.lastStreamActivityAt;
+      if (elapsed < this.streamStallThreshold) return;
+
+      const elapsedSeconds = Math.round(elapsed / 1000);
+      this.emit({ type: 'cerebrum:stall', elapsedSeconds });
+
+      // Ask Cerebellum if we should nudge
+      if (this.streamNudgeCount >= this.maxNudgeRetries) return;
+      if (!this.cerebellum?.isConnected()) return;
+
+      void (async () => {
+        try {
+          // Use verifyToolResult with synthetic check — the model verdict
+          // answers "is the stream stall OK?" (false = should nudge)
+          const result = await this.cerebellum!.verifyToolResult(
+            'stream_watchdog',
+            { action: 'check_stall', elapsed: String(elapsedSeconds) },
+            `Stream silent for ${elapsedSeconds}s — no chunks or tool calls received`,
+            false,
+          );
+
+          // If verification says "not passed" → the stall is a problem → nudge
+          const shouldNudge = result && !result.passed;
+
+          if (shouldNudge) {
+            this.streamNudgeCount++;
+            log.info('Cerebellum nudging stalled Cerebrum stream', { elapsed: elapsedSeconds, attempt: this.streamNudgeCount });
+
+            // Abort the stalled stream
+            this.abortController?.abort();
+
+            // Inject nudge message and re-send
+            this.conversations.appendMessage(
+              convId, 'system',
+              '[Cerebellum] You stopped mid-response. Continue from where you left off.',
+            );
+            this.emit({ type: 'cerebrum:stall:nudge', attempt: this.streamNudgeCount });
+
+            this.stopStreamWatchdog();
+
+            // Re-send triggers a new stream from the updated conversation
+            void this.sendMessage('', convId).catch(() => {});
+          }
+        } catch {
+          // Nudge check failed — non-blocking
+        }
+      })();
+    }, 15_000);
+  }
+
+  private stopStreamWatchdog(): void {
+    if (this.streamWatchdog) {
+      clearInterval(this.streamWatchdog);
+      this.streamWatchdog = null;
+    }
+  }
+
   async sendMessage(content: string, conversationId?: string): Promise<void> {
     if (!this.cerebrum) throw new Error('Cerebrum not connected');
 
     const convId = conversationId ?? this.activeConversationId;
     if (!convId) throw new Error('No active conversation');
 
-    const userMessage = this.conversations.appendMessage(convId, 'user', content);
-    this.emit({ type: 'message:user', message: userMessage });
+    // Empty content = nudge re-send (system message already appended), skip user message
+    if (content) {
+      const userMessage = this.conversations.appendMessage(convId, 'user', content);
+      this.emit({ type: 'message:user', message: userMessage });
+    }
     this.emit({ type: 'message:cerebrum:start', conversationId: convId });
+    this.startStreamWatchdog(convId);
 
     let messages = this.conversations.getMessages(convId);
 
@@ -681,9 +773,11 @@ export class Orchestrator extends TypedEventEmitter {
       await this.cerebrum.stream(allMessages, toolDefs, {
         onChunk: (chunk) => {
           fullContent += chunk;
+          this.lastStreamActivityAt = Date.now();
           this.emit({ type: 'message:cerebrum:chunk', chunk });
         },
         onToolCall: async (toolCall) => {
+          this.lastStreamActivityAt = Date.now();
           const requestedToolName = toolCall.name;
           const normalizedToolName = requestedToolName.trim() || requestedToolName;
           this.emit({ type: 'message:cerebrum:toolcall', toolCall: { ...toolCall, name: normalizedToolName } });
@@ -756,6 +850,7 @@ export class Orchestrator extends TypedEventEmitter {
           return result;
         },
         onFinish: (content, toolCalls) => {
+          this.stopStreamWatchdog();
           let displayContent = content;
 
           // Check for discovery completion — parse and strip the tag before storing
@@ -779,11 +874,13 @@ export class Orchestrator extends TypedEventEmitter {
           this.emit({ type: 'message:cerebrum:end', message: cerebrumMessage });
         },
         onError: (error) => {
+          this.stopStreamWatchdog();
           log.error('Cerebrum stream error', { error: error.message });
           this.emit({ type: 'error', error });
         },
       });
     } catch (error) {
+      this.stopStreamWatchdog();
       const err = error instanceof Error ? error : new Error(String(error));
       log.error('Send message failed', { error: err.message });
       this.emit({ type: 'error', error: err });

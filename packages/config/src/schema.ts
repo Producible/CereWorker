@@ -59,6 +59,8 @@ export const configSchema = z.object({
           keepRecentMessages: z.number().default(10),
         })
         .default({}),
+      streamStallThreshold: z.number().default(30),
+      maxNudgeRetries: z.number().default(2),
     })
     .default({}),
 

@@ -39,6 +39,8 @@ export type OrchestratorEvent =
   | { type: 'message:proactive'; content: string; source: string }
   | { type: 'proactive:resume'; taskId: string; goal: string }
   | { type: 'proactive:report'; report: string }
+  | { type: 'cerebrum:stall'; elapsedSeconds: number }
+  | { type: 'cerebrum:stall:nudge'; attempt: number }
   | { type: 'error'; error: Error };
 
 type EventHandler<T> = (event: T) => void;
