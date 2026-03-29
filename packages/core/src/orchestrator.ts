@@ -883,8 +883,8 @@ export class Orchestrator extends TypedEventEmitter {
         },
         onError: (error) => {
           this.stopStreamWatchdog();
-          // Don't log/emit if this is an intentional nudge-abort — the catch block handles retry
-          if (this.abortController?.signal.aborted && this.streamNudgeCount > 0) return;
+          // Don't log/emit if the abort was intentional (nudge or Cerebellum disconnect) — catch block handles it
+          if (this.abortController?.signal.aborted) return;
           log.error('Cerebrum stream error', { error: error.message });
           this.emit({ type: 'error', error });
         },
