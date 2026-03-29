@@ -644,7 +644,12 @@ export class Orchestrator extends TypedEventEmitter {
       const elapsedSeconds = Math.round(elapsed / 1000);
       this.emit({ type: 'cerebrum:stall', elapsedSeconds });
 
-      if (!this.cerebellum?.isConnected()) return; // Cerebellum must be online
+      if (!this.cerebellum?.isConnected()) {
+        // Cerebellum dropped mid-stream — abort the current turn
+        log.warn('Cerebellum disconnected during active stream — aborting');
+        this.abortController?.abort();
+        return;
+      }
 
       this._nudgeInFlight = true;
 
@@ -897,6 +902,14 @@ export class Orchestrator extends TypedEventEmitter {
           '[Cerebellum] You stopped mid-response. Continue from where you left off.',
         );
         continue; // retry loop
+      }
+
+      // Check if Cerebellum dropped mid-stream
+      if (this.cerebellum && !this.cerebellum.isConnected() && this.abortController?.signal.aborted) {
+        const err = new Error('Cerebellum disconnected during active response. Restart it with: docker compose up -d cerebellum');
+        log.error('Cerebellum disconnected mid-stream', { error: err.message });
+        this.emit({ type: 'error', error: err });
+        break;
       }
 
       const err = error instanceof Error ? error : new Error(String(error));

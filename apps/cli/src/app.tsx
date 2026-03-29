@@ -106,7 +106,7 @@ export function App({ config, resumeConversationId }: AppProps) {
   useEffect(() => {
     if (!service.needsDiscovery) return;
     // Send a seed message to trigger the agent's first discovery question
-    orchestrator.sendMessage('Hello! I just started for the first time.');
+    orchestrator.sendMessage('Hello! I just started for the first time.').catch(() => {});
   }, [service, orchestrator]);
 
   // Listen for browser extension events
@@ -129,7 +129,9 @@ export function App({ config, resumeConversationId }: AppProps) {
     (text: string) => {
       setStickyMessage(false);
       setSystemMessage(null);
-      orchestrator.sendMessage(text);
+      orchestrator.sendMessage(text).catch((err) => {
+        orchestrator.emit({ type: 'error', error: err instanceof Error ? err : new Error(String(err)) });
+      });
     },
     [orchestrator],
   );
