@@ -490,20 +490,23 @@ export class CerebrumProvider {
         const abortSignal = options?.abortSignal;
         const iterator = result.fullStream[Symbol.asyncIterator]();
 
+        // Single abort listener shared across all iterations (avoids leak)
+        let abortReject: ((err: Error) => void) | null = null;
+        const abortPromise = abortSignal
+          ? new Promise<never>((_, reject) => {
+              abortReject = reject;
+              if (abortSignal.aborted) reject(new Error('Stream aborted'));
+              else abortSignal.addEventListener('abort', () => reject(new Error('Stream aborted')), { once: true });
+            })
+          : null;
+
+        try {
         while (true) {
           if (abortSignal?.aborted) throw new Error('Stream aborted');
 
-          // Race the next stream part against the abort signal
-          let nextResult: IteratorResult<unknown>;
-          if (abortSignal) {
-            const abortPromise = new Promise<never>((_, reject) => {
-              if (abortSignal.aborted) reject(new Error('Stream aborted'));
-              abortSignal.addEventListener('abort', () => reject(new Error('Stream aborted')), { once: true });
-            });
-            nextResult = await Promise.race([iterator.next(), abortPromise]);
-          } else {
-            nextResult = await iterator.next();
-          }
+          const nextResult = abortPromise
+            ? await Promise.race([iterator.next(), abortPromise])
+            : await iterator.next();
 
           if (nextResult.done) break;
           const part = nextResult.value as { type: string; text?: string; toolCallId?: string; toolName?: string; input?: unknown; error?: unknown };
@@ -529,6 +532,11 @@ export class CerebrumProvider {
               );
               break;
           }
+        }
+        } catch (abortErr) {
+          // Tear down the underlying stream so tool execution doesn't continue in background
+          await iterator.return?.(undefined);
+          throw abortErr;
         }
 
         callbacks.onFinish(fullContent, collectedToolCalls.length > 0 ? collectedToolCalls : undefined);
