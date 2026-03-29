@@ -1,5 +1,15 @@
-import { Client, GatewayIntentBits, Events, Partials, type Message as DiscordMessage } from 'discord.js';
-import type { ChannelPlugin, MessageHandler, OutboundMessage, InboundMessage } from '../types.js';
+import {
+  Client,
+  GatewayIntentBits,
+  Events,
+  Partials,
+  REST,
+  Routes,
+  SlashCommandBuilder,
+  type Message as DiscordMessage,
+  type ChatInputCommandInteraction,
+} from 'discord.js';
+import type { ChannelPlugin, MessageHandler, OutboundMessage, InboundMessage, CommandDef } from '../types.js';
 import { chunkMarkdown, CHANNEL_LIMITS } from '../chunking.js';
 
 export interface DiscordChannelConfig {
@@ -7,6 +17,7 @@ export interface DiscordChannelConfig {
   applicationId?: string;
   allowFrom: string[];
   channelIds: string[];
+  commands?: CommandDef[];
 }
 
 export function getDiscordClientOptions() {
@@ -37,6 +48,27 @@ export function createDiscordChannel(config: DiscordChannelConfig): ChannelPlugi
   let client: Client | null = null;
   let connected = false;
   const limit = CHANNEL_LIMITS.discord;
+
+  async function registerSlashCommands(): Promise<void> {
+    if (!config.applicationId || !config.commands?.length) return;
+
+    try {
+      const rest = new REST({ version: '10' }).setToken(config.token);
+      const commands = config.commands.map((cmd) =>
+        new SlashCommandBuilder()
+          .setName(cmd.name)
+          .setDescription(cmd.description)
+          .toJSON(),
+      );
+
+      await rest.put(
+        Routes.applicationCommands(config.applicationId),
+        { body: commands },
+      );
+    } catch {
+      // Non-critical — bot works without slash commands
+    }
+  }
 
   return {
     id: 'discord',
@@ -91,8 +123,45 @@ export function createDiscordChannel(config: DiscordChannelConfig): ChannelPlugi
         }
       });
 
+      // Handle slash command interactions
+      client.on(Events.InteractionCreate, async (interaction) => {
+        if (!interaction.isChatInputCommand()) return;
+        const cmd = interaction as ChatInputCommandInteraction;
+
+        if (!this.isAllowed(cmd.user.id)) {
+          await cmd.reply({ content: 'Not authorized.', ephemeral: true });
+          return;
+        }
+
+        // Convert to the same format as a text message: /commandname
+        const text = `/${cmd.commandName}`;
+        const inbound: InboundMessage = {
+          channelId: 'discord',
+          senderId: cmd.user.id,
+          senderName: cmd.user.username,
+          text,
+          sessionId: cmd.channelId ? `channel:${cmd.channelId}` : `dm:${cmd.user.id}`,
+          timestamp: cmd.createdTimestamp,
+        };
+
+        await cmd.deferReply();
+        const response = await handler(inbound);
+        if (response) {
+          const chunks = chunkMarkdown(response, limit);
+          await cmd.editReply(chunks[0]);
+          for (let i = 1; i < chunks.length; i++) {
+            await cmd.followUp(chunks[i]);
+          }
+        } else {
+          await cmd.editReply('Done.');
+        }
+      });
+
       await client.login(config.token);
       connected = true;
+
+      // Register slash commands after login
+      await registerSlashCommands();
     },
 
     async stop() {

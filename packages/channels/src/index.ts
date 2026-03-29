@@ -3,6 +3,7 @@ export type {
   ChannelMeta,
   ChannelId,
   ChannelConfig,
+  CommandDef,
   InboundMessage,
   OutboundMessage,
   MessageHandler,

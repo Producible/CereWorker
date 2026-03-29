@@ -1,4 +1,5 @@
 import type { CereWorkerConfig } from '@cereworker/config';
+import type { CommandDef } from './types.js';
 import { ChannelManager } from './manager.js';
 import { createSlackChannel } from './adapters/slack.js';
 import { createDiscordChannel } from './adapters/discord.js';
@@ -10,7 +11,7 @@ import { createWhatsAppChannel } from './adapters/whatsapp.js';
 import { createSignalChannel } from './adapters/signal.js';
 import { createIrcChannel } from './adapters/irc.js';
 
-export function createChannelManager(config: CereWorkerConfig): ChannelManager {
+export function createChannelManager(config: CereWorkerConfig, commands?: CommandDef[]): ChannelManager {
   const manager = new ChannelManager();
 
   const { channels } = config;
@@ -33,6 +34,7 @@ export function createChannelManager(config: CereWorkerConfig): ChannelManager {
         applicationId: channels.discord.applicationId,
         allowFrom: channels.discord.allowFrom,
         channelIds: channels.discord.channelIds,
+        commands,
       }),
     );
   }

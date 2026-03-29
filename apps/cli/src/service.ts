@@ -10,7 +10,7 @@ import type { CereWorkerConfig } from '@cereworker/config';
 import { createChannelManager, type ChannelManager } from '@cereworker/channels';
 import { createBrowserTools, PuppeteerBackend, CdpBackend, BrowserRelay, ExtensionBackend } from '@cereworker/browser';
 import { loadSkills, filterEligibleSkills, SkillRegistry } from '@cereworker/skills';
-import { parseCommand, handleSlashCommand, type CommandContext } from './commands.js';
+import { parseCommand, handleSlashCommand, CHANNEL_COMMANDS, type CommandContext } from './commands.js';
 import {
   HippocampusStore,
   HippocampusCurator,
@@ -380,7 +380,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
   }
 
   // Create channel manager
-  const channelManager = createChannelManager(config);
+  const channelManager = createChannelManager(config, CHANNEL_COMMANDS);
 
   // Create pairing store and wire to channel manager
   const pairingStore = new PairingStore();

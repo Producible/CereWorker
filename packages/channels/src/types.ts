@@ -46,6 +46,11 @@ export interface ChannelPlugin {
 
 export type ChannelId = 'slack' | 'discord' | 'telegram' | 'matrix' | 'feishu' | 'wechat' | 'whatsapp' | 'signal' | 'irc';
 
+export interface CommandDef {
+  name: string;
+  description: string;
+}
+
 export interface ChannelConfig {
   enabled: boolean;
   allowFrom: string[];
