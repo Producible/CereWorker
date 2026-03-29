@@ -66,6 +66,7 @@ export interface ServiceInstance {
   runTask(taskId: string): Promise<{ success: boolean; error?: string }>;
   getTaskState(): Record<string, TaskStateEntry>;
   getEnabledTasks(): Array<{ id: string; goal: string; schedule: string; autoMode: boolean; timeoutMinutes: number }>;
+  listHeartbeatTasks(): Promise<Array<{ taskId: string; description: string; status: string; lastRun?: number; scheduleHint: string; metadata?: Record<string, string> }>>;
   shutdown(): Promise<void>;
 }
 
@@ -1182,6 +1183,11 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     return enabledTasks;
   }
 
+  async function listHeartbeatTasks(): Promise<Array<{ taskId: string; description: string; status: string; lastRun?: number; scheduleHint: string; metadata?: Record<string, string> }>> {
+    if (!cerebellumClient) return [];
+    return cerebellumClient.listTasks();
+  }
+
   return {
     orchestrator,
     channelManager,
@@ -1197,6 +1203,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     runTask,
     getTaskState,
     getEnabledTasks,
+    listHeartbeatTasks,
     shutdown,
   };
 }

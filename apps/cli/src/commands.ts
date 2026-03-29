@@ -50,7 +50,8 @@ export const SLASH_COMMANDS: Array<{ name: string; hint: string }> = [
   { name: '/resume', hint: 'resume conversation' },
   { name: '/skills', hint: 'list skills' },
   { name: '/stop', hint: 'emergency stop' },
-  { name: '/task', hint: 'run task' },
+  { name: '/task', hint: 'recurring tasks' },
+  { name: '/tasks', hint: 'cerebellum heartbeat tasks' },
 ];
 
 /** Parse a raw message into command + args. Returns null if not a slash command. */
@@ -98,6 +99,7 @@ export function handleSlashCommand(command: string, args: string, ctx: CommandCo
   /auto [on|off]        Toggle auto mode
   /finetune [sub]       Fine-tuning: start, status, config, history
   /task [sub]           Recurring tasks: list, run <id>, history <id>
+  /tasks                List Cerebellum heartbeat tasks
   /stop                 Emergency stop
   /clear                Start a new conversation (TUI only)
   /resume <id>          Resume a conversation (TUI only)
@@ -322,6 +324,21 @@ export function handleSlashCommand(command: string, args: string, ctx: CommandCo
         return { type: 'message', text: `Recurring Tasks:\n${lines.join('\n')}`, sticky: true };
       }
       return { type: 'message', text: 'Usage: /task [list|run|history]\n  /task run <id>     Manually trigger a task\n  /task history <id> Show recent messages' };
+    }
+
+    case 'tasks': {
+      return {
+        type: 'async',
+        promise: service.listHeartbeatTasks().then((tasks) => {
+          if (tasks.length === 0) return 'No heartbeat tasks registered with Cerebellum.';
+          const lines = tasks.map((t) => {
+            const lastRun = t.lastRun ? new Date(t.lastRun * 1000).toLocaleString() : 'never';
+            const meta = t.metadata?.type ? ` [${t.metadata.type}]` : '';
+            return `  ${t.taskId.slice(0, 8)} | ${t.status.padEnd(9)} | ${t.scheduleHint}${meta}\n    ${t.description}\n    Last run: ${lastRun}`;
+          });
+          return `Cerebellum Heartbeat Tasks (${tasks.length}):\n${lines.join('\n')}`;
+        }).catch((err: Error) => `Failed to list heartbeat tasks: ${err.message}`),
+      };
     }
 
     default:
