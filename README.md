@@ -21,6 +21,7 @@ A dual-LLM autonomous agent that pairs a small local model (the **Cerebellum**) 
   - [Context Window Management](#context-window-management)
   - [Exec Safety](#exec-safety-supervised-and-full-auto-modes)
   - [Emergency Stop](#emergency-stop)
+  - [Stream Watchdog](#stream-watchdog)
   - [Gateway: Multi-Node Control](#gateway-multi-node-control)
   - [Browser Automation](#browser-automation)
     - [Installing the Chrome Extension](#installing-the-chrome-extension)
@@ -138,7 +139,7 @@ The wizard walks you through:
 - **LLM provider** -- Anthropic, OpenAI API, OpenAI Codex (ChatGPT OAuth), Google, OpenRouter, DeepSeek, xAI, Mistral, Together, Moonshot, MiniMax, MiniMax Portal (OAuth), or local (Ollama/vLLM)
 - **Cerebellum model** -- choose from Qwen3, SmolLM2, Phi-4 Mini, or a custom checkpoint, with hardware-aware recommendations
 - **Fine-tuning** -- method (Auto/LoRA/QLoRA/Full) and schedule, with GPU/RAM detection
-- **Messaging channels** -- enable Slack, Discord, Telegram, Matrix, Feishu, or WeChat
+- **Messaging channels** -- enable Slack, Discord, Telegram, Matrix, Feishu, WeChat, WhatsApp, Signal, or IRC
 - **Config output** -- writes `~/.cereworker/config.yaml` with env var references for secrets
 
 For providers with multiple connection modes, onboarding groups them as **provider -> type**. For example, you select `OpenAI`, then choose either `API` or `Codex (ChatGPT OAuth)`. MiniMax works the same way with `API` and `Portal (OAuth)`.
@@ -246,9 +247,13 @@ Or from source:
 docker compose up -d cerebellum
 ```
 
+### Updating
+
+CereWorker checks for new versions on startup. If a newer release is available on npm, the banner shows an update notice with the install command. The check is cached for 24 hours and runs in the background (no startup delay). `cereworker -v` also shows available updates.
+
 ### Updating the Cerebellum
 
-When a new Cerebellum image is published, `npm install -g @cereworker/cli` automatically pulls the latest image during postinstall. To update the image independently:
+When a new Cerebellum image is published, CereWorker automatically pulls it in the background on startup. To update the image explicitly:
 
 ```bash
 cereworker images upgrade
@@ -273,6 +278,7 @@ channels:
   discord:
     enabled: true
     token: ...
+    applicationId: "..."         # enables / slash command autocomplete
   telegram:
     enabled: true
     token: ...
@@ -371,6 +377,20 @@ Shell command execution has two operating modes, toggled via `/auto [on|off]`:
 ### Emergency Stop
 
 Type `/stop` at any time -- even while the Cerebrum is streaming -- to immediately abort all operations. The orchestrator cancels the active stream, terminates all running sub-agents, and emits an `emergency:stop` event. The TUI confirms the stop.
+
+### Stream Watchdog
+
+The Cerebellum monitors the main Cerebrum stream for stalls. During active streaming, a watchdog checks every 15 seconds whether any chunks or tool results have been received. If the stream goes silent beyond the threshold (default 30 seconds), the Cerebellum is asked: "should we nudge it to continue?" If yes, the stalled stream is aborted via AbortSignal, a system message is injected, and the conversation automatically resumes. The TUI shows a `[STALL]` indicator during detected stalls.
+
+Configure via:
+
+```yaml
+cerebrum:
+  streamStallThreshold: 30   # seconds before stall detection
+  maxNudgeRetries: 2         # max nudge attempts per turn
+```
+
+This prevents the common failure mode where complex multi-tool workflows (browser automation, long API chains) cause the LLM to silently stop mid-response.
 
 ### Gateway: Multi-Node Control
 
@@ -515,6 +535,8 @@ When a message arrives from Slack/Discord/Telegram/Matrix/Feishu/WeChat/WhatsApp
 2. If allowed, it forwards the message text to the orchestrator
 3. The orchestrator processes it the same way as a TUI message (Cerebrum reasoning + tools)
 4. The response is sent back through the same channel adapter
+
+**Slash command autocomplete**: Discord registers Application Commands on startup (when `applicationId` is set), so users see all CereWorker commands in the `/` menu. Telegram registers commands via `setMyCommands()` for the same autocomplete experience. Other platforms process `/command` as plain text.
 
 ### Comparison with Traditional Agents
 
@@ -701,6 +723,8 @@ cerebrum:
     #   auth: oauth
     #   baseUrl: https://api.minimax.io/anthropic
   contextWindow: 128000
+  streamStallThreshold: 30     # seconds before Cerebellum nudges stalled stream
+  maxNudgeRetries: 2           # max nudge attempts per turn
   compaction:
     enabled: true
     threshold: 0.8
