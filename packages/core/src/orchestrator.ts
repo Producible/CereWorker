@@ -638,43 +638,18 @@ export class Orchestrator extends TypedEventEmitter {
     this.streamWatchdog = setInterval(() => {
       const elapsed = Date.now() - this.lastStreamActivityAt;
       if (elapsed < this.streamStallThreshold) return;
+      if (this.streamNudgeCount >= this.maxNudgeRetries) return;
 
       const elapsedSeconds = Math.round(elapsed / 1000);
       this.emit({ type: 'cerebrum:stall', elapsedSeconds });
 
-      // Nudge: abort the current stream so the retry loop in sendMessage picks it up
-      if (this.streamNudgeCount >= this.maxNudgeRetries) return;
-      if (!this.cerebellum?.isConnected()) return;
-
-      // Only one nudge check at a time
-      if (this._nudgeInFlight) return;
-      this._nudgeInFlight = true;
-
-      void (async () => {
-        try {
-          const result = await this.cerebellum!.verifyToolResult(
-            'stream_watchdog',
-            { action: 'check_stall', elapsed: String(elapsedSeconds) },
-            `Stream silent for ${elapsedSeconds}s — no chunks or tool calls received`,
-            false,
-          );
-
-          if (result && !result.passed) {
-            this.streamNudgeCount++;
-            log.info('Cerebellum nudging stalled stream', { elapsed: elapsedSeconds, attempt: this.streamNudgeCount });
-            this.emit({ type: 'cerebrum:stall:nudge', attempt: this.streamNudgeCount });
-            // Abort the current stream — the catch block in sendMessage will handle retry
-            this.abortController?.abort();
-          }
-        } catch {
-          // Nudge check failed — non-blocking
-        } finally {
-          this._nudgeInFlight = false;
-        }
-      })();
+      // Deterministic nudge — no Cerebellum needed. Stall detection is clear-cut.
+      this.streamNudgeCount++;
+      log.info('Nudging stalled stream', { elapsed: elapsedSeconds, attempt: this.streamNudgeCount });
+      this.emit({ type: 'cerebrum:stall:nudge', attempt: this.streamNudgeCount });
+      this.abortController?.abort();
     }, 15_000);
   }
-  private _nudgeInFlight = false;
 
   private stopStreamWatchdog(): void {
     if (this.streamWatchdog) {
