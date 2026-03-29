@@ -906,3 +906,62 @@ describe('CerebrumProvider OpenAI Codex OAuth', () => {
     }
   });
 });
+
+describe('CerebrumProvider abortSignal', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    streamTextMock.mockReturnValue({
+      fullStream: (async function* () {
+        yield { type: 'text-delta', text: 'hello' };
+      })(),
+    });
+    toolMock.mockImplementation((definition: unknown) => definition);
+    stepCountIsMock.mockReturnValue(Symbol('stopWhen'));
+    createOpenAIMock.mockImplementation(() => {
+      const provider = (modelId: string) => ({ modelId });
+      provider.chat = (modelId: string) => ({ modelId, transport: 'chat' });
+      return provider;
+    });
+  });
+
+  it('forwards abortSignal to streamText when provided', async () => {
+    const provider = new CerebrumProvider({
+      defaultProvider: 'openai',
+      defaultModel: 'gpt-4o',
+      providers: { openai: { apiKey: 'test-key' } },
+      maxSteps: 10,
+      temperature: 0.7,
+    });
+
+    const ac = new AbortController();
+    await provider.stream(
+      [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }],
+      {},
+      { onChunk: () => {}, onToolCall: async () => ({ callId: '', output: '', isError: false }), onFinish: () => {}, onError: () => {} },
+      { abortSignal: ac.signal },
+    );
+
+    expect(streamTextMock).toHaveBeenCalledTimes(1);
+    const args = streamTextMock.mock.calls[0][0] as { abortSignal?: AbortSignal };
+    expect(args.abortSignal).toBe(ac.signal);
+  });
+
+  it('does not include abortSignal when not provided', async () => {
+    const provider = new CerebrumProvider({
+      defaultProvider: 'openai',
+      defaultModel: 'gpt-4o',
+      providers: { openai: { apiKey: 'test-key' } },
+      maxSteps: 10,
+      temperature: 0.7,
+    });
+
+    await provider.stream(
+      [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }],
+      {},
+      { onChunk: () => {}, onToolCall: async () => ({ callId: '', output: '', isError: false }), onFinish: () => {}, onError: () => {} },
+    );
+
+    const args = streamTextMock.mock.calls[0][0] as { abortSignal?: AbortSignal };
+    expect(args.abortSignal).toBeUndefined();
+  });
+});

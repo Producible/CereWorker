@@ -3,6 +3,12 @@ import * as tls from 'node:tls';
 import type { ChannelPlugin, MessageHandler, OutboundMessage, InboundMessage } from '../types.js';
 import { chunkMarkdown, CHANNEL_LIMITS } from '../chunking.js';
 
+/** Split a text chunk into individual IRC-safe PRIVMSG lines.
+ * Empty lines are sent as a single space to preserve formatting. */
+export function splitIrcLines(text: string): string[] {
+  return text.replace(/\r/g, '').split('\n').map((line) => line || ' ');
+}
+
 export interface IrcChannelConfig {
   host: string;
   port: number;
@@ -141,9 +147,8 @@ export function createIrcChannel(config: IrcChannelConfig): ChannelPlugin {
               const replyTarget = target.startsWith('#') ? target : nick;
               const chunks = chunkMarkdown(response, limit);
               for (const chunk of chunks) {
-                // IRC uses \r\n as line delimiter — send each line as separate PRIVMSG
-                for (const line of chunk.replace(/\r/g, '').split('\n')) {
-                  send(`PRIVMSG ${replyTarget} :${line || ' '}`);
+                for (const line of splitIrcLines(chunk)) {
+                  send(`PRIVMSG ${replyTarget} :${line}`);
                 }
               }
             }
@@ -165,8 +170,8 @@ export function createIrcChannel(config: IrcChannelConfig): ChannelPlugin {
       if (!socket) throw new Error('IRC not started');
       const chunks = chunkMarkdown(msg.text, limit);
       for (const chunk of chunks) {
-        for (const line of chunk.replace(/\r/g, '').split('\n')) {
-          send(`PRIVMSG ${msg.to} :${line || ' '}`);
+        for (const line of splitIrcLines(chunk)) {
+          send(`PRIVMSG ${msg.to} :${line}`);
         }
       }
     },

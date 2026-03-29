@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseIrcLine, extractIrcNick } from './irc.js';
+import { parseIrcLine, extractIrcNick, splitIrcLines } from './irc.js';
 
 describe('IRC protocol helpers', () => {
   describe('parseIrcLine', () => {
@@ -54,6 +54,30 @@ describe('IRC protocol helpers', () => {
 
     it('handles nick with special characters', () => {
       expect(extractIrcNick('CereWorker_01!cw@192.168.1.1')).toBe('CereWorker_01');
+    });
+  });
+
+  describe('splitIrcLines', () => {
+    it('splits multiline text into individual lines', () => {
+      expect(splitIrcLines('line1\nline2\nline3')).toEqual(['line1', 'line2', 'line3']);
+    });
+
+    it('preserves blank lines as single space', () => {
+      expect(splitIrcLines('para1\n\npara2')).toEqual(['para1', ' ', 'para2']);
+    });
+
+    it('strips carriage returns', () => {
+      expect(splitIrcLines('line1\r\nline2\r\n')).toEqual(['line1', 'line2', ' ']);
+    });
+
+    it('handles single line without newlines', () => {
+      expect(splitIrcLines('hello world')).toEqual(['hello world']);
+    });
+
+    it('preserves code block spacing', () => {
+      const code = '```\nfoo\n\nbar\n```';
+      const lines = splitIrcLines(code);
+      expect(lines).toEqual(['```', 'foo', ' ', 'bar', '```']);
     });
   });
 });

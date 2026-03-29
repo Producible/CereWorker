@@ -30,7 +30,7 @@ function writeCache(cache: UpdateCache): void {
   }
 }
 
-function isNewer(latest: string, current: string): boolean {
+export function isNewer(latest: string, current: string): boolean {
   const parse = (v: string) => v.split('.').map(Number);
   const [lMaj, lMin, lPatch] = parse(latest);
   const [cMaj, cMin, cPatch] = parse(current);
