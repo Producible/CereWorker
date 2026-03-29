@@ -313,15 +313,18 @@ Running in parallel:
 
 The Cerebrum can spawn independent sub-agents for parallel work:
 
-1. The Cerebrum calls `spawn_agent` with a task description, creating an async worker
+1. The Cerebrum calls `spawn_agent` with a task description, creating an async worker. Set `longRunning: true` for tasks that may take hours or days (unlimited timeout, session preserved for recovery)
 2. Each sub-agent gets its own isolated conversation, session directory, and Hippocampus memory at `~/.cereworker/agents/<id>/memory/`
-3. Sub-agents share the same Cerebrum provider and tools (except they cannot spawn further sub-agents)
-4. The Cerebellum monitors sub-agent health every heartbeat tick via `ReportAgentStates`:
-   - **Deterministic checks**: is the agent alive? has it timed out? is it stalled (no activity for > 2 minutes)?
-   - **Model tiebreaker**: for ambiguous stalls, the model answers "should we retry? yes/no"
+3. Sub-agents share the same Cerebrum provider and tools (except they cannot spawn further sub-agents). Long-running agents call `report_progress` to report intermediate status
+4. The Cerebellum is the **sole lifecycle manager** for sub-agents -- there are no hard timeouts on the TypeScript side. Every heartbeat tick, the Cerebellum evaluates agent health via `ReportAgentStates` with progress-aware logic:
+   - **Active**: agent has recent activity or progress reports -- no action needed
+   - **Stalled (no progress)**: deterministic stall detection, LLM tiebreaker for ambiguous cases ("should we retry? yes/no")
+   - **Past deadline + making progress**: LLM asked "agent exceeded deadline but reports progress -- should it continue?" before killing
+   - **Past deadline + no progress**: timed out deterministically
 5. Corrective actions are applied automatically: `ping` (inject a prod message), `retry` (re-spawn), or `cancel`
-6. The Cerebrum can query agent status via `query_agents` and cancel via `cancel_agent`
-7. Completed agents with `cleanup: "delete"` have their session directories removed; `cleanup: "keep"` agents persist for later reference
+6. The Cerebrum can query agent status (including progress) via `query_agents` and cancel via `cancel_agent`. Users can monitor and stop agents via `/agents stop <id>` and `/agents info <id>`
+7. **Restart recovery**: if CereWorker restarts while agents are running, they are automatically resumed from their persisted `session.json` and `conversations.db`. A resume system message is injected so the agent can continue where it left off
+8. Completed agents with `cleanup: "delete"` have their session directories removed; `cleanup: "keep"` agents (and all `longRunning` agents) persist for later reference
 
 ### Context Window Management
 
@@ -502,7 +505,7 @@ When a message arrives from Slack/Discord/Telegram/Matrix/Feishu/WeChat:
 | Scheduling | Cron expressions, fixed timers | Small LLM evaluates what needs attention |
 | Verification | Trust LLM output | Cerebellum monitors actual disk/network effects |
 | Context limits | Summarize and hope | Knowledge survives in model weights |
-| Sub-agents | Manual orchestration or none | Cerebellum-monitored parallel workers with isolated memory |
+| Sub-agents | Hard timeouts, lost on restart | Cerebellum-managed lifecycle with progress tracking and restart recovery |
 | Multi-node | Custom gateway or none | Built-in WebSocket gateway with remote tool proxying |
 | Identity | Static config, swappable profiles | Learned through conversation, fine-tuned into weights |
 | Cost | Every request hits giant LLM | Routine decisions handled by local 0.6B model |
@@ -564,7 +567,7 @@ Other agents get more expensive as they get smarter (longer prompts, more retrie
 
 **Memory (Hippocampus)** -- Read/write MEMORY.md, append daily logs, search across memory files
 
-**Sub-Agents** -- Spawn parallel workers (`spawn_agent`), check status (`query_agents`), cancel (`cancel_agent`). Each sub-agent has isolated memory and session
+**Sub-Agents** -- Spawn parallel workers (`spawn_agent` with optional `longRunning: true` for hours/days tasks), check status and progress (`query_agents`), cancel (`cancel_agent`). Each sub-agent has isolated memory and session. Long-running agents call `report_progress` to report intermediate status. Agents are automatically recovered after a restart
 
 ## Skills
 
