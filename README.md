@@ -606,7 +606,7 @@ The Cerebellum supports multiple small LLMs, selectable during onboarding or via
 | Phi-4 Mini 3.8B | `microsoft/Phi-4-mini-instruct` | ~7.6 GB | 8 GB | GPU recommended, best quality |
 | Custom | local path | varies | varies | Your own fine-tuned checkpoint |
 
-Fine-tuning methods: **Auto** (detects your hardware), **LoRA** (GPU 4+ GB VRAM), **QLoRA** (GPU 2+ GB VRAM), **Full** (16+ GB RAM or 8+ GB VRAM). Schedule: Auto (idle time), Hourly, Daily, or Weekly.
+Fine-tuning methods: **Auto** (detects your hardware), **LoRA** (GPU 4+ GB VRAM), **QLoRA** (GPU 2+ GB VRAM), **Full** (CPU with 16+ GB RAM or GPU with 8+ GB VRAM). Full fine-tuning works on CPU-only machines using float32 precision. Schedule: Auto (idle time), Hourly, Daily, or Weekly.
 
 ## Hippocampus: Memory System
 

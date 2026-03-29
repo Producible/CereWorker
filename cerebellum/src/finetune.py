@@ -276,14 +276,16 @@ class FineTuneEngine:
         if tokenizer.pad_token is None:
             tokenizer.pad_token = tokenizer.eos_token
 
+        use_gpu = torch.cuda.is_available()
+
         model_kwargs = {
             "trust_remote_code": True,
-            "torch_dtype": "auto",
         }
 
         if method == "qlora":
             from transformers import BitsAndBytesConfig
 
+            model_kwargs["torch_dtype"] = "auto"
             model_kwargs["quantization_config"] = BitsAndBytesConfig(
                 load_in_4bit=True,
                 bnb_4bit_compute_dtype=torch.float16,
@@ -291,10 +293,15 @@ class FineTuneEngine:
             )
             model_kwargs["device_map"] = "auto"
         elif method == "lora":
+            model_kwargs["torch_dtype"] = "auto"
+            model_kwargs["device_map"] = "auto"
+        elif use_gpu:
+            # Full fine-tune on GPU
+            model_kwargs["torch_dtype"] = "auto"
             model_kwargs["device_map"] = "auto"
         else:
-            # Full fine-tune — CPU or single GPU
-            model_kwargs["device_map"] = "auto"
+            # Full fine-tune on CPU — must use float32, no device_map
+            model_kwargs["torch_dtype"] = torch.float32
 
         model = AutoModelForCausalLM.from_pretrained(self.model_path, **model_kwargs)
 
@@ -344,19 +351,28 @@ class FineTuneEngine:
             SFTTrainer,
         )
 
-        training_args = SFTConfig(
-            output_dir=checkpoint_path,
-            num_train_epochs=epochs,
-            per_device_train_batch_size=batch_size,
-            learning_rate=lr,
-            logging_steps=1,
-            save_strategy="no",  # we save manually at the end
-            report_to="none",
-            fp16=torch.cuda.is_available(),
-            gradient_accumulation_steps=max(1, 4 // batch_size),
-            warmup_ratio=0.1,
+        sft_config_kwargs = {
+            "output_dir": checkpoint_path,
+            "num_train_epochs": epochs,
+            "per_device_train_batch_size": batch_size,
+            "learning_rate": lr,
+            "logging_steps": 1,
+            "save_strategy": "no",  # we save manually at the end
+            "report_to": "none",
+            "gradient_accumulation_steps": max(1, 4 // batch_size),
+            "warmup_ratio": 0.1,
             **sft_config_seq_kwargs,
-        )
+        }
+
+        if use_gpu:
+            sft_config_kwargs["fp16"] = True
+        else:
+            # CPU training — no fp16/bf16, explicitly set use_cpu
+            sft_config_kwargs["use_cpu"] = True
+            sft_config_kwargs["fp16"] = False
+            sft_config_kwargs["bf16"] = False
+
+        training_args = SFTConfig(**sft_config_kwargs)
 
         # 6. Train
         trainer = SFTTrainer(
