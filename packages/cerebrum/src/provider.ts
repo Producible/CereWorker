@@ -485,19 +485,41 @@ export class CerebrumProvider {
         let fullContent = '';
         const collectedToolCalls: CWToolCall[] = [];
 
-        for await (const part of result.fullStream) {
+        // Wrap the stream iteration with abort awareness — the AI SDK may not
+        // break the async iterator when abortSignal fires during multi-step tool use
+        const abortSignal = options?.abortSignal;
+        const iterator = result.fullStream[Symbol.asyncIterator]();
+
+        while (true) {
+          if (abortSignal?.aborted) throw new Error('Stream aborted');
+
+          // Race the next stream part against the abort signal
+          let nextResult: IteratorResult<unknown>;
+          if (abortSignal) {
+            const abortPromise = new Promise<never>((_, reject) => {
+              if (abortSignal.aborted) reject(new Error('Stream aborted'));
+              abortSignal.addEventListener('abort', () => reject(new Error('Stream aborted')), { once: true });
+            });
+            nextResult = await Promise.race([iterator.next(), abortPromise]);
+          } else {
+            nextResult = await iterator.next();
+          }
+
+          if (nextResult.done) break;
+          const part = nextResult.value as { type: string; text?: string; toolCallId?: string; toolName?: string; input?: unknown; error?: unknown };
+
           switch (part.type) {
             case 'text-delta':
-              fullContent += part.text;
-              callbacks.onChunk(part.text);
+              fullContent += part.text ?? '';
+              callbacks.onChunk(part.text ?? '');
               break;
             case 'tool-call':
               collectedToolCalls.push({
-                id: part.toolCallId,
-                name: normalizeToolName(part.toolName) || part.toolName,
+                id: part.toolCallId!,
+                name: normalizeToolName(part.toolName!) || part.toolName!,
                 args: normalizeToolArgumentsForProvider(
                   providerName,
-                  ((part as { input?: unknown }).input as Record<string, unknown>) ?? {},
+                  (part.input as Record<string, unknown>) ?? {},
                 ),
               });
               break;
