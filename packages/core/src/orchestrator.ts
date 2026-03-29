@@ -689,6 +689,9 @@ export class Orchestrator extends TypedEventEmitter {
 
   async sendMessage(content: string, conversationId?: string): Promise<void> {
     if (!this.cerebrum) throw new Error('Cerebrum not connected');
+    if (this.cerebellum && !this.cerebellum.isConnected()) {
+      throw new Error('Cerebellum is offline. Fix the Cerebellum connection before continuing. Run: docker compose up -d cerebellum');
+    }
 
     const convId = conversationId ?? this.activeConversationId;
     if (!convId) throw new Error('No active conversation');
