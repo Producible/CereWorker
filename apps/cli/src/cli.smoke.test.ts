@@ -249,7 +249,7 @@ describeBuilt('CLI smoke', () => {
             setTimeout(() => resolve(new Response(JSON.stringify({ version: '99.0.0' }), {
               status: 200,
               headers: { 'content-type': 'application/json' },
-            })), 2_000);
+            })), 10_000);
           });
         }
         return await originalFetch(input, init);
@@ -265,7 +265,9 @@ describeBuilt('CLI smoke', () => {
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('26.');
     expect(result.stdout).not.toContain('Update available:');
-    expect(result.durationMs).toBeLessThan(3_500);
+    // 500ms race timeout + process startup should be well under 5s.
+    // If this exceeds 5s, the race timeout is not working and -v is blocking on the fetch.
+    expect(result.durationMs).toBeLessThan(5_000);
   });
 
   it('uses the configured image for images and upgrade commands', async () => {

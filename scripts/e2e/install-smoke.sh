@@ -13,7 +13,20 @@ PREFIX_DIR="$TMP_DIR/prefix"
 HOME_DIR="$TMP_DIR/home"
 CONFIG_DIR="$HOME_DIR/.cereworker"
 LOG_DIR="$TMP_DIR/logs"
-PORT="${CEREWORKER_SMOKE_PORT:-18991}"
+if [[ -n "${CEREWORKER_SMOKE_PORT:-}" ]]; then
+  PORT="$CEREWORKER_SMOKE_PORT"
+else
+  PORT="$(node --input-type=module -e "
+    import { createServer } from 'node:net';
+    const server = createServer();
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      if (!address || typeof address === 'string') process.exit(1);
+      console.log(address.port);
+      server.close(() => process.exit(0));
+    });
+  ")"
+fi
 
 cleanup() {
   if [[ -n "${SERVER_PID:-}" ]]; then
@@ -80,8 +93,11 @@ HOME="$HOME_DIR" USERPROFILE="$HOME_DIR" PATH="$PREFIX_DIR/node_modules/.bin:$PA
   >"$LOG_DIR/serve.stdout.log" 2>"$LOG_DIR/serve.stderr.log" &
 SERVER_PID=$!
 
-for _ in $(seq 1 50); do
+for _ in $(seq 1 100); do
   if curl -fsS "http://127.0.0.1:$PORT/healthz" >"$LOG_DIR/health.json"; then
+    break
+  fi
+  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
     break
   fi
   sleep 0.2
