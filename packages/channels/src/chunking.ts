@@ -13,6 +13,9 @@ export const CHANNEL_LIMITS: Record<string, number> = {
   matrix: 65536,
   feishu: 4096,
   wechat: 4096,
+  whatsapp: 4096,
+  signal: 4000,
+  irc: 400,
 };
 
 /**

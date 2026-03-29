@@ -222,6 +222,32 @@ export const configSchema = z.object({
           allowFrom: z.array(z.string()).default([]),
         })
         .default({}),
+      whatsapp: z
+        .object({
+          enabled: z.boolean().default(false),
+          allowFrom: z.array(z.string()).default([]),
+        })
+        .default({}),
+      signal: z
+        .object({
+          enabled: z.boolean().default(false),
+          account: z.string().optional(),
+          signalCliUrl: z.string().default('http://127.0.0.1:8080'),
+          allowFrom: z.array(z.string()).default([]),
+        })
+        .default({}),
+      irc: z
+        .object({
+          enabled: z.boolean().default(false),
+          host: z.string().optional(),
+          port: z.number().default(6697),
+          tls: z.boolean().default(true),
+          nick: z.string().default('cereworker'),
+          password: z.string().optional(),
+          channels: z.array(z.string()).default([]),
+          allowFrom: z.array(z.string()).default([]),
+        })
+        .default({}),
     })
     .default({}),
 

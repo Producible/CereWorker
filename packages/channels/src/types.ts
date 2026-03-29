@@ -44,7 +44,7 @@ export interface ChannelPlugin {
   isConnected(): boolean;
 }
 
-export type ChannelId = 'slack' | 'discord' | 'telegram' | 'matrix' | 'feishu' | 'wechat';
+export type ChannelId = 'slack' | 'discord' | 'telegram' | 'matrix' | 'feishu' | 'wechat' | 'whatsapp' | 'signal' | 'irc';
 
 export interface ChannelConfig {
   enabled: boolean;

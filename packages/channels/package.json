@@ -1,6 +1,6 @@
 {
   "name": "@cereworker/channels",
-  "version": "26.329.1",
+  "version": "26.329.2",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -28,7 +28,8 @@
     "discord.js": "^14.18.0",
     "telegraf": "^4.16.0",
     "matrix-js-sdk": "^36.0.0",
-    "@larksuiteoapi/node-sdk": "^1.39.0"
+    "@larksuiteoapi/node-sdk": "^1.39.0",
+    "@whiskeysockets/baileys": "7.0.0-rc.9"
   },
   "devDependencies": {
     "typescript": "^5.7.3"

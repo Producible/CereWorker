@@ -66,6 +66,27 @@ const CHANNEL_DEFS: ChannelDef[] = [
       { key: 'puppet', label: 'Puppet provider', required: true, envVar: '', defaultValue: 'wechaty-puppet-wechat4u' },
     ],
   },
+  {
+    id: 'whatsapp',
+    label: 'WhatsApp',
+    fields: [],
+  },
+  {
+    id: 'signal',
+    label: 'Signal',
+    fields: [
+      { key: 'account', label: 'Phone number (E.164, e.g. +15551234567)', required: true, envVar: '' },
+      { key: 'signalCliUrl', label: 'signal-cli REST URL', required: false, envVar: '', defaultValue: 'http://127.0.0.1:8080' },
+    ],
+  },
+  {
+    id: 'irc',
+    label: 'IRC',
+    fields: [
+      { key: 'host', label: 'Server hostname', required: true, envVar: '' },
+      { key: 'nick', label: 'Nickname', required: false, envVar: '', defaultValue: 'cereworker' },
+    ],
+  },
 ];
 
 const SETUP_GUIDES: Record<string, string> = {
@@ -111,6 +132,27 @@ const SETUP_GUIDES: Record<string, string> = {
   wechat: [
     'WeChat bots use puppet providers (e.g., wechaty-puppet-wechat4u).',
     'See wechaty.js.org for puppet setup instructions.',
+  ].join('\n'),
+
+  whatsapp: [
+    'WhatsApp connects via WhatsApp Web (no API key needed).',
+    'On first run, a QR code will be printed to the terminal.',
+    'Scan it with your WhatsApp app to pair.',
+    'Credentials are saved to ~/.cereworker/whatsapp-auth/',
+  ].join('\n'),
+
+  signal: [
+    '1. Install signal-cli: github.com/AsamK/signal-cli',
+    '2. Register your phone number: signal-cli -u +15551234567 register',
+    '3. Start the REST daemon: signal-cli -u +15551234567 daemon --http=8080',
+    '4. CereWorker connects to the daemon REST API',
+  ].join('\n'),
+
+  irc: [
+    '1. Choose an IRC network (e.g., irc.libera.chat)',
+    '2. Pick a nickname for your bot',
+    '3. Optionally register the nick with NickServ',
+    '4. CereWorker connects via TLS (port 6697 by default)',
   ].join('\n'),
 };
 

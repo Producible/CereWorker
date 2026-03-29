@@ -6,6 +6,9 @@ import { createTelegramChannel } from './adapters/telegram.js';
 import { createMatrixChannel } from './adapters/matrix.js';
 import { createFeishuChannel } from './adapters/feishu.js';
 import { createWeChatChannel } from './adapters/wechat.js';
+import { createWhatsAppChannel } from './adapters/whatsapp.js';
+import { createSignalChannel } from './adapters/signal.js';
+import { createIrcChannel } from './adapters/irc.js';
 
 export function createChannelManager(config: CereWorkerConfig): ChannelManager {
   const manager = new ChannelManager();
@@ -72,6 +75,38 @@ export function createChannelManager(config: CereWorkerConfig): ChannelManager {
         puppet: channels.wechat.puppet,
         token: channels.wechat.token,
         allowFrom: channels.wechat.allowFrom,
+      }),
+    );
+  }
+
+  if (channels.whatsapp.enabled) {
+    manager.register(
+      createWhatsAppChannel({
+        allowFrom: channels.whatsapp.allowFrom,
+      }),
+    );
+  }
+
+  if (channels.signal.enabled && channels.signal.account) {
+    manager.register(
+      createSignalChannel({
+        account: channels.signal.account,
+        signalCliUrl: channels.signal.signalCliUrl,
+        allowFrom: channels.signal.allowFrom,
+      }),
+    );
+  }
+
+  if (channels.irc.enabled && channels.irc.host) {
+    manager.register(
+      createIrcChannel({
+        host: channels.irc.host,
+        port: channels.irc.port,
+        tls: channels.irc.tls,
+        nick: channels.irc.nick,
+        password: channels.irc.password,
+        channels: channels.irc.channels,
+        allowFrom: channels.irc.allowFrom,
       }),
     );
   }

@@ -94,7 +94,7 @@ The **Hippocampus** is CereWorker's temporary memory layer, inspired by the brai
 
 The **SubAgentManager** enables the Cerebrum to spawn independent workers for parallel tasks. Each sub-agent gets its own isolated conversation, session (`session.json` + `transcript.jsonl`), and memory directory (`~/.cereworker/agents/<id>/memory/`). Sub-agents share the same Cerebrum provider and tool registry but cannot spawn sub-sub-agents (preventing infinite recursion). The Cerebellum monitors sub-agent health via the `ReportAgentStates` RPC -- deterministic checks detect stalls and timeouts, and the model answers "should we retry this stalled agent? yes/no" for ambiguous cases. The Cerebrum manages sub-agents through three tools: `spawn_agent`, `query_agents`, and `cancel_agent`.
 
-**Channels** are pluggable IM adapters. Each implements a simple interface: `start(handler)`, `stop()`, `send(msg)`, `isAllowed(senderId)`. The channel manager starts all enabled channels and routes inbound messages through the orchestrator, so the agent can be reached via Slack, Discord, Telegram, Matrix, Feishu, or WeChat simultaneously.
+**Channels** are pluggable IM adapters. Each implements a simple interface: `start(handler)`, `stop()`, `send(msg)`, `isAllowed(senderId)`. The channel manager starts all enabled channels and routes inbound messages through the orchestrator, so the agent can be reached via Slack, Discord, Telegram, Matrix, Feishu, WeChat, WhatsApp, Signal, or IRC simultaneously.
 
 ## Quick Start
 
@@ -289,6 +289,19 @@ channels:
     enabled: true
     puppet: wechaty-puppet-wechat4u  # or other puppet provider
     token: ...                       # optional, depends on puppet
+  whatsapp:
+    enabled: true                    # scans QR code on first run
+  signal:
+    enabled: true
+    account: "+15551234567"          # E.164 phone number
+    signalCliUrl: http://127.0.0.1:8080  # signal-cli REST daemon
+  irc:
+    enabled: true
+    host: irc.libera.chat
+    port: 6697
+    tls: true
+    nick: cereworker
+    channels: ["#mychannel"]
 ```
 
 ## How It Works
@@ -494,7 +507,7 @@ The service handles `SIGTERM`/`SIGINT` for graceful shutdown and restarts on fai
 
 ### Channel Flow
 
-When a message arrives from Slack/Discord/Telegram/Matrix/Feishu/WeChat:
+When a message arrives from Slack/Discord/Telegram/Matrix/Feishu/WeChat/WhatsApp/Signal/IRC:
 
 1. The channel adapter receives it and checks the sender against the allowlist
 2. If allowed, it forwards the message text to the orchestrator
@@ -554,7 +567,7 @@ Other agents get more expensive as they get smarter (longer prompts, more retrie
 | [`@cereworker/core`](packages/core) | [![npm](https://img.shields.io/npm/v/@cereworker/core)](https://www.npmjs.com/package/@cereworker/core) | Orchestrator, message model, typed events, conversation store |
 | [`@cereworker/cerebrum`](packages/cerebrum) | [![npm](https://img.shields.io/npm/v/@cereworker/cerebrum)](https://www.npmjs.com/package/@cereworker/cerebrum) | AI SDK 6 multi-provider LLM abstraction + built-in tools |
 | [`@cereworker/cerebellum-client`](packages/cerebellum-client) | [![npm](https://img.shields.io/npm/v/@cereworker/cerebellum-client)](https://www.npmjs.com/package/@cereworker/cerebellum-client) | gRPC client for the Cerebellum container |
-| [`@cereworker/channels`](packages/channels) | [![npm](https://img.shields.io/npm/v/@cereworker/channels)](https://www.npmjs.com/package/@cereworker/channels) | IM adapters (Slack, Discord, Telegram, Matrix, Feishu, WeChat) |
+| [`@cereworker/channels`](packages/channels) | [![npm](https://img.shields.io/npm/v/@cereworker/channels)](https://www.npmjs.com/package/@cereworker/channels) | IM adapters (Slack, Discord, Telegram, Matrix, Feishu, WeChat, WhatsApp, Signal, IRC) |
 | [`@cereworker/browser`](packages/browser) | [![npm](https://img.shields.io/npm/v/@cereworker/browser)](https://www.npmjs.com/package/@cereworker/browser) | Browser automation (Puppeteer, CDP, Chrome extension) |
 | [`@cereworker/skills`](packages/skills) | [![npm](https://img.shields.io/npm/v/@cereworker/skills)](https://www.npmjs.com/package/@cereworker/skills) | SKILL.md plugin loader and registry |
 | [`@cereworker/hippocampus`](packages/hippocampus) | [![npm](https://img.shields.io/npm/v/@cereworker/hippocampus)](https://www.npmjs.com/package/@cereworker/hippocampus) | Temporary memory store, memory tools, fine-tune curator |

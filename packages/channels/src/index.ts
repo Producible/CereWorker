@@ -17,3 +17,6 @@ export { createTelegramChannel, type TelegramChannelConfig } from './adapters/te
 export { createMatrixChannel, type MatrixChannelConfig } from './adapters/matrix.js';
 export { createFeishuChannel, type FeishuChannelConfig } from './adapters/feishu.js';
 export { createWeChatChannel, type WeChatChannelConfig } from './adapters/wechat.js';
+export { createWhatsAppChannel, type WhatsAppChannelConfig } from './adapters/whatsapp.js';
+export { createSignalChannel, type SignalChannelConfig } from './adapters/signal.js';
+export { createIrcChannel, type IrcChannelConfig } from './adapters/irc.js';
