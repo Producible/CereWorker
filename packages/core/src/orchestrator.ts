@@ -630,10 +630,9 @@ export class Orchestrator extends TypedEventEmitter {
     };
   }
 
-  private startStreamWatchdog(convId: string): void {
+  private startStreamWatchdog(): void {
     this.stopStreamWatchdog();
     this.lastStreamActivityAt = Date.now();
-    this.streamNudgeCount = 0;
 
     this.streamWatchdog = setInterval(() => {
       const elapsed = Date.now() - this.lastStreamActivityAt;
@@ -642,14 +641,16 @@ export class Orchestrator extends TypedEventEmitter {
       const elapsedSeconds = Math.round(elapsed / 1000);
       this.emit({ type: 'cerebrum:stall', elapsedSeconds });
 
-      // Ask Cerebellum if we should nudge
+      // Nudge: abort the current stream so the retry loop in sendMessage picks it up
       if (this.streamNudgeCount >= this.maxNudgeRetries) return;
       if (!this.cerebellum?.isConnected()) return;
 
+      // Only one nudge check at a time
+      if (this._nudgeInFlight) return;
+      this._nudgeInFlight = true;
+
       void (async () => {
         try {
-          // Use verifyToolResult with synthetic check — the model verdict
-          // answers "is the stream stall OK?" (false = should nudge)
           const result = await this.cerebellum!.verifyToolResult(
             'stream_watchdog',
             { action: 'check_stall', elapsed: String(elapsedSeconds) },
@@ -657,34 +658,22 @@ export class Orchestrator extends TypedEventEmitter {
             false,
           );
 
-          // If verification says "not passed" → the stall is a problem → nudge
-          const shouldNudge = result && !result.passed;
-
-          if (shouldNudge) {
+          if (result && !result.passed) {
             this.streamNudgeCount++;
-            log.info('Cerebellum nudging stalled Cerebrum stream', { elapsed: elapsedSeconds, attempt: this.streamNudgeCount });
-
-            // Abort the stalled stream
-            this.abortController?.abort();
-
-            // Inject nudge message and re-send
-            this.conversations.appendMessage(
-              convId, 'system',
-              '[Cerebellum] You stopped mid-response. Continue from where you left off.',
-            );
+            log.info('Cerebellum nudging stalled stream', { elapsed: elapsedSeconds, attempt: this.streamNudgeCount });
             this.emit({ type: 'cerebrum:stall:nudge', attempt: this.streamNudgeCount });
-
-            this.stopStreamWatchdog();
-
-            // Re-send triggers a new stream from the updated conversation
-            void this.sendMessage('', convId).catch(() => {});
+            // Abort the current stream — the catch block in sendMessage will handle retry
+            this.abortController?.abort();
           }
         } catch {
           // Nudge check failed — non-blocking
+        } finally {
+          this._nudgeInFlight = false;
         }
       })();
     }, 15_000);
   }
+  private _nudgeInFlight = false;
 
   private stopStreamWatchdog(): void {
     if (this.streamWatchdog) {
@@ -699,13 +688,18 @@ export class Orchestrator extends TypedEventEmitter {
     const convId = conversationId ?? this.activeConversationId;
     if (!convId) throw new Error('No active conversation');
 
-    // Empty content = nudge re-send (system message already appended), skip user message
     if (content) {
       const userMessage = this.conversations.appendMessage(convId, 'user', content);
       this.emit({ type: 'message:user', message: userMessage });
     }
+
+    this.streamNudgeCount = 0;
+
+    // Retry loop — nudge aborts land here for retry
+    for (let attempt = 0; attempt <= this.maxNudgeRetries; attempt++) {
+    this.abortController = new AbortController();
     this.emit({ type: 'message:cerebrum:start', conversationId: convId });
-    this.startStreamWatchdog(convId);
+    this.startStreamWatchdog();
 
     let messages = this.conversations.getMessages(convId);
 
@@ -791,6 +785,7 @@ export class Orchestrator extends TypedEventEmitter {
             scopeKey: convId,
           });
 
+          this.lastStreamActivityAt = Date.now();
           this.emit({ type: 'tool:end', result });
 
           // Cerebellum verification (non-blocking)
@@ -881,10 +876,26 @@ export class Orchestrator extends TypedEventEmitter {
       });
     } catch (error) {
       this.stopStreamWatchdog();
+
+      // Check if this was a nudge-abort (not emergency stop, not a real error)
+      const isNudgeAbort = this.abortController?.signal.aborted && this.streamNudgeCount > 0 && this.streamNudgeCount <= this.maxNudgeRetries;
+
+      if (isNudgeAbort) {
+        // Inject nudge message and retry via the for-loop
+        this.conversations.appendMessage(
+          convId, 'system',
+          '[Cerebellum] You stopped mid-response. Continue from where you left off.',
+        );
+        continue; // retry loop
+      }
+
       const err = error instanceof Error ? error : new Error(String(error));
       log.error('Send message failed', { error: err.message });
       this.emit({ type: 'error', error: err });
     }
+
+    break; // success — exit retry loop
+    } // end retry for-loop
   }
 
   async start(): Promise<void> {

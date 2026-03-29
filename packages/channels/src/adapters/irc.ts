@@ -71,7 +71,7 @@ export function createIrcChannel(config: IrcChannelConfig): ChannelPlugin {
         };
 
         if (config.tls) {
-          socket = tls.connect({ host: config.host, port: config.port, rejectUnauthorized: false }, onConnect);
+          socket = tls.connect({ host: config.host, port: config.port }, onConnect);
         } else {
           socket = net.connect({ host: config.host, port: config.port }, onConnect);
         }
@@ -141,7 +141,10 @@ export function createIrcChannel(config: IrcChannelConfig): ChannelPlugin {
               const replyTarget = target.startsWith('#') ? target : nick;
               const chunks = chunkMarkdown(response, limit);
               for (const chunk of chunks) {
-                send(`PRIVMSG ${replyTarget} :${chunk}`);
+                // IRC uses \r\n as line delimiter — send each line as separate PRIVMSG
+                for (const line of chunk.replace(/\r/g, '').split('\n')) {
+                  if (line.trim()) send(`PRIVMSG ${replyTarget} :${line}`);
+                }
               }
             }
           }
@@ -162,7 +165,9 @@ export function createIrcChannel(config: IrcChannelConfig): ChannelPlugin {
       if (!socket) throw new Error('IRC not started');
       const chunks = chunkMarkdown(msg.text, limit);
       for (const chunk of chunks) {
-        send(`PRIVMSG ${msg.to} :${chunk}`);
+        for (const line of chunk.replace(/\r/g, '').split('\n')) {
+          if (line.trim()) send(`PRIVMSG ${msg.to} :${line}`);
+        }
       }
     },
 
