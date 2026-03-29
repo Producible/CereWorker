@@ -18,6 +18,15 @@ async function main() {
   if (process.argv.includes('--version') || process.argv.includes('-v')) {
     const { version } = require('../package.json');
     console.log(version);
+    try {
+      const { checkForUpdate } = await import('./update-check.js');
+      const latest = await checkForUpdate(version);
+      if (latest) {
+        console.log(`Update available: ${latest} — run: npm install -g @cereworker/cli`);
+      }
+    } catch {
+      // Non-critical
+    }
     await exitOneShot(0);
   }
 

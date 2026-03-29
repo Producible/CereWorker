@@ -10,6 +10,7 @@ interface ChatViewProps {
   activeToolCall: string | null;
   version: string;
   showActivity: boolean;
+  updateAvailable?: string | null;
 }
 
 function MessageBlock({ message }: { message: Message }) {
@@ -62,12 +63,13 @@ export function ChatView({
   activeToolCall,
   version,
   showActivity,
+  updateAvailable,
 }: ChatViewProps) {
   const showBanner = messages.length === 0 && !isStreaming;
 
   return (
     <Box flexDirection="column" flexGrow={1} paddingX={1}>
-      {showBanner && <Banner version={version} />}
+      {showBanner && <Banner version={version} updateAvailable={updateAvailable} />}
       {messages.map((msg) => (
         <MessageBlock key={msg.id} message={msg} />
       ))}

@@ -11,6 +11,7 @@ import { ChatView } from './components/ChatView.js';
 import { InputBar } from './components/InputBar.js';
 import { useChat } from './hooks/useChat.js';
 import { useCerebellum } from './hooks/useCerebellum.js';
+import { checkForUpdate } from './update-check.js';
 
 const require = createRequire(import.meta.url);
 const { version: APP_VERSION } = require('../package.json');
@@ -32,6 +33,11 @@ export function App({ config, resumeConversationId }: AppProps) {
   const [extensionConnected, setExtensionConnected] = useState(false);
   const [gatewayServer, setGatewayServer] = useState<GatewayServer | null>(null);
   const [gatewayClient, setGatewayClient] = useState<GatewayNodeClient | null>(null);
+  const [updateAvailable, setUpdateAvailable] = useState<string | null>(null);
+
+  useEffect(() => {
+    void checkForUpdate(APP_VERSION).then((v) => { if (v) setUpdateAvailable(v); });
+  }, []);
 
   const service = useMemo(() => {
     configureLogger({
@@ -275,6 +281,7 @@ export function App({ config, resumeConversationId }: AppProps) {
         activeToolCall={config.tui.showActivity ? activeToolCall : null}
         version={APP_VERSION}
         showActivity={config.tui.showActivity}
+        updateAvailable={updateAvailable}
       />
       {systemMessage && (
         <Box paddingX={1} borderStyle="single" borderColor="gray">
