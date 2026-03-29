@@ -110,14 +110,15 @@ async function main() {
   }
 
   if (subcommand === 'images') {
+    const target = process.argv[3];
+    if (target === 'upgrade') {
+      const { runUpgrade } = await import('./upgrade.js');
+      await runUpgrade();
+      await exitOneShot(0);
+    }
+    // Default to list (also handles explicit "list")
     const { runImages } = await import('./images.js');
     await runImages();
-    await exitOneShot(0);
-  }
-
-  if (subcommand === 'upgrade') {
-    const { runUpgrade } = await import('./upgrade.js');
-    await runUpgrade();
     await exitOneShot(0);
   }
 

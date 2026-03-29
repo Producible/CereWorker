@@ -146,8 +146,8 @@ After onboarding, start the agent:
 ```bash
 cereworker              # interactive TUI
 cereworker serve        # headless service (for production/systemd)
-cereworker upgrade      # pull latest Cerebellum Docker image
 cereworker images       # show local Cerebellum image and container status
+cereworker images upgrade  # pull latest Cerebellum Docker image
 ```
 
 On **first run**, CereWorker discovers its identity through conversation — it asks your name for it, its role, recurring tasks, and communication style. The answers are saved to `~/.cereworker/instance.json` and seeded as training data for the Cerebellum's first fine-tune cycle. Each instance develops a unique identity through fine-tuning that persists across sessions.
@@ -249,10 +249,14 @@ docker compose up -d cerebellum
 When a new Cerebellum image is published, `npm install -g @cereworker/cli` automatically pulls the latest image during postinstall. To update the image independently:
 
 ```bash
-cereworker upgrade
+cereworker images upgrade
 ```
 
-This pulls the latest `cereworker/cerebellum` image from Docker Hub and removes the old container so it gets recreated with the new image on next start.
+This pulls the latest `cereworker/cerebellum` image from Docker Hub and removes the old container so it gets recreated with the new image on next start. To check the current image status:
+
+```bash
+cereworker images
+```
 
 ### Enable IM Channels (optional)
 
