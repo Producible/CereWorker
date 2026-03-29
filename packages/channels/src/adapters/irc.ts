@@ -13,6 +13,38 @@ export interface IrcChannelConfig {
   allowFrom: string[];
 }
 
+/** Parse a raw IRC protocol line into prefix, command, and params. */
+export function parseIrcLine(line: string): { prefix?: string; command: string; params: string[] } {
+  let prefix: string | undefined;
+  let rest = line;
+
+  if (rest.startsWith(':')) {
+    const idx = rest.indexOf(' ');
+    prefix = rest.slice(1, idx);
+    rest = rest.slice(idx + 1);
+  }
+
+  const trailingIdx = rest.indexOf(' :');
+  let trailing: string | undefined;
+  if (trailingIdx !== -1) {
+    trailing = rest.slice(trailingIdx + 2);
+    rest = rest.slice(0, trailingIdx);
+  }
+
+  const parts = rest.split(' ').filter(Boolean);
+  const command = parts[0];
+  const params = parts.slice(1);
+  if (trailing !== undefined) params.push(trailing);
+
+  return { prefix, command, params };
+}
+
+/** Extract the nickname from an IRC prefix (nick!user@host). */
+export function extractIrcNick(prefix: string): string {
+  const idx = prefix.indexOf('!');
+  return idx !== -1 ? prefix.slice(0, idx) : prefix;
+}
+
 export function createIrcChannel(config: IrcChannelConfig): ChannelPlugin {
   let socket: net.Socket | tls.TLSSocket | null = null;
   let connected = false;
@@ -22,36 +54,6 @@ export function createIrcChannel(config: IrcChannelConfig): ChannelPlugin {
 
   function send(line: string): void {
     socket?.write(`${line}\r\n`);
-  }
-
-  function parseLine(line: string): { prefix?: string; command: string; params: string[] } {
-    let prefix: string | undefined;
-    let rest = line;
-
-    if (rest.startsWith(':')) {
-      const idx = rest.indexOf(' ');
-      prefix = rest.slice(1, idx);
-      rest = rest.slice(idx + 1);
-    }
-
-    const trailingIdx = rest.indexOf(' :');
-    let trailing: string | undefined;
-    if (trailingIdx !== -1) {
-      trailing = rest.slice(trailingIdx + 2);
-      rest = rest.slice(0, trailingIdx);
-    }
-
-    const parts = rest.split(' ').filter(Boolean);
-    const command = parts[0];
-    const params = parts.slice(1);
-    if (trailing !== undefined) params.push(trailing);
-
-    return { prefix, command, params };
-  }
-
-  function extractNick(prefix: string): string {
-    const idx = prefix.indexOf('!');
-    return idx !== -1 ? prefix.slice(0, idx) : prefix;
   }
 
   return {
@@ -96,7 +98,7 @@ export function createIrcChannel(config: IrcChannelConfig): ChannelPlugin {
         });
 
         async function handleLine(line: string): Promise<void> {
-          const parsed = parseLine(line);
+          const parsed = parseIrcLine(line);
 
           if (parsed.command === 'PING') {
             send(`PONG :${parsed.params[0] ?? ''}`);
@@ -119,7 +121,7 @@ export function createIrcChannel(config: IrcChannelConfig): ChannelPlugin {
           }
 
           if (parsed.command === 'PRIVMSG' && parsed.prefix && handler) {
-            const nick = extractNick(parsed.prefix);
+            const nick = extractIrcNick(parsed.prefix);
             if (nick === config.nick) return; // skip own messages
 
             const target = parsed.params[0]; // channel or nick

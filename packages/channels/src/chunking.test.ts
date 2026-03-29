@@ -70,5 +70,8 @@ describe('chunkMarkdown', () => {
     expect(CHANNEL_LIMITS.matrix).toBe(65536);
     expect(CHANNEL_LIMITS.feishu).toBe(4096);
     expect(CHANNEL_LIMITS.wechat).toBe(4096);
+    expect(CHANNEL_LIMITS.whatsapp).toBe(4096);
+    expect(CHANNEL_LIMITS.signal).toBe(4000);
+    expect(CHANNEL_LIMITS.irc).toBe(400);
   });
 });

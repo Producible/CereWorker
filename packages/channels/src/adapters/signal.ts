@@ -1,6 +1,27 @@
 import type { ChannelPlugin, MessageHandler, OutboundMessage, InboundMessage } from '../types.js';
 import { chunkMarkdown, CHANNEL_LIMITS } from '../chunking.js';
 
+/** Parse a signal-cli envelope into an InboundMessage, or null if not a text message. */
+export function parseSignalEnvelope(raw: unknown): InboundMessage | null {
+  const envelope = (raw as { envelope?: Record<string, unknown> }).envelope;
+  if (!envelope) return null;
+
+  const dataMessage = envelope.dataMessage as { message?: string; groupInfo?: { groupId?: string } } | undefined;
+  if (!dataMessage?.message) return null;
+
+  const source = String(envelope.source ?? '');
+  const groupId = dataMessage.groupInfo?.groupId;
+
+  return {
+    channelId: 'signal',
+    senderId: source,
+    text: dataMessage.message,
+    sessionId: groupId ? `group:${groupId}` : `dm:${source}`,
+    timestamp: Number(envelope.timestamp ?? Date.now()),
+    raw,
+  };
+}
+
 export interface SignalChannelConfig {
   account: string;
   signalCliUrl: string;
@@ -55,27 +76,13 @@ export function createSignalChannel(config: SignalChannelConfig): ChannelPlugin 
         try {
           const messages = await receive();
           for (const raw of messages) {
-            const envelope = (raw as { envelope?: Record<string, unknown> }).envelope;
-            if (!envelope) continue;
-
-            const dataMessage = envelope.dataMessage as { message?: string; groupInfo?: { groupId?: string } } | undefined;
-            if (!dataMessage?.message) continue;
-
-            const source = String(envelope.source ?? '');
-            const groupId = dataMessage.groupInfo?.groupId;
-
-            const inbound: InboundMessage = {
-              channelId: 'signal',
-              senderId: source,
-              text: dataMessage.message,
-              sessionId: groupId ? `group:${groupId}` : `dm:${source}`,
-              timestamp: Number(envelope.timestamp ?? Date.now()),
-              raw,
-            };
+            const inbound = parseSignalEnvelope(raw);
+            if (!inbound) continue;
 
             const response = await handler(inbound);
             if (response) {
-              const to = groupId ?? source;
+              const groupId = ((raw as { envelope?: { dataMessage?: { groupInfo?: { groupId?: string } } } }).envelope?.dataMessage?.groupInfo?.groupId);
+              const to = groupId ?? inbound.senderId;
               const chunks = chunkMarkdown(response, limit);
               for (const chunk of chunks) {
                 await sendMessage(to, chunk);
