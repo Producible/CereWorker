@@ -147,6 +147,7 @@ After onboarding, start the agent:
 cereworker              # interactive TUI
 cereworker serve        # headless service (for production/systemd)
 cereworker upgrade      # pull latest Cerebellum Docker image
+cereworker images       # show local Cerebellum image and container status
 ```
 
 On **first run**, CereWorker discovers its identity through conversation — it asks your name for it, its role, recurring tasks, and communication style. The answers are saved to `~/.cereworker/instance.json` and seeded as training data for the Cerebellum's first fine-tune cycle. Each instance develops a unique identity through fine-tuning that persists across sessions.

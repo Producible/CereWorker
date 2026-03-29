@@ -109,6 +109,12 @@ async function main() {
     await exitOneShot(0);
   }
 
+  if (subcommand === 'images') {
+    const { runImages } = await import('./images.js');
+    await runImages();
+    await exitOneShot(0);
+  }
+
   if (subcommand === 'upgrade') {
     const { runUpgrade } = await import('./upgrade.js');
     await runUpgrade();
