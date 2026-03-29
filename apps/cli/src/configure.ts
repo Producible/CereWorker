@@ -27,39 +27,6 @@ export async function runConfigureProfile(): Promise<void> {
   clack.outro(`Profile updated in ${GLOBAL_CONFIG}`);
 }
 
-const PROVIDER_MODELS: Record<string, { value: string; label: string; hint?: string }[]> = {
-  anthropic: [
-    { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', hint: 'default, best balance of speed and intelligence' },
-    { value: 'claude-opus-4-6', label: 'Claude Opus 4.6', hint: 'most capable, best for agents and coding' },
-    { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5', hint: 'fastest, cheapest' },
-    { value: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5', hint: 'previous gen, proven' },
-    { value: 'claude-opus-4-5', label: 'Claude Opus 4.5', hint: 'previous gen Opus' },
-  ],
-  openai: [
-    { value: 'gpt-5.4', label: 'GPT-5.4', hint: 'default, frontier intelligence, 1M context' },
-    { value: 'gpt-5-mini', label: 'GPT-5 Mini', hint: 'fast, cost efficient, 400K context' },
-    { value: 'o3', label: 'o3', hint: 'most powerful reasoning model' },
-    { value: 'o4-mini', label: 'o4-mini', hint: 'efficient reasoning, half the cost of o3' },
-    { value: 'gpt-4.1', label: 'GPT-4.1', hint: '1M context, strong coding' },
-    { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini', hint: '1M context, fast' },
-    { value: 'gpt-4.1-nano', label: 'GPT-4.1 Nano', hint: '1M context, cheapest' },
-  ],
-  google: [
-    { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', hint: 'default, deep reasoning' },
-    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', hint: 'best price-performance, 1M context' },
-    { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite', hint: 'fastest, cheapest' },
-    { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro (Preview)', hint: 'next gen, advanced agentic' },
-    { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash (Preview)', hint: 'next gen, frontier-class' },
-  ],
-};
-
-const PROVIDERS = [
-  { value: 'anthropic', label: 'Anthropic (Claude)' },
-  { value: 'openai', label: 'OpenAI' },
-  { value: 'google', label: 'Google (Gemini)' },
-  { value: 'local', label: 'Local (Ollama / vLLM)' },
-];
-
 export async function runConfigureBrowser(): Promise<void> {
   const raw = loadRawConfig();
   const tools = (raw.tools ?? {}) as Record<string, unknown>;
@@ -174,15 +141,14 @@ export async function runConfigureModel(): Promise<void> {
     providers[result.provider].auth = result.auth;
   }
 
-  // Handle local base URL
-  if (result.localBaseUrl) {
+  // Handle provider base URL
+  if (result.baseUrl) {
     if (!cfg.providers) cfg.providers = {};
     const providers = cfg.providers as Record<string, Record<string, unknown>>;
     if (!providers[result.provider]) providers[result.provider] = {};
-    providers[result.provider].baseUrl = result.localBaseUrl;
+    providers[result.provider].baseUrl = result.baseUrl;
   }
 
   writeConfig(raw);
   clack.outro(`Cerebrum set to ${result.provider} / ${result.model} in ${GLOBAL_CONFIG}`);
-  process.exit(0);
 }

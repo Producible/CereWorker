@@ -8,6 +8,12 @@ import { buildSystemPrompt } from './system-prompt.js';
 import type { Message, ToolCall, ToolResult, VerificationResult, AgentHealthAction } from './types.js';
 import { estimateMessageTokens, shouldCompact, buildCompactionMessages } from './context.js';
 import type { InstanceStore, FineTuneRecord } from './instance.js';
+import {
+  ToolRuntime,
+  type ToolExecutionContext,
+  type ToolExecutionValue,
+  type ToolRuntimeConfig,
+} from './tool-runtime.js';
 
 const log = createLogger('orchestrator');
 
@@ -22,8 +28,11 @@ export interface CerebrumAdapter {
 
 export interface ToolDefinition {
   description: string;
-  parameters: Record<string, unknown>;
-  execute: (args: Record<string, unknown>) => Promise<string>;
+  parameters: unknown;
+  execute: (
+    args: Record<string, unknown>,
+    context?: ToolExecutionContext,
+  ) => Promise<string | ToolExecutionValue>;
 }
 
 export interface StreamCallbacks {
@@ -93,6 +102,7 @@ export interface CompactionConfig {
 export interface OrchestratorOptions {
   conversationStore?: ConversationStore;
   compaction?: Partial<CompactionConfig>;
+  toolRuntime?: Partial<ToolRuntimeConfig>;
 }
 
 export class Orchestrator extends TypedEventEmitter {
@@ -130,6 +140,7 @@ export class Orchestrator extends TypedEventEmitter {
   private taskConversations = new Map<string, string>();
   private taskRunning = new Set<string>();
   private recurringTasks: Array<{ id: string; goal: string; schedule: string }> = [];
+  private toolRuntime: ToolRuntime;
   private compactionConfig: CompactionConfig = {
     enabled: true,
     threshold: 0.8,
@@ -140,6 +151,7 @@ export class Orchestrator extends TypedEventEmitter {
   constructor(options?: OrchestratorOptions) {
     super();
     this.conversations = options?.conversationStore ?? new ConversationStore();
+    this.toolRuntime = new ToolRuntime(options?.toolRuntime);
     if (options?.compaction) {
       this.compactionConfig = { ...this.compactionConfig, ...options.compaction };
     }
@@ -182,6 +194,7 @@ export class Orchestrator extends TypedEventEmitter {
       tools: this.tools,
       maxConcurrent: options?.maxConcurrent,
       baseDir: options?.baseDir,
+      toolRuntime: this.toolRuntime,
     });
 
     // Register sub-agent tools with the orchestrator
@@ -209,6 +222,29 @@ export class Orchestrator extends TypedEventEmitter {
     for (const [name, tool] of Object.entries(tools)) {
       this.tools.set(name, tool);
     }
+  }
+
+  async executeTool(
+    name: string,
+    args: Record<string, unknown>,
+    options?: {
+      conversationId?: string;
+      sessionKey?: string;
+      scopeKey?: string;
+      callId?: string;
+    },
+  ): Promise<{ toolName: string; result: ToolResult }> {
+    return this.toolRuntime.execute({
+      toolCall: {
+        id: options?.callId ?? nanoid(10),
+        name,
+        args,
+      },
+      tools: this.tools,
+      conversationId: options?.conversationId,
+      sessionKey: options?.sessionKey,
+      scopeKey: options?.scopeKey,
+    });
   }
 
   unregisterTool(name: string): boolean {
@@ -645,33 +681,25 @@ export class Orchestrator extends TypedEventEmitter {
           this.emit({ type: 'message:cerebrum:chunk', chunk });
         },
         onToolCall: async (toolCall) => {
-          this.emit({ type: 'message:cerebrum:toolcall', toolCall });
-          this.emit({ type: 'tool:start', callId: toolCall.id, name: toolCall.name });
+          const requestedToolName = toolCall.name;
+          const normalizedToolName = requestedToolName.trim() || requestedToolName;
+          this.emit({ type: 'message:cerebrum:toolcall', toolCall: { ...toolCall, name: normalizedToolName } });
+          this.emit({ type: 'tool:start', callId: toolCall.id, name: normalizedToolName });
 
-          const tool = this.tools.get(toolCall.name);
-          let result: ToolResult;
-
-          if (tool) {
-            try {
-              const output = await tool.execute(toolCall.args);
-              result = { callId: toolCall.id, output, isError: false };
-            } catch (err) {
-              result = {
-                callId: toolCall.id,
-                output: err instanceof Error ? err.message : String(err),
-                isError: true,
-              };
-            }
-          } else {
-            result = { callId: toolCall.id, output: `Unknown tool: ${toolCall.name}`, isError: true };
-          }
+          const { toolName, result } = await this.toolRuntime.execute({
+            toolCall,
+            tools: this.tools,
+            conversationId: convId,
+            sessionKey: 'agent:main',
+            scopeKey: convId,
+          });
 
           this.emit({ type: 'tool:end', result });
 
           // Cerebellum verification (non-blocking)
           if (this.cerebellum?.isConnected() && this.verificationEnabled) {
             try {
-              this.emit({ type: 'verification:start', callId: toolCall.id, toolName: toolCall.name });
+              this.emit({ type: 'verification:start', callId: toolCall.id, toolName });
 
               const toolArgs: Record<string, string> = {};
               for (const [k, v] of Object.entries(toolCall.args)) {
@@ -679,7 +707,7 @@ export class Orchestrator extends TypedEventEmitter {
               }
 
               const verifyPromise = this.cerebellum.verifyToolResult(
-                toolCall.name,
+                toolName,
                 toolArgs,
                 result.output,
                 !result.isError,
@@ -705,7 +733,7 @@ export class Orchestrator extends TypedEventEmitter {
                   checks: verification.checks,
                   modelVerdict: verification.modelVerdict,
                   toolCallId: toolCall.id,
-                  toolName: toolCall.name,
+                  toolName,
                 };
                 this.emit({ type: 'verification:end', result: vResult });
               }
@@ -716,7 +744,10 @@ export class Orchestrator extends TypedEventEmitter {
 
           this.conversations.appendMessage(convId, 'tool', result.output, {
             toolResult: result,
-            metadata: { toolName: toolCall.name },
+            metadata: {
+              toolName,
+              ...(requestedToolName !== toolName ? { requestedToolName } : {}),
+            },
           });
 
           return result;

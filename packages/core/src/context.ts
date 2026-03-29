@@ -4,7 +4,7 @@ const SAFETY_MARGIN = 1.2;
 
 /**
  * Estimate token count using chars/4 heuristic with a 1.2x safety margin.
- * Avoids tiktoken dependency — same approach as OpenClaw.
+ * Avoids bringing in a tokenizer dependency for lightweight compaction checks.
  */
 export function estimateTokens(text: string): number {
   return Math.ceil((text.length / 4) * SAFETY_MARGIN);

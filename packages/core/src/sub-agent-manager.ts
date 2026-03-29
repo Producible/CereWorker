@@ -11,6 +11,7 @@ import {
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { ConversationStore } from './conversation.js';
+import { ToolRuntime } from './tool-runtime.js';
 import type {
   Message,
   SubAgentState,
@@ -47,6 +48,7 @@ export interface SubAgentManagerOptions {
   tools: Map<string, ToolDefinition>;
   maxConcurrent?: number;
   baseDir?: string;
+  toolRuntime?: ToolRuntime;
 }
 
 export class SubAgentManager {
@@ -55,12 +57,14 @@ export class SubAgentManager {
   private tools: Map<string, ToolDefinition>;
   private maxConcurrent: number;
   private baseDir: string;
+  private toolRuntime: ToolRuntime;
 
   constructor(opts: SubAgentManagerOptions) {
     this.cerebrum = opts.cerebrum;
     this.tools = opts.tools;
     this.maxConcurrent = opts.maxConcurrent ?? 5;
     this.baseDir = opts.baseDir ?? join(homedir(), '.cereworker', 'agents');
+    this.toolRuntime = opts.toolRuntime ?? new ToolRuntime();
     this.ensureDir(this.baseDir);
   }
 
@@ -276,30 +280,25 @@ export class SubAgentManager {
             onToolCall: async (toolCall) => {
               instance.lastActivityAt = Date.now();
               instance.toolCallsCount++;
+              const requestedToolName = toolCall.name;
+              const { toolName, result } = await this.toolRuntime.execute({
+                toolCall,
+                tools: agentTools,
+                conversationId: instance.conversationId,
+                sessionKey: instance.sessionKey,
+                scopeKey: instance.sessionKey,
+              });
 
-              const tool = agentTools.get(toolCall.name);
-              if (!tool) {
-                return { callId: toolCall.id, output: `Unknown tool: ${toolCall.name}`, isError: true };
-              }
-
-              try {
-                const output = await tool.execute(toolCall.args);
-                const result = { callId: toolCall.id, output, isError: false };
-                instance.conversation.appendMessage(instance.conversationId, 'tool', output, {
-                  toolResult: result,
-                });
-                instance.messagesCount++;
-                this.appendTranscript(instance, { role: 'tool', content: output, toolName: toolCall.name });
-                return result;
-              } catch (err) {
-                const errMsg = err instanceof Error ? err.message : String(err);
-                const result = { callId: toolCall.id, output: errMsg, isError: true };
-                instance.conversation.appendMessage(instance.conversationId, 'tool', errMsg, {
-                  toolResult: result,
-                });
-                instance.messagesCount++;
-                return result;
-              }
+              instance.conversation.appendMessage(instance.conversationId, 'tool', result.output, {
+                toolResult: result,
+                metadata: {
+                  toolName,
+                  ...(requestedToolName !== toolName ? { requestedToolName } : {}),
+                },
+              });
+              instance.messagesCount++;
+              this.appendTranscript(instance, { role: 'tool', content: result.output, toolName });
+              return result;
             },
             onFinish: (content, toolCalls) => {
               instance.conversation.appendMessage(
@@ -358,7 +357,9 @@ export class SubAgentManager {
     // Agent-scoped memory tools
     agentTools.set('memory_read', {
       description: 'Read your memory file (MEMORY.md or a daily log)',
-      parameters: {},
+      parameters: {
+        file: { type: 'string', description: 'Optional memory file name (defaults to MEMORY.md)', required: false },
+      },
       execute: async (args) => {
         const file = (args as { file?: string }).file ?? 'MEMORY.md';
         const safeName = file.replace(/[/\\]/g, '');
@@ -370,7 +371,9 @@ export class SubAgentManager {
 
     agentTools.set('memory_write', {
       description: 'Write/update your MEMORY.md file',
-      parameters: {},
+      parameters: {
+        content: { type: 'string', description: 'The full content to write to MEMORY.md', required: true },
+      },
       execute: async (args) => {
         const content = (args as { content: string }).content;
         writeFileSync(join(memoryDir, 'MEMORY.md'), content, 'utf-8');
@@ -380,7 +383,9 @@ export class SubAgentManager {
 
     agentTools.set('memory_log', {
       description: "Append a note to today's daily log",
-      parameters: {},
+      parameters: {
+        content: { type: 'string', description: 'The note content to append to today\'s log', required: true },
+      },
       execute: async (args) => {
         const content = (args as { content: string }).content;
         const today = new Date().toISOString().slice(0, 10);
@@ -392,7 +397,9 @@ export class SubAgentManager {
 
     agentTools.set('memory_search', {
       description: 'Search across your memory files',
-      parameters: {},
+      parameters: {
+        query: { type: 'string', description: 'The text to search for across memory files', required: true },
+      },
       execute: async (args) => {
         const query = (args as { query: string }).query.toLowerCase();
         const files = existsSync(memoryDir)

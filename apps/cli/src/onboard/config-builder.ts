@@ -54,33 +54,36 @@ export function buildConfig(params: BuildConfigParams): Record<string, unknown> 
   if (params.cerebrum.provider === 'local') {
     cerebrum.providers = {
       local: {
-        baseUrl: params.cerebrum.localBaseUrl ?? 'http://localhost:11434',
+        baseUrl: params.cerebrum.baseUrl ?? 'http://localhost:11434',
         model: params.cerebrum.model,
       },
     };
-  } else if (params.cerebrum.auth === 'oauth') {
+  } else if (params.cerebrum.auth === 'oauth' || params.cerebrum.apiKey || params.cerebrum.baseUrl) {
     const providerKey = params.cerebrum.provider;
-    cerebrum.providers = {
-      [providerKey]: {
-        auth: 'oauth',
-        oauth: {
-          clientId: params.cerebrum.oauthClientId,
-          ...(params.cerebrum.oauthClientSecret ? { clientSecret: params.cerebrum.oauthClientSecret } : {}),
-        },
-      },
-    };
-  } else if (params.cerebrum.apiKey) {
-    const providerKey = params.cerebrum.provider;
-    let apiKeyValue: string;
+    const providerConfig: Record<string, unknown> = {};
 
-    if ('envRef' in params.cerebrum.apiKey) {
-      apiKeyValue = `\${${params.cerebrum.apiKey.envRef}}`;
-    } else {
-      apiKeyValue = params.cerebrum.apiKey.plaintext;
+    if (params.cerebrum.auth === 'oauth') {
+      providerConfig.auth = 'oauth';
+    }
+
+    if (params.cerebrum.baseUrl) {
+      providerConfig.baseUrl = params.cerebrum.baseUrl;
+    }
+
+    if (params.cerebrum.apiKey) {
+      let apiKeyValue: string;
+
+      if ('envRef' in params.cerebrum.apiKey) {
+        apiKeyValue = `\${${params.cerebrum.apiKey.envRef}}`;
+      } else {
+        apiKeyValue = params.cerebrum.apiKey.plaintext;
+      }
+
+      providerConfig.apiKey = apiKeyValue;
     }
 
     cerebrum.providers = {
-      [providerKey]: { apiKey: apiKeyValue },
+      [providerKey]: providerConfig,
     };
   }
 
@@ -137,6 +140,10 @@ export function buildConfig(params: BuildConfigParams): Record<string, unknown> 
         channelConfig.allowFrom = ch.allowFrom;
       }
 
+      if (ch.channelIds && ch.channelIds.length > 0) {
+        channelConfig.channelIds = ch.channelIds;
+      }
+
       channels[ch.id] = channelConfig;
     }
 
@@ -165,4 +172,38 @@ export function buildConfig(params: BuildConfigParams): Record<string, unknown> 
   }
 
   return config;
+}
+
+export function buildFinalConfig(params: BuildConfigParams): Record<string, unknown> {
+  const config = buildConfig(params);
+  if (!params.existingConfig) {
+    return config;
+  }
+
+  const finalConfig: Record<string, unknown> = { ...params.existingConfig };
+
+  finalConfig.cerebrum = config.cerebrum;
+  finalConfig.cerebellum = config.cerebellum;
+
+  if ('channels' in config || params.dmPolicy !== undefined) {
+    finalConfig.channels = config.channels ?? {};
+  }
+
+  if (params.gateway !== undefined) {
+    if ('gateway' in config) {
+      finalConfig.gateway = config.gateway;
+    } else {
+      delete finalConfig.gateway;
+    }
+  }
+
+  if (params.profile !== undefined) {
+    if ('profile' in config) {
+      finalConfig.profile = config.profile;
+    } else {
+      delete finalConfig.profile;
+    }
+  }
+
+  return finalConfig;
 }

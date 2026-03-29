@@ -1,24 +1,15 @@
 #!/usr/bin/env node
 
-// Suppress node:sqlite ExperimentalWarning (stable API, flag removed in Node 22.13+)
-const _origEmit = process.emit;
-// @ts-expect-error — filtering warning events before they reach stderr
-process.emit = function (event: string, ...args: unknown[]) {
-  if (event === 'warning' && typeof args[0] === 'object' && args[0] !== null) {
-    const w = args[0] as { name?: string; message?: string };
-    // Suppress node:sqlite ExperimentalWarning (stable API, flag removed in Node 22.13+)
-    if (w.name === 'ExperimentalWarning' && String(w.message).includes('SQLite')) return false;
-    // Suppress punycode deprecation from transitive dependencies
-    if (w.name === 'DeprecationWarning' && String(w.message).includes('punycode')) return false;
-  }
-  return _origEmit.apply(this, [event, ...args] as Parameters<typeof _origEmit>);
-};
+import { installWarningFilter } from './warnings.js';
+
+installWarningFilter();
 
 import React from 'react';
 import { render, Text, Box } from 'ink';
 import { createRequire } from 'node:module';
 import { loadConfig } from '@cereworker/config';
 import { App } from './app.js';
+import { exitOneShot } from './process-exit.js';
 
 const require = createRequire(import.meta.url);
 
@@ -27,7 +18,7 @@ async function main() {
   if (process.argv.includes('--version') || process.argv.includes('-v')) {
     const { version } = require('../package.json');
     console.log(version);
-    return;
+    await exitOneShot(0);
   }
 
   // Parse --debug flag from any position
@@ -49,7 +40,7 @@ async function main() {
   if (subcommand === 'onboard') {
     const { runOnboardingWizard } = await import('./onboard/wizard.js');
     await runOnboardingWizard();
-    return;
+    await exitOneShot(0);
   }
 
   if (subcommand === 'configure') {
@@ -57,17 +48,17 @@ async function main() {
     if (target === 'profile') {
       const { runConfigureProfile } = await import('./configure.js');
       await runConfigureProfile();
-      return;
+      await exitOneShot(0);
     }
     if (target === 'model') {
       const { runConfigureModel } = await import('./configure.js');
       await runConfigureModel();
-      return;
+      await exitOneShot(0);
     }
     if (target === 'browser') {
       const { runConfigureBrowser } = await import('./configure.js');
       await runConfigureBrowser();
-      return;
+      await exitOneShot(0);
     }
     console.error('Usage: cereworker configure <profile|model|browser>');
     process.exit(1);
@@ -81,7 +72,7 @@ async function main() {
     }
     const { runAuth } = await import('./auth.js');
     await runAuth(provider);
-    return;
+    await exitOneShot(0);
   }
 
   if (subcommand === 'approve') {
@@ -92,13 +83,13 @@ async function main() {
     }
     const { runApprove } = await import('./pairing.js');
     await runApprove(code);
-    return;
+    await exitOneShot(0);
   }
 
   if (subcommand === 'pairing') {
     const { runPairingList } = await import('./pairing.js');
     await runPairingList();
-    return;
+    await exitOneShot(0);
   }
 
   if (subcommand === 'extension-dir') {
@@ -115,7 +106,13 @@ async function main() {
       const p = r.resolve('@cereworker/browser');
       console.log(p.substring(0, p.lastIndexOf('dist')) + 'extension');
     }
-    return;
+    await exitOneShot(0);
+  }
+
+  if (subcommand === 'upgrade') {
+    const { runUpgrade } = await import('./upgrade.js');
+    await runUpgrade();
+    await exitOneShot(0);
   }
 
   if (subcommand === 'serve') {

@@ -17,7 +17,10 @@ export interface OAuthTokens {
   scope?: string;
   clientId?: string;
   email?: string;
+  accountId?: string;
   projectId?: string; // Google Cloud project ID
+  baseUrl?: string;
+  resourceUrl?: string;
 }
 
 /**

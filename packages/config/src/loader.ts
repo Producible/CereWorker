@@ -3,12 +3,14 @@ import { resolve, join } from 'node:path';
 import { homedir } from 'node:os';
 import { parse as parseYaml } from 'yaml';
 import { configSchema, type CereWorkerConfig } from './schema.js';
+import { PROVIDER_ENV_VAR_MAP } from './cerebrum-providers.js';
 
 const CONFIG_DIR = join(homedir(), '.cereworker');
 const GLOBAL_CONFIG = join(CONFIG_DIR, 'config.yaml');
 const GLOBAL_CONFIG_ALT = join(CONFIG_DIR, 'config.yml');
 const LOCAL_CONFIG = '.cereworker.yaml';
 const LOCAL_CONFIG_ALT = '.cereworker.yml';
+const OPENAI_CODEX_PROVIDER = 'openai-codex';
 
 export function ensureConfigDir(): void {
   if (!existsSync(CONFIG_DIR)) {
@@ -39,15 +41,51 @@ function interpolateEnvVars(obj: unknown): unknown {
   return obj;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function normalizeLegacyOpenAIOAuthConfig(config: Record<string, unknown>): Record<string, unknown> {
+  const cerebrum = asRecord(config.cerebrum);
+  if (!cerebrum) return config;
+
+  const providers = asRecord(cerebrum.providers);
+  if (!providers) return config;
+
+  const openaiProvider = asRecord(providers.openai);
+  if (openaiProvider?.auth !== 'oauth') return config;
+
+  const nextProviders = { ...providers };
+  if (!asRecord(nextProviders[OPENAI_CODEX_PROVIDER])) {
+    nextProviders[OPENAI_CODEX_PROVIDER] = { ...openaiProvider };
+  }
+
+  const nextCerebrum: Record<string, unknown> = {
+    ...cerebrum,
+    providers: nextProviders,
+  };
+
+  if (cerebrum.defaultProvider === 'openai') {
+    nextCerebrum.defaultProvider = OPENAI_CODEX_PROVIDER;
+  }
+
+  return { ...config, cerebrum: nextCerebrum };
+}
+
 function loadFromEnv(): Record<string, unknown> {
   const env: Record<string, unknown> = {};
-  const { ANTHROPIC_API_KEY, OPENAI_API_KEY, GOOGLE_API_KEY } = process.env;
+  const providers: Record<string, unknown> = {};
 
-  if (ANTHROPIC_API_KEY || OPENAI_API_KEY || GOOGLE_API_KEY) {
-    const providers: Record<string, unknown> = {};
-    if (ANTHROPIC_API_KEY) providers.anthropic = { apiKey: ANTHROPIC_API_KEY };
-    if (OPENAI_API_KEY) providers.openai = { apiKey: OPENAI_API_KEY };
-    if (GOOGLE_API_KEY) providers.google = { apiKey: GOOGLE_API_KEY };
+  for (const [providerId, envVar] of Object.entries(PROVIDER_ENV_VAR_MAP)) {
+    const apiKey = process.env[envVar];
+    if (apiKey) {
+      providers[providerId] = { apiKey };
+    }
+  }
+
+  if (Object.keys(providers).length > 0) {
     env.cerebrum = { providers };
   }
 
@@ -90,8 +128,9 @@ export function loadConfig(overrides?: Partial<CereWorkerConfig>): CereWorkerCon
 
   const merged = deepMerge({}, globalConfig, localConfig, envConfig, (overrides ?? {}) as Record<string, unknown>);
   const interpolated = interpolateEnvVars(merged) as Record<string, unknown>;
+  const normalized = normalizeLegacyOpenAIOAuthConfig(interpolated);
 
-  return configSchema.parse(interpolated);
+  return configSchema.parse(normalized);
 }
 
 export function loadRawConfig(): Record<string, unknown> {

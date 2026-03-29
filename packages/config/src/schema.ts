@@ -31,7 +31,16 @@ export const configSchema = z.object({
         .object({
           anthropic: providerConfigSchema.optional(),
           openai: providerConfigSchema.optional(),
+          'openai-codex': providerConfigSchema.optional(),
           google: providerConfigSchema.optional(),
+          openrouter: providerConfigSchema.optional(),
+          deepseek: providerConfigSchema.optional(),
+          xai: providerConfigSchema.optional(),
+          mistral: providerConfigSchema.optional(),
+          together: providerConfigSchema.optional(),
+          moonshot: providerConfigSchema.optional(),
+          minimax: providerConfigSchema.optional(),
+          'minimax-portal': providerConfigSchema.optional(),
           local: providerConfigSchema
             .extend({
               baseUrl: z.string().default('http://localhost:11434'),
@@ -133,6 +142,28 @@ export const configSchema = z.object({
             .default({}),
         })
         .default({}),
+      runtime: z
+        .object({
+          engine: z.enum(['legacy', 'enhanced']).default('enhanced'),
+          maxResultChars: z.number().default(20000),
+          loopDetection: z
+            .object({
+              enabled: z.boolean().default(false),
+              historySize: z.number().default(30),
+              warningThreshold: z.number().default(10),
+              criticalThreshold: z.number().default(20),
+              globalCircuitBreakerThreshold: z.number().default(30),
+              detectors: z
+                .object({
+                  genericRepeat: z.boolean().default(true),
+                  knownPollNoProgress: z.boolean().default(true),
+                  pingPong: z.boolean().default(true),
+                })
+                .default({}),
+            })
+            .default({}),
+        })
+        .default({}),
     })
     .default({}),
 
@@ -154,6 +185,7 @@ export const configSchema = z.object({
           token: z.string().optional(),
           applicationId: z.string().optional(),
           allowFrom: z.array(z.string()).default([]),
+          channelIds: z.array(z.string()).default([]),
         })
         .default({}),
       telegram: z
@@ -223,6 +255,7 @@ export const configSchema = z.object({
     .object({
       theme: z.enum(['dark', 'light', 'auto']).default('auto'),
       maxDisplayMessages: z.number().default(100),
+      showActivity: z.boolean().default(true),
     })
     .default({}),
 

@@ -1,74 +1,74 @@
-import { exec } from 'node:child_process';
-import { platform } from 'node:os';
 import { clack, guardCancel } from '../prompter.js';
-import { loginOpenAI, loginGoogle, TokenStore } from '@cereworker/cerebrum';
+import {
+  getCerebrumProvider,
+  getCerebrumProviderFamily,
+  getProviderAuthModes,
+  getProviderEndpointOptions,
+  getProviderEnvVar,
+  getProviderModels,
+  listCerebrumProviderFamilies,
+  type ProviderAuthMode,
+} from '@cereworker/config';
+import { loginGoogle, loginMiniMaxPortal, loginOpenAICodex, TokenStore } from '@cereworker/cerebrum';
+import { openBrowser } from '../../open-browser.js';
 
 export interface CerebrumResult {
   provider: string;
   model: string;
   apiKey?: { envRef: string } | { plaintext: string };
-  localBaseUrl?: string;
+  baseUrl?: string;
   auth?: 'apikey' | 'oauth';
-  oauthClientId?: string;
-  oauthClientSecret?: string;
 }
 
-const PROVIDER_MODELS: Record<string, { value: string; label: string; hint?: string }[]> = {
-  anthropic: [
-    { value: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6', hint: 'default, best balance of speed and intelligence' },
-    { value: 'claude-opus-4-6', label: 'Claude Opus 4.6', hint: 'most capable, best for agents and coding' },
-    { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5', hint: 'fastest, cheapest' },
-    { value: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5', hint: 'previous gen, proven' },
-    { value: 'claude-opus-4-5', label: 'Claude Opus 4.5', hint: 'previous gen Opus' },
-  ],
-  openai: [
-    { value: 'gpt-5.4', label: 'GPT-5.4', hint: 'default, frontier intelligence, 1M context' },
-    { value: 'gpt-5-mini', label: 'GPT-5 Mini', hint: 'fast, cost efficient, 400K context' },
-    { value: 'o3', label: 'o3', hint: 'most powerful reasoning model' },
-    { value: 'o4-mini', label: 'o4-mini', hint: 'efficient reasoning, half the cost of o3' },
-    { value: 'gpt-4.1', label: 'GPT-4.1', hint: '1M context, strong coding' },
-    { value: 'gpt-4.1-mini', label: 'GPT-4.1 Mini', hint: '1M context, fast' },
-    { value: 'gpt-4.1-nano', label: 'GPT-4.1 Nano', hint: '1M context, cheapest' },
-  ],
-  google: [
-    { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', hint: 'default, deep reasoning' },
-    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', hint: 'best price-performance, 1M context' },
-    { value: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash-Lite', hint: 'fastest, cheapest' },
-    { value: 'gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro (Preview)', hint: 'next gen, advanced agentic' },
-    { value: 'gemini-3-flash-preview', label: 'Gemini 3 Flash (Preview)', hint: 'next gen, frontier-class' },
-  ],
-};
+export type CerebrumAuthMode = ProviderAuthMode;
 
-const ENV_VAR_MAP: Record<string, string> = {
-  anthropic: 'ANTHROPIC_API_KEY',
-  openai: 'OPENAI_API_KEY',
-  google: 'GOOGLE_API_KEY',
-};
+export function getSupportedAuthModes(provider: string): CerebrumAuthMode[] {
+  return getProviderAuthModes(provider);
+}
 
-// Providers that support OAuth login
-const OAUTH_PROVIDERS = new Set(['openai', 'google']);
+export function resolveProviderSelectionFamily(family: string): string | undefined {
+  const providers = getCerebrumProviderFamily(family);
+  if (providers.length === 1) {
+    return providers[0]?.id;
+  }
+  return undefined;
+}
 
 export async function cerebrumStep(): Promise<CerebrumResult> {
-  const provider = guardCancel(
+  const availableFamilies = listCerebrumProviderFamilies();
+  const family = guardCancel(
     await clack.select({
       message: 'LLM Provider',
-      options: [
-        { value: 'anthropic', label: 'Anthropic (Claude)' },
-        { value: 'openai', label: 'OpenAI' },
-        { value: 'google', label: 'Google (Gemini)' },
-        { value: 'local', label: 'Local (Ollama / vLLM)' },
-      ],
+      options: availableFamilies.map((entry) => ({
+        value: entry.id,
+        label: entry.label,
+        hint: entry.hint,
+      })),
     }),
   ) as string;
+  const familyProviders = getCerebrumProviderFamily(family);
+  const provider = resolveProviderSelectionFamily(family)
+    ?? guardCancel(
+      await clack.select({
+        message: `${familyProviders[0]?.familyLabel ?? 'Provider'} Type`,
+        options: familyProviders.map((entry) => ({
+          value: entry.id,
+          label: entry.typeLabel ?? entry.label,
+          hint: entry.authModes.includes('oauth') ? 'OAuth' : 'API key',
+        })),
+      }),
+    ) as string;
+  const providerDefinition = getCerebrumProvider(provider);
+  if (!providerDefinition) {
+    throw new Error(`Unknown provider: ${provider}`);
+  }
 
   let apiKey: CerebrumResult['apiKey'];
-  let localBaseUrl: string | undefined;
+  let baseUrl: string | undefined;
   let auth: CerebrumResult['auth'];
-  let oauthClientId: string | undefined;
-  let oauthClientSecret: string | undefined;
 
   if (provider === 'local') {
-    localBaseUrl = guardCancel(
+    baseUrl = guardCancel(
       await clack.text({
         message: 'Local LLM base URL',
         initialValue: 'http://localhost:11434',
@@ -76,9 +76,25 @@ export async function cerebrumStep(): Promise<CerebrumResult> {
       }),
     ) as string;
   } else {
-    // Ask auth method for providers that support OAuth
-    let authMethod: string = 'apikey';
-    if (OAUTH_PROVIDERS.has(provider)) {
+    const endpointOptions = getProviderEndpointOptions(provider);
+    if (endpointOptions.length > 0) {
+      const selectedEndpoint = guardCancel(
+        await clack.select({
+          message: 'Endpoint',
+          options: endpointOptions.map((option) => ({
+            value: option.baseUrl,
+            label: option.label,
+            hint: option.hint,
+          })),
+        }),
+      ) as string;
+      baseUrl = selectedEndpoint;
+    }
+
+    const supportedAuthModes = getSupportedAuthModes(provider);
+    let authMethod: CerebrumAuthMode = supportedAuthModes[0] ?? 'apikey';
+
+    if (supportedAuthModes.length > 1) {
       authMethod = guardCancel(
         await clack.select({
           message: 'Authentication method',
@@ -87,20 +103,26 @@ export async function cerebrumStep(): Promise<CerebrumResult> {
             { value: 'oauth', label: 'OAuth (Browser Login)', hint: 'sign in with your account' },
           ],
         }),
-      ) as string;
+      ) as CerebrumAuthMode;
     }
 
     if (authMethod === 'oauth') {
       auth = 'oauth';
-      clack.log.warn(
-        'OAuth uses shared credentials and may trigger account restrictions from the provider.\n'
-        + '  Use an API key if this is a production or high-volume setup.',
-      );
-      const proceed = guardCancel(
-        await clack.confirm({ message: 'Continue with OAuth?', initialValue: true }),
-      );
-      if (!proceed) {
-        authMethod = 'apikey';
+      if (provider === 'openai-codex') {
+        clack.log.info('OpenAI Codex uses your ChatGPT/Codex subscription via browser login.');
+      } else if (provider === 'minimax-portal') {
+        clack.log.info('MiniMax Portal uses browser/device approval through your MiniMax account.');
+      } else if (provider === 'google') {
+        clack.log.warn(
+          'OAuth uses shared credentials and may trigger account restrictions from the provider.\n'
+          + '  Use an API key if this is a production or high-volume setup.',
+        );
+        const proceed = guardCancel(
+          await clack.confirm({ message: 'Continue with OAuth?', initialValue: true }),
+        );
+        if (!proceed) {
+          authMethod = 'apikey';
+        }
       }
     }
 
@@ -108,21 +130,26 @@ export async function cerebrumStep(): Promise<CerebrumResult> {
       clack.log.info('Opening browser for sign-in...');
 
       try {
-        const loginFn = provider === 'openai' ? loginOpenAI : loginGoogle;
-        const tokens = await loginFn({
-          onAuth: (url) => {
-            const cmd =
-              platform() === 'darwin' ? 'open' : platform() === 'win32' ? 'start' : 'xdg-open';
-            exec(`${cmd} ${JSON.stringify(url)}`);
+        const commonCallbacks = {
+          onAuth: (url: string) => {
+            openBrowser(url);
             clack.log.info(`If the browser didn't open, visit:\n  ${url}`);
           },
-          onPrompt: async (message) => {
+          onPrompt: async (message: string) => {
             return guardCancel(
               await clack.text({ message, validate: (v) => (v.length > 0 ? undefined : 'Required') }),
             ) as string;
           },
-          onProgress: (msg) => clack.log.step(msg),
-        });
+          onProgress: (msg: string) => clack.log.step(msg),
+        };
+        const tokens = provider === 'openai-codex'
+          ? await loginOpenAICodex(commonCallbacks)
+          : provider === 'google'
+            ? await loginGoogle(commonCallbacks)
+            : await loginMiniMaxPortal({
+                ...commonCallbacks,
+                baseUrl,
+              });
 
         const store = new TokenStore();
         store.save(provider, tokens);
@@ -133,7 +160,10 @@ export async function cerebrumStep(): Promise<CerebrumResult> {
       }
     } else {
       auth = 'apikey';
-      const envVar = ENV_VAR_MAP[provider];
+      const envVar = getProviderEnvVar(provider);
+      if (!envVar) {
+        throw new Error(`No API key env var configured for provider: ${provider}`);
+      }
       const envValue = process.env[envVar];
 
       if (envValue) {
@@ -168,7 +198,7 @@ export async function cerebrumStep(): Promise<CerebrumResult> {
         } else {
           const key = guardCancel(
             await clack.text({
-              message: `Enter your ${provider} API key`,
+              message: `Enter your ${providerDefinition.familyLabel} API key`,
               validate: (v) => (v.length > 0 ? undefined : 'API key is required'),
             }),
           ) as string;
@@ -190,7 +220,7 @@ export async function cerebrumStep(): Promise<CerebrumResult> {
       }),
     ) as string;
   } else {
-    const models = PROVIDER_MODELS[provider] ?? [];
+    const models = getProviderModels(provider);
     const modelOptions = [
       ...models,
       { value: '__custom__', label: 'Other (enter model ID)' },
@@ -215,5 +245,5 @@ export async function cerebrumStep(): Promise<CerebrumResult> {
     }
   }
 
-  return { provider, model, apiKey, localBaseUrl, auth, oauthClientId, oauthClientSecret };
+  return { provider, model, apiKey, baseUrl, auth };
 }

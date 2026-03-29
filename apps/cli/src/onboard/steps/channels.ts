@@ -5,6 +5,7 @@ export interface ChannelSetup {
   id: string;
   credentials: Record<string, string | { envRef: string }>;
   allowFrom?: string[];
+  channelIds?: string[];
 }
 
 export interface ChannelsResult {
@@ -80,8 +81,10 @@ const SETUP_GUIDES: Record<string, string> = {
     '1. Go to discord.com/developers/applications → New Application',
     '2. Bot tab → Reset Token → copy the token',
     '3. Enable "Message Content Intent" under Privileged Gateway Intents',
-    '4. OAuth2 → URL Generator → select "bot" scope + "Send Messages" permission',
+    '4. OAuth2 → URL Generator → select "bot" scope + "View Channels", "Send Messages", and "Read Message History" permissions',
     '5. Open the generated URL to invite the bot to your server',
+    '6. In Discord, make sure the bot can access the specific channels or categories where you want it to reply',
+    '7. If you want replies in specific server channels without @mentions, enable Developer Mode and copy those channel IDs during onboarding',
   ].join('\n'),
 
   slack: [
@@ -423,6 +426,29 @@ export async function channelsStep(): Promise<ChannelsResult> {
       }
     }
 
+    let channelIds: string[] | undefined;
+    if (channelId === 'discord') {
+      const useChannelIds = guardCancel(
+        await clack.confirm({
+          message: 'Allow replies in specific Discord channels without requiring an @mention?',
+          initialValue: true,
+        }),
+      );
+
+      if (useChannelIds) {
+        clack.log.info('Tip: enable Discord Developer Mode, then right-click a channel and choose "Copy Channel ID".');
+        const raw = guardCancel(
+          await clack.text({
+            message: 'Enter comma-separated Discord channel IDs',
+            placeholder: '123456789012345678, 987654321098765432',
+            validate: (v) => (v.trim().length > 0 ? undefined : 'Enter at least one channel ID'),
+          }),
+        ) as string;
+
+        channelIds = raw.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+    }
+
     // Allowlist prompt
     let allowFrom: string[] | undefined;
     const allowlistHint = dmPolicy === 'pairing'
@@ -496,6 +522,7 @@ export async function channelsStep(): Promise<ChannelsResult> {
       id: channelId,
       credentials,
       ...(allowFrom && allowFrom.length > 0 ? { allowFrom } : {}),
+      ...(channelIds && channelIds.length > 0 ? { channelIds } : {}),
     });
   }
 

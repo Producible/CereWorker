@@ -35,11 +35,11 @@ export function createHttpTools(
     httpFetch: {
       description: 'Make an HTTP request. Returns status code and response body.',
       parameters: {
-        url: { type: 'string', description: 'The URL to fetch' },
-        method: { type: 'string', description: 'HTTP method: GET, POST, PUT, DELETE, PATCH, HEAD (default: GET)' },
-        headers: { type: 'object', description: 'Request headers as key-value pairs' },
-        body: { type: 'string', description: 'Request body (for POST/PUT/PATCH)' },
-        timeout: { type: 'number', description: 'Request timeout in milliseconds (default: 30000)' },
+        url: { type: 'string', description: 'The URL to fetch', required: true },
+        method: { type: 'string', description: 'HTTP method: GET, POST, PUT, DELETE, PATCH, HEAD (default: GET)', required: false },
+        headers: { type: 'object', description: 'Request headers as key-value pairs', required: false },
+        body: { type: 'string', description: 'Request body (for POST/PUT/PATCH)', required: false },
+        timeout: { type: 'number', description: 'Request timeout in milliseconds (default: 30000)', required: false },
       },
       execute: async (args) => {
         const { url, method: m, headers, body, timeout: t } = args as {
@@ -90,8 +90,8 @@ export function createHttpTools(
       description:
         'Search the web using DuckDuckGo. Returns titles, URLs, and snippets. No API key required.',
       parameters: {
-        query: { type: 'string', description: 'The search query' },
-        maxResults: { type: 'number', description: 'Maximum number of results (default: 5)' },
+        query: { type: 'string', description: 'The search query', required: true },
+        maxResults: { type: 'number', description: 'Maximum number of results (default: 5)', required: false },
       },
       execute: async (args) => {
         const { query, maxResults: mr } = args as { query: string; maxResults?: number };

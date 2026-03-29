@@ -68,6 +68,7 @@ describe('TokenStore', () => {
     expiresAt: Date.now() + 3600_000,
     tokenType: 'bearer',
     scope: 'openai.api',
+    accountId: 'acct_123',
   };
 
   it('save and load round-trips correctly', () => {
@@ -126,6 +127,18 @@ describe('TokenStore', () => {
     store.save('google', tokensWithClientId);
     const loaded = store.load('google');
     expect(loaded?.clientId).toBe('my-client-123');
+  });
+
+  it('round-trips tokens with accountId', () => {
+    store.save('openai-codex', sampleTokens);
+    const loaded = store.load('openai-codex');
+    expect(loaded?.accountId).toBe('acct_123');
+  });
+
+  it('loads legacy openai tokens when openai-codex tokens are absent', () => {
+    store.save('openai', sampleTokens);
+    const loaded = store.load('openai-codex');
+    expect(loaded).toEqual(sampleTokens);
   });
 });
 
@@ -258,6 +271,16 @@ describe('OAUTH_PROVIDERS', () => {
       clientId: 'stored-client-id',
     };
     expect(tokens.clientId).toBe('stored-client-id');
+  });
+
+  it('OAuthTokens supports accountId field', () => {
+    const tokens: OAuthTokens = {
+      accessToken: 'at',
+      expiresAt: Date.now(),
+      tokenType: 'bearer',
+      accountId: 'acct_123',
+    };
+    expect(tokens.accountId).toBe('acct_123');
   });
 });
 

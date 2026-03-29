@@ -9,15 +9,13 @@ echo "Building CPU image ($IMAGE:latest)..."
 docker build \
   -t "$IMAGE:latest" \
   -f cerebellum/Dockerfile \
-  --build-context proto=./proto \
-  ./cerebellum
+  .
 
 echo "Building GPU image ($IMAGE:gpu)..."
 docker build \
   -t "$IMAGE:gpu" \
   -f cerebellum/Dockerfile.gpu \
-  --build-context proto=./proto \
-  ./cerebellum
+  .
 
 echo ""
 echo "Images built:"

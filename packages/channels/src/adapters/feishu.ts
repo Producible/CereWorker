@@ -63,6 +63,9 @@ export function createFeishuChannel(config: FeishuChannelConfig): ChannelPlugin 
             channelId: 'feishu',
             senderId,
             text,
+            sessionId: message.root_id
+              ? `thread:${message.root_id as string}`
+              : `chat:${message.chat_id as string}`,
             threadId: message.root_id as string | undefined,
             timestamp: Number(message.create_time ?? Date.now()),
           };

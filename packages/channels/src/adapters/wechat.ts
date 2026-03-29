@@ -49,6 +49,7 @@ export function createWeChatChannel(config: WeChatChannelConfig): ChannelPlugin 
           senderId,
           senderName: talker.name(),
           text,
+          sessionId: room ? `room:${room.id}` : `dm:${talker.id}`,
           threadId: room ? room.id : undefined,
           timestamp: message.date().getTime(),
         };

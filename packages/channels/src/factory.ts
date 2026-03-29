@@ -29,6 +29,7 @@ export function createChannelManager(config: CereWorkerConfig): ChannelManager {
         token: channels.discord.token,
         applicationId: channels.discord.applicationId,
         allowFrom: channels.discord.allowFrom,
+        channelIds: channels.discord.channelIds,
       }),
     );
   }

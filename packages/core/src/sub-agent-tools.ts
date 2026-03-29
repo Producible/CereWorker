@@ -7,12 +7,13 @@ export function createSubAgentTools(manager: SubAgentManager): Record<string, To
       description:
         'Spawn a sub-agent to handle a task in the background. Returns the agent ID. The sub-agent has its own isolated memory and conversation.',
       parameters: {
-        task: { type: 'string', description: 'The task for the sub-agent to complete' },
-        timeoutMinutes: { type: 'number', description: 'Max lifetime in minutes (default: 5)' },
-        label: { type: 'string', description: 'Optional short label for the agent' },
+        task: { type: 'string', description: 'The task for the sub-agent to complete', required: true },
+        timeoutMinutes: { type: 'number', description: 'Max lifetime in minutes (default: 5)', required: false },
+        label: { type: 'string', description: 'Optional short label for the agent', required: false },
         cleanup: {
           type: 'string',
           description: '"delete" to remove after completion, "keep" to persist (default: delete)',
+          required: false,
         },
       },
       execute: async (args) => {
@@ -40,7 +41,7 @@ export function createSubAgentTools(manager: SubAgentManager): Record<string, To
       description:
         'Query the status of all sub-agents, or a specific one by ID. Returns status, task, result, and other details.',
       parameters: {
-        agentId: { type: 'string', description: 'Optional: query a specific agent by ID' },
+        agentId: { type: 'string', description: 'Optional: query a specific agent by ID', required: false },
       },
       execute: async (args) => {
         const { agentId } = args as { agentId?: string };
@@ -78,7 +79,7 @@ export function createSubAgentTools(manager: SubAgentManager): Record<string, To
     cancel_agent: {
       description: 'Cancel a running sub-agent by ID.',
       parameters: {
-        agentId: { type: 'string', description: 'The agent ID to cancel' },
+        agentId: { type: 'string', description: 'The agent ID to cancel', required: true },
       },
       execute: async (args) => {
         const { agentId } = args as { agentId: string };

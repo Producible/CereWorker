@@ -4,6 +4,9 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync, unlinkSync } from '
 import type { OAuthProviderConfig, OAuthTokens } from './types.js';
 
 const DEFAULT_OAUTH_DIR = join(homedir(), '.cereworker', 'oauth');
+const TOKEN_FILE_ALIASES: Record<string, string[]> = {
+  'openai-codex': ['openai'],
+};
 
 export class TokenStore {
   private dir: string;
@@ -22,9 +25,13 @@ export class TokenStore {
   }
 
   load(provider: string): OAuthTokens | null {
-    const path = join(this.dir, `${provider}.json`);
-    if (!existsSync(path)) return null;
-    return JSON.parse(readFileSync(path, 'utf-8'));
+    const providers = [provider, ...(TOKEN_FILE_ALIASES[provider] ?? [])];
+    for (const candidate of providers) {
+      const path = join(this.dir, `${candidate}.json`);
+      if (!existsSync(path)) continue;
+      return JSON.parse(readFileSync(path, 'utf-8'));
+    }
+    return null;
   }
 
   delete(provider: string): void {

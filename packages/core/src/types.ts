@@ -10,6 +10,11 @@ export interface ToolResult {
   callId: string;
   output: string;
   isError: boolean;
+  details?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  truncated?: boolean;
+  synthetic?: boolean;
+  warnings?: string[];
 }
 
 export interface Message {

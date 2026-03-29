@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1
+
 # Stage 1: Build — compile protos (build-essential not needed in runtime)
 FROM python:3.12-slim AS builder
 WORKDIR /app
@@ -6,9 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir "grpcio-tools>=1.68.0"
+RUN pip install --no-cache-dir --default-timeout=1000 "grpcio-tools>=1.68.0"
 
-COPY --from=proto / /app/proto/
+COPY proto/ /app/proto/
 RUN mkdir -p /app/src/proto && python -m grpc_tools.protoc \
     -I/app/proto \
     --python_out=/app/src/proto \
@@ -21,13 +23,13 @@ RUN mkdir -p /app/src/proto && python -m grpc_tools.protoc \
 FROM python:3.12-slim
 WORKDIR /app
 
-COPY pyproject.toml .
+COPY cerebellum/pyproject.toml ./pyproject.toml
 
 # Default torch includes CUDA support for GPU-accelerated inference and fine-tuning
-RUN pip install --no-cache-dir ".[finetune]"
+RUN pip install --no-cache-dir --default-timeout=1000 ".[finetune]"
 
 COPY --from=builder /app/src/proto /app/src/proto
-COPY src/ /app/src/
+COPY cerebellum/src/ /app/src/
 
 RUN mkdir -p /checkpoints /data
 

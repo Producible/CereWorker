@@ -86,7 +86,7 @@ The Cerebellum is a **watchdog**, not a thinker. It answers "yes" or "no" -- not
 
 The **Orchestrator** sits at the center. It routes user messages to the Cerebrum, executes tool calls, streams responses to the TUI, and listens to heartbeat events from the Cerebellum. It also manages sub-agents via the SubAgentManager. It emits typed events (`message:cerebrum:chunk`, `tool:start`, `heartbeat:tick`, `agent:spawned`, etc.) that the UI and other components subscribe to.
 
-The **Cerebrum** wraps Vercel AI SDK 6 to provide a unified interface across providers. Switching from Claude to GPT to Gemini to a local Ollama model is a config change. The Cerebrum also owns the tool registry -- shell execution, file operations, browser automation, and memory tools are all registered as AI SDK tools that the LLM can call during multi-step reasoning.
+The **Cerebrum** wraps Vercel AI SDK 6 to provide a unified interface across providers. Switching from Claude to GPT to Gemini to a local Ollama model is a config change. The **Orchestrator** owns the tool registry and shared execution runtime, while the Cerebrum adapts those tools to provider-specific payloads. This keeps shell execution, file operations, browser automation, memory tools, and sub-agent tools on one normalized execution path.
 
 The **Cerebellum** runs as a Python gRPC service inside a Docker container with a configurable small LLM (Qwen3 0.6B/1.7B, SmolLM2, Phi-4 Mini, or a custom model). The TypeScript side communicates with it via streaming RPCs defined in `proto/cerebellum.proto`. The container manages its own model weights and supports fine-tuning via LoRA, QLoRA, or full methods on a configurable schedule. After fine-tuning, the container can be hot-swapped with updated weights without interrupting the main process.
 
@@ -133,17 +133,20 @@ cereworker onboard
 ```
 
 The wizard walks you through:
-- **LLM provider** -- Anthropic, OpenAI, Google, or local (Ollama/vLLM)
+- **LLM provider** -- Anthropic, OpenAI API, OpenAI Codex (ChatGPT OAuth), Google, OpenRouter, DeepSeek, xAI, Mistral, Together, Moonshot, MiniMax, MiniMax Portal (OAuth), or local (Ollama/vLLM)
 - **Cerebellum model** -- choose from Qwen3, SmolLM2, Phi-4 Mini, or a custom checkpoint, with hardware-aware recommendations
 - **Fine-tuning** -- method (Auto/LoRA/QLoRA/Full) and schedule, with GPU/RAM detection
 - **Messaging channels** -- enable Slack, Discord, Telegram, Matrix, Feishu, or WeChat
 - **Config output** -- writes `~/.cereworker/config.yaml` with env var references for secrets
+
+For providers with multiple connection modes, onboarding groups them as **provider -> type**. For example, you select `OpenAI`, then choose either `API` or `Codex (ChatGPT OAuth)`. MiniMax works the same way with `API` and `Portal (OAuth)`.
 
 After onboarding, start the agent:
 
 ```bash
 cereworker              # interactive TUI
 cereworker serve        # headless service (for production/systemd)
+cereworker upgrade      # pull latest Cerebellum Docker image
 ```
 
 On **first run**, CereWorker discovers its identity through conversation — it asks your name for it, its role, recurring tasks, and communication style. The answers are saved to `~/.cereworker/instance.json` and seeded as training data for the Cerebellum's first fine-tune cycle. Each instance develops a unique identity through fine-tuning that persists across sessions.
@@ -163,6 +166,57 @@ EOF
 
 ANTHROPIC_API_KEY=sk-... cereworker
 ```
+
+For OpenAI Codex subscription OAuth, use the dedicated provider:
+
+```bash
+cereworker auth openai-codex
+```
+
+```yaml
+cerebrum:
+  defaultProvider: openai-codex
+  defaultModel: gpt-5.4
+  providers:
+    openai-codex:
+      auth: oauth
+```
+
+For MiniMax Portal OAuth, use the dedicated provider:
+
+```bash
+cereworker auth minimax-portal
+```
+
+```yaml
+cerebrum:
+  defaultProvider: minimax-portal
+  defaultModel: MiniMax-M2.7
+  providers:
+    minimax-portal:
+      auth: oauth
+      baseUrl: https://api.minimax.io/anthropic
+```
+
+### Cerebrum Providers
+
+All cloud providers support custom model IDs through onboarding's **Other (enter model ID)** option or by editing `cerebrum.defaultModel` manually.
+
+| Provider | Auth | Env var | Notes |
+|----------|------|---------|-------|
+| Anthropic | API key | `ANTHROPIC_API_KEY` | Claude models |
+| OpenAI | API key | `OPENAI_API_KEY` | Direct OpenAI API only |
+| OpenAI Codex | OAuth | — | ChatGPT/Codex subscription flow via `cereworker auth openai-codex` |
+| Google | API key or OAuth | `GOOGLE_API_KEY` | Gemini models |
+| OpenRouter | API key | `OPENROUTER_API_KEY` | Default model is `auto` |
+| DeepSeek | API key | `DEEPSEEK_API_KEY` | Uses DeepSeek OpenAI-compatible API |
+| xAI | API key | `XAI_API_KEY` | Grok models with xAI-specific tool compatibility |
+| Mistral | API key | `MISTRAL_API_KEY` | Uses stricter Mistral tool-call ID sanitation |
+| Together | API key | `TOGETHER_API_KEY` | Curated Together-hosted open models |
+| Moonshot | API key | `MOONSHOT_API_KEY` | Global/CN endpoint choice is stored in `baseUrl` |
+| MiniMax | API key | `MINIMAX_API_KEY` | Global/CN endpoint choice is stored in `baseUrl`; Anthropic-compatible transport |
+| MiniMax Portal | OAuth | — | Browser/device OAuth flow via `cereworker auth minimax-portal`; endpoint choice is stored in `baseUrl` |
+| Local | none | — | Ollama, vLLM, or other local OpenAI-compatible endpoint |
 
 ### From source
 
@@ -188,6 +242,16 @@ Or from source:
 ```bash
 docker compose up -d cerebellum
 ```
+
+### Updating the Cerebellum
+
+When a new Cerebellum image is published, `npm install -g @cereworker/cli` automatically pulls the latest image during postinstall. To update the image independently:
+
+```bash
+cereworker upgrade
+```
+
+This pulls the latest `cereworker/cerebellum` image from Docker Hub and removes the old container so it gets recreated with the new image on next start.
 
 ### Enable IM Channels (optional)
 
@@ -431,7 +495,7 @@ When a message arrives from Slack/Discord/Telegram/Matrix/Feishu/WeChat:
 
 ### Comparison with Traditional Agents
 
-| Aspect | Traditional (e.g., OpenClaw) | CereWorker |
+| Aspect | Traditional agent | CereWorker |
 |--------|------------------------------|------------|
 | Memory | Prompt injection, vector DB search | Fine-tuned into Cerebellum parameters |
 | Scheduling | Cron expressions, fixed timers | Small LLM evaluates what needs attention |
@@ -561,7 +625,7 @@ Config is loaded with cascading precedence:
 1. Built-in defaults
 2. `~/.cereworker/config.yaml` (global)
 3. `./.cereworker.yaml` (project-local)
-4. Environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`)
+4. Environment variables (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`, `DEEPSEEK_API_KEY`, `XAI_API_KEY`, `MISTRAL_API_KEY`, `TOGETHER_API_KEY`, `MOONSHOT_API_KEY`, `MINIMAX_API_KEY`)
 5. CLI flags
 
 Full config example:
@@ -580,6 +644,39 @@ cerebrum:
   providers:
     anthropic:
       apiKey: ${ANTHROPIC_API_KEY}
+    # direct OpenAI API usage:
+    # openai:
+    #   apiKey: ${OPENAI_API_KEY}
+    # OpenRouter:
+    # openrouter:
+    #   apiKey: ${OPENROUTER_API_KEY}
+    # DeepSeek:
+    # deepseek:
+    #   apiKey: ${DEEPSEEK_API_KEY}
+    # xAI:
+    # xai:
+    #   apiKey: ${XAI_API_KEY}
+    # Mistral:
+    # mistral:
+    #   apiKey: ${MISTRAL_API_KEY}
+    # Together:
+    # together:
+    #   apiKey: ${TOGETHER_API_KEY}
+    # Moonshot global or CN:
+    # moonshot:
+    #   apiKey: ${MOONSHOT_API_KEY}
+    #   baseUrl: https://api.moonshot.ai/v1
+    # MiniMax global or CN:
+    # minimax:
+    #   apiKey: ${MINIMAX_API_KEY}
+    #   baseUrl: https://api.minimax.io/anthropic
+    # ChatGPT/Codex subscription OAuth:
+    # openai-codex:
+    #   auth: oauth
+    # MiniMax Portal OAuth:
+    # minimax-portal:
+    #   auth: oauth
+    #   baseUrl: https://api.minimax.io/anthropic
   contextWindow: 128000
   compaction:
     enabled: true
@@ -613,8 +710,6 @@ subAgents:
 tools:
   shell:
     autoMode: false              # true = full-auto (no approval prompts)
-
-tools:
   browser:
     enabled: true
     mode: launch                   # launch | connect | extension
@@ -623,6 +718,18 @@ tools:
     extension:
       relayPort: 18900             # for extension mode
       # token: ${BROWSER_TOKEN}   # optional shared secret
+  runtime:
+    engine: enhanced              # enhanced | legacy
+    maxResultChars: 20000
+    loopDetection:
+      enabled: false
+      warningThreshold: 10
+      criticalThreshold: 20
+
+tui:
+  showActivity: true             # false = hide tool call details and progress chatter
+
+`tools.runtime.engine: enhanced` is the default tool runtime. It adds provider-aware tool-schema normalization, transcript repair, replay truncation, and loop detection while keeping the existing tool names and CLI UX unchanged. Set `legacy` only if you need the older behavior for compatibility or debugging.
 
 gateway:
   mode: standalone               # standalone | gateway | node
@@ -651,7 +758,7 @@ pnpm dev -- serve     # run headless service in dev mode
 
 ## Acknowledgments
 
-CereWorker is built on the inspiration from [OpenClaw](https://github.com/openclaw/openclaw), which pioneered a tangible, open-source form of what AI agents can be -- multi-platform, skill-driven, and genuinely useful in daily work. Its architecture for channels, skills, and autonomous task execution provided the foundation that CereWorker extends with the Cerebellum/Cerebrum dual-LLM approach. Without OpenClaw demonstrating that a personal AI agent could be real and practical, CereWorker would not exist.
+CereWorker is built around a practical agent architecture focused on channels, skills, persistent memory, and autonomous task execution, extended here with the Cerebellum/Cerebrum dual-LLM design.
 
 ## License
 

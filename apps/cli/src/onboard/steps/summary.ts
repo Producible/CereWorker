@@ -1,13 +1,13 @@
 import { GLOBAL_CONFIG, writeConfig } from '@cereworker/config';
 import { clack, guardCancel } from '../prompter.js';
-import { buildConfig, type BuildConfigParams } from '../config-builder.js';
+import { buildFinalConfig, type BuildConfigParams } from '../config-builder.js';
 
 export function getChannelInstructions(channelId: string): string {
   switch (channelId) {
     case 'telegram':
       return 'Telegram: CereWorker uses polling automatically. Message your bot to start chatting.';
     case 'discord':
-      return 'Discord: Invite your bot using the OAuth2 URL from the Developer Portal.';
+      return 'Discord: Invite your bot using the OAuth2 URL, grant it access to the channels where it should read and reply, and enter channel IDs during onboarding if you want server-channel replies without @mentions.';
     case 'slack':
       return 'Slack: Socket Mode is enabled — no webhook or public URL needed. Just start CereWorker.';
     case 'matrix':
@@ -94,7 +94,7 @@ export async function summaryStep(params: BuildConfigParams): Promise<void> {
     }
   }
 
-  const config = buildConfig(params);
+  const config = buildFinalConfig(params);
   writeConfig(config);
 
   // Next steps guidance

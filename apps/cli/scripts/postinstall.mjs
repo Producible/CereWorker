@@ -26,3 +26,26 @@ try {
 } catch {
   // Non-critical — don't fail the install
 }
+
+// Pull latest Cerebellum Docker image if Docker is available
+import { execSync } from 'node:child_process';
+
+try {
+  execSync('docker info', { stdio: 'pipe', timeout: 10_000 });
+} catch {
+  // Docker not available — try with sudo, otherwise skip
+  try {
+    execSync('sudo -n docker info', { stdio: 'pipe', timeout: 10_000 });
+  } catch {
+    process.exit(0);
+  }
+}
+
+const image = 'cereworker/cerebellum:latest';
+try {
+  console.log(`CereWorker: Pulling ${image}...`);
+  execSync(`docker pull ${image}`, { stdio: 'inherit', timeout: 3_600_000 });
+  console.log(`CereWorker: Cerebellum image updated.`);
+} catch {
+  console.log('CereWorker: Could not pull Cerebellum image (non-fatal). Run "cereworker upgrade" to retry.');
+}

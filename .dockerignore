@@ -1,0 +1,6 @@
+*
+!.dockerignore
+!proto/
+!proto/**
+!cerebellum/
+!cerebellum/**

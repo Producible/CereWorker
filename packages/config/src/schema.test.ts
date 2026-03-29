@@ -29,10 +29,27 @@ describe('configSchema', () => {
       expect(config.tools.shell.autoMode).toBe(false);
     });
 
+    it('sets tool runtime defaults', () => {
+      const config = configSchema.parse({});
+      expect(config.tools.runtime.engine).toBe('enhanced');
+      expect(config.tools.runtime.maxResultChars).toBe(20000);
+      expect(config.tools.runtime.loopDetection.enabled).toBe(false);
+      expect(config.tools.runtime.loopDetection.detectors.genericRepeat).toBe(true);
+      expect(config.tools.runtime.loopDetection.detectors.knownPollNoProgress).toBe(true);
+      expect(config.tools.runtime.loopDetection.detectors.pingPong).toBe(true);
+    });
+
     it('sets logging defaults', () => {
       const config = configSchema.parse({});
       expect(config.logging.level).toBe('info');
       expect(config.logging.file).toBeUndefined();
+    });
+
+    it('sets tui defaults', () => {
+      const config = configSchema.parse({});
+      expect(config.tui.theme).toBe('auto');
+      expect(config.tui.maxDisplayMessages).toBe(100);
+      expect(config.tui.showActivity).toBe(true);
     });
 
     it('sets gateway defaults', () => {
@@ -75,13 +92,80 @@ describe('configSchema', () => {
       expect(config.tools.shell.enabled).toBe(true);
     });
 
+    it('allows overriding the tool runtime config', () => {
+      const config = configSchema.parse({
+        tools: {
+          runtime: {
+            engine: 'enhanced',
+            loopDetection: {
+              enabled: true,
+              criticalThreshold: 5,
+            },
+          },
+        },
+      });
+      expect(config.tools.runtime.engine).toBe('enhanced');
+      expect(config.tools.runtime.loopDetection.enabled).toBe(true);
+      expect(config.tools.runtime.loopDetection.criticalThreshold).toBe(5);
+      expect(config.tools.runtime.loopDetection.detectors.genericRepeat).toBe(true);
+    });
+
+    it('accepts openai-codex as a provider key', () => {
+      const config = configSchema.parse({
+        cerebrum: {
+          providers: {
+            'openai-codex': { auth: 'oauth' },
+          },
+        },
+      });
+      expect(config.cerebrum.providers['openai-codex']?.auth).toBe('oauth');
+    });
+
+    it('accepts the expanded provider keys', () => {
+      const config = configSchema.parse({
+        cerebrum: {
+          providers: {
+            openrouter: { apiKey: 'or-key' },
+            deepseek: { apiKey: 'ds-key' },
+            xai: { apiKey: 'xai-key' },
+            mistral: { apiKey: 'mistral-key' },
+            together: { apiKey: 'together-key' },
+            moonshot: { apiKey: 'moonshot-key', baseUrl: 'https://api.moonshot.cn/v1' },
+            minimax: { apiKey: 'minimax-key', baseUrl: 'https://api.minimax.io/anthropic' },
+            'minimax-portal': { auth: 'oauth', baseUrl: 'https://api.minimaxi.com/anthropic' },
+          },
+        },
+      });
+
+      expect(config.cerebrum.providers.openrouter?.apiKey).toBe('or-key');
+      expect(config.cerebrum.providers.deepseek?.apiKey).toBe('ds-key');
+      expect(config.cerebrum.providers.xai?.apiKey).toBe('xai-key');
+      expect(config.cerebrum.providers.mistral?.apiKey).toBe('mistral-key');
+      expect(config.cerebrum.providers.together?.apiKey).toBe('together-key');
+      expect(config.cerebrum.providers.moonshot?.baseUrl).toBe('https://api.moonshot.cn/v1');
+      expect(config.cerebrum.providers.minimax?.baseUrl).toBe('https://api.minimax.io/anthropic');
+      expect(config.cerebrum.providers['minimax-portal']?.auth).toBe('oauth');
+    });
+
     it('allows overriding channel settings', () => {
       const config = configSchema.parse({
-        channels: { slack: { enabled: true, botToken: 'xoxb-test' } },
+        channels: {
+          slack: { enabled: true, botToken: 'xoxb-test' },
+          discord: { enabled: true, token: 'discord-token', channelIds: ['123', '456'] },
+        },
       });
       expect(config.channels.slack.enabled).toBe(true);
       expect(config.channels.slack.botToken).toBe('xoxb-test');
-      expect(config.channels.discord.enabled).toBe(false);
+      expect(config.channels.discord.enabled).toBe(true);
+      expect(config.channels.discord.channelIds).toEqual(['123', '456']);
+    });
+
+    it('allows overriding tui activity visibility', () => {
+      const config = configSchema.parse({
+        tui: { showActivity: false },
+      });
+      expect(config.tui.showActivity).toBe(false);
+      expect(config.tui.theme).toBe('auto');
     });
   });
 
@@ -117,6 +201,17 @@ describe('configSchema', () => {
     it('rejects invalid theme', () => {
       const result = configSchema.safeParse({
         tui: { theme: 'solarized' },
+      });
+      expect(result.success).toBe(false);
+    });
+
+    it('rejects unknown runtime engine values', () => {
+      const result = configSchema.safeParse({
+        tools: {
+          runtime: {
+            engine: 'invalid-engine',
+          },
+        },
       });
       expect(result.success).toBe(false);
     });

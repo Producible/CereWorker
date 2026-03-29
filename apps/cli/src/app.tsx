@@ -112,6 +112,12 @@ export function App({ config, resumeConversationId }: AppProps) {
 
   const { messages, isStreaming, streamingContent, activeToolCall, error } = useChat(orchestrator);
   const { status: cerebellumStatus, loading: cerebellumLoadingInfo, finetune, taskRunningCount } = useCerebellum(orchestrator);
+  const visibleMessages = useMemo(() => {
+    const filtered = config.tui.showActivity
+      ? messages
+      : messages.filter((message) => message.role !== 'tool');
+    return filtered.slice(-config.tui.maxDisplayMessages);
+  }, [config.tui.maxDisplayMessages, config.tui.showActivity, messages]);
 
   const handleSubmit = useCallback(
     (text: string) => {
@@ -192,7 +198,7 @@ export function App({ config, resumeConversationId }: AppProps) {
           return;
         }
         case 'auth': {
-          const authProvider = args.trim() || 'openai';
+          const authProvider = args.trim() || 'openai-codex';
           setSystemMessage(`Run 'cereworker auth ${authProvider}' from your terminal to authenticate via OAuth.`);
           return;
         }
@@ -248,6 +254,7 @@ export function App({ config, resumeConversationId }: AppProps) {
         cerebellumLoading={cerebellumLoadingInfo}
         cerebellumEnabled={config.cerebellum.enabled}
         isStreaming={isStreaming}
+        showActivity={config.tui.showActivity}
         channelCount={channelCount}
         autoMode={autoMode}
         gatewayMode={config.gateway.mode}
@@ -262,11 +269,12 @@ export function App({ config, resumeConversationId }: AppProps) {
         extensionConnected={extensionConnected}
       />
       <ChatView
-        messages={messages}
+        messages={visibleMessages}
         streamingContent={streamingContent}
         isStreaming={isStreaming}
-        activeToolCall={activeToolCall}
+        activeToolCall={config.tui.showActivity ? activeToolCall : null}
         version={APP_VERSION}
+        showActivity={config.tui.showActivity}
       />
       {systemMessage && (
         <Box paddingX={1} borderStyle="single" borderColor="gray">

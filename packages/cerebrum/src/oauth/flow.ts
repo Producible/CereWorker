@@ -43,7 +43,7 @@ export async function runOAuthFlow(
   const codeVerifier = generateCodeVerifier();
   const codeChallenge = generateCodeChallenge(codeVerifier);
 
-  // Use verifier as state (same pattern as OpenClaw)
+  // Use the PKCE verifier as the OAuth state token for callback validation.
   // OpenAI requires 'originator' param, 'audience' for token requests
   const extraParams = provider === 'openai' ? { originator: 'cereworker' } : undefined;
   const authUrl = buildAuthorizationUrl(config, codeChallenge, codeVerifier, clientId, extraParams);

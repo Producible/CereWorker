@@ -1,12 +1,11 @@
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Orchestrator, ConversationStore, PairingStore, InstanceStore, PlanStore, ProactiveController, createLogger, createHttpTools } from '@cereworker/core';
 import { CerebellumClient } from '@cereworker/cerebellum-client';
-import type { ToolDefinition } from '@cereworker/core';
-import { CerebrumProvider } from '@cereworker/cerebrum';
+import { CerebrumProvider, createBuiltinTools } from '@cereworker/cerebrum';
 import type { CereWorkerConfig } from '@cereworker/config';
 import { createChannelManager, type ChannelManager } from '@cereworker/channels';
 import { createBrowserTools, PuppeteerBackend, CdpBackend, BrowserRelay, ExtensionBackend } from '@cereworker/browser';
@@ -23,6 +22,16 @@ import {
   memorySearchParameters,
 } from '@cereworker/hippocampus';
 import { GatewayServer, GatewayNodeClient, createProxyTools } from '@cereworker/gateway';
+import {
+  buildCerebellumComposeCommand,
+  buildCerebellumComposeEnv,
+  resolveCerebellumDockerModel,
+} from './cerebellum-docker.js';
+import {
+  buildChannelConversationKey,
+  loadChannelConversationState,
+  saveChannelConversationState,
+} from './channel-conversations.js';
 
 const log = createLogger('service');
 
@@ -97,6 +106,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
       keepRecentMessages: config.cerebrum.compaction.keepRecentMessages,
       contextWindow: config.cerebrum.contextWindow,
     },
+    toolRuntime: config.tools.runtime,
   });
 
   const cerebrumConfig = {
@@ -182,6 +192,44 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     }
   }
 
+  const channelConversationStateFile = join(homedir(), '.cereworker', 'channel-conversations.json');
+  let channelConversationState = loadChannelConversationState(channelConversationStateFile);
+
+  for (const [sessionKey, conversationId] of Object.entries(channelConversationState)) {
+    if (!conversationStore.get(conversationId)) {
+      delete channelConversationState[sessionKey];
+    }
+  }
+  saveChannelConversationState(channelConversationStateFile, channelConversationState);
+
+  function saveChannelConversationMap(): void {
+    try {
+      saveChannelConversationState(channelConversationStateFile, channelConversationState);
+    } catch (err) {
+      log.warn('Failed to save channel conversation state', { error: (err as Error).message });
+    }
+  }
+
+  function getOrCreateChannelConversationId(msg: { channelId: string; senderId: string; sessionId?: string; threadId?: string }): string {
+    const sessionKey = buildChannelConversationKey(msg);
+    const existingConversationId = channelConversationState[sessionKey];
+    if (existingConversationId && conversationStore.get(existingConversationId)) {
+      return existingConversationId;
+    }
+
+    const conversation = conversationStore.create();
+    channelConversationState[sessionKey] = conversation.id;
+    instanceStore.incrementConversation();
+    saveChannelConversationMap();
+    log.info('Started channel conversation', {
+      conversationId: conversation.id,
+      sessionKey,
+      channelId: msg.channelId,
+      senderId: msg.senderId,
+    });
+    return conversation.id;
+  }
+
   // Register hippocampus (memory) tools
   let hippocampusStore: HippocampusStore | null = null;
   if (config.hippocampus.enabled) {
@@ -207,6 +255,29 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
       description: 'Search across all memory files for a text pattern',
       parameters: memorySearchParameters as unknown as Record<string, unknown>,
       execute: async (args) => memoryTools.executeMemorySearch(args as { query: string }),
+    });
+  }
+
+  const builtinTools = createBuiltinTools({
+    enabled: config.tools.shell.enabled,
+    denyList: config.tools.shell.denyList,
+    timeout: config.tools.shell.timeout,
+    maxOutputSize: config.tools.shell.maxOutputSize,
+    autoMode: config.tools.shell.autoMode,
+  });
+
+  if (config.tools.shell.enabled) {
+    orchestrator.registerTool('shell', builtinTools.shell);
+  }
+
+  if (config.tools.fileOps.enabled) {
+    orchestrator.registerTools({
+      readFile: builtinTools.readFile,
+      writeFile: builtinTools.writeFile,
+      listDirectory: builtinTools.listDirectory,
+      editFile: builtinTools.editFile,
+      searchFiles: builtinTools.searchFiles,
+      glob: builtinTools.glob,
     });
   }
 
@@ -346,16 +417,17 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
       }
 
       // Regular message — send to orchestrator
+      const conversationId = getOrCreateChannelConversationId(msg);
       let proactiveReply = '';
       const unsub = orchestrator.on('message:proactive', ({ content }) => {
         proactiveReply += (proactiveReply ? '\n\n' : '') + content;
       });
 
-      await orchestrator.sendMessage(msg.text);
+      await orchestrator.sendMessage(msg.text, conversationId);
 
       unsub();
 
-      const messages = orchestrator.getMessages();
+      const messages = orchestrator.getMessages(conversationId);
       const lastMsg = messages[messages.length - 1];
       const reply = lastMsg?.role === 'cerebrum' ? lastMsg.content : undefined;
 
@@ -583,6 +655,20 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
 
   function ensureDockerRunning(): boolean {
     if (!isDockerAvailable()) return false;
+    const resolvedModel = resolveCerebellumDockerModel(config);
+
+    const getConfiguredModelPath = (): string | null => {
+      try {
+        const envLines = execSync(
+          `${dockerPrefix}docker inspect -f "{{range .Config.Env}}{{println .}}{{end}}" cereworker-cerebellum`,
+          { stdio: 'pipe' },
+        ).toString().trim().split('\n');
+        const modelLine = envLines.find((line) => line.startsWith('MODEL_PATH='));
+        return modelLine ? modelLine.slice('MODEL_PATH='.length) : null;
+      } catch {
+        return null;
+      }
+    };
 
     // Check if already running
     try {
@@ -603,9 +689,18 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
         stdio: 'pipe',
       }).toString().trim();
       if (stopped) {
-        execSync(`${dockerPrefix}docker start cereworker-cerebellum`, { stdio: 'pipe' });
-        log.info('Restarted stopped Cerebellum container');
-        return true;
+        const configuredModelPath = getConfiguredModelPath();
+        if (configuredModelPath && configuredModelPath !== resolvedModel.modelPath) {
+          execSync(`${dockerPrefix}docker rm -f cereworker-cerebellum`, { stdio: 'pipe' });
+          log.info('Removed stale Cerebellum container to refresh model path', {
+            previousModelPath: configuredModelPath,
+            nextModelPath: resolvedModel.modelPath,
+          });
+        } else {
+          execSync(`${dockerPrefix}docker start cereworker-cerebellum`, { stdio: 'pipe' });
+          log.info('Restarted stopped Cerebellum container');
+          return true;
+        }
       }
     } catch {
       // Fall through to create
@@ -618,15 +713,10 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     const composeFile = findComposeFile();
     if (composeFile) {
       try {
-        const modelId = config.cerebellum.model.id;
-        const modelsPathCompose = config.cerebellum.docker.modelsPath.replace(/^~/, homedir());
-        const env = {
-          ...process.env,
-          MODEL_PATH: modelId,
-          ...(existsSync(modelsPathCompose) ? { CEREWORKER_MODELS: modelsPathCompose } : {}),
-        };
-        execSync(`${dockerPrefix}docker compose -f "${composeFile}" up -d cerebellum`, {
-          env,
+        const composeEnv = buildCerebellumComposeEnv(config);
+        const command = buildCerebellumComposeCommand(composeFile, composeEnv, Boolean(dockerPrefix));
+        execFileSync(command.command, command.args, {
+          ...(command.env ? { env: command.env } : {}),
           stdio: 'pipe',
           cwd: dirname(composeFile),
         });
@@ -640,7 +730,7 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     // Fall back to docker run
     try {
       const image = config.cerebellum.docker.image;
-      const modelId = config.cerebellum.model.id;
+      const modelId = resolvedModel.modelPath;
       const interval = config.cerebellum.heartbeatInterval;
       const port = config.cerebellum.address.split(':')[1] ?? '50051';
 
@@ -718,14 +808,20 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
     const maxRetries = 60;
     const retryDelay = 5000;
     let lastError = '';
+    const resolvedModel = resolveCerebellumDockerModel(config);
+    const initialPhase = resolvedModel.usingPrefetchedCache
+      ? 'Loading model from local cache...'
+      : 'Waiting for model (first run may download weights)...';
 
-    orchestrator.emit({ type: 'cerebellum:loading', phase: 'Waiting for model (first run downloads weights)...', attempt: 0, maxAttempts: maxRetries });
+    orchestrator.emit({ type: 'cerebellum:loading', phase: initialPhase, attempt: 0, maxAttempts: maxRetries });
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      const phase = attempt <= 3
-        ? 'Waiting for model (first run downloads weights)...'
-        : attempt <= 20
-          ? 'Downloading model weights...'
-          : 'Loading model into memory...';
+      const phase = resolvedModel.usingPrefetchedCache
+        ? 'Loading model from local cache...'
+        : attempt <= 3
+          ? 'Waiting for model (first run may download weights)...'
+          : attempt <= 20
+            ? 'Downloading model weights...'
+            : 'Loading model into memory...';
       orchestrator.emit({ type: 'cerebellum:loading', phase, attempt, maxAttempts: maxRetries });
       try {
         await client.connect();
@@ -961,9 +1057,11 @@ export function createService(config: CereWorkerConfig): ServiceInstance {
           capabilities: config.gateway.capabilities,
         },
         async (tool, args) => {
-          const toolDef = (orchestrator as unknown as { tools: Map<string, ToolDefinition> }).tools.get(tool);
-          if (!toolDef) throw new Error(`Unknown tool: ${tool}`);
-          return toolDef.execute(args);
+          const execution = await orchestrator.executeTool(tool, args, {
+            sessionKey: `gateway:node:${config.gateway.nodeId}`,
+            scopeKey: `gateway:node:${config.gateway.nodeId}`,
+          });
+          return execution.result.output;
         },
       );
 

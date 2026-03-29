@@ -9,9 +9,13 @@ export {
   type DeviceCodeFlowOptions,
 } from './flow.js';
 export {
+  loginOpenAICodex,
   loginOpenAI,
   loginGoogle,
+  getOpenAICodexApiKey,
+  refreshOpenAICodexToken,
   refreshOpenAIToken,
   refreshGoogleToken,
   type PiAuthCallbacks,
 } from './pi-auth.js';
+export { loginMiniMaxPortal, refreshMiniMaxPortalToken } from './minimax-portal.js';

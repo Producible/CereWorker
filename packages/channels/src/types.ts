@@ -8,6 +8,7 @@ export interface InboundMessage {
   senderId: string;
   senderName?: string;
   text: string;
+  sessionId?: string;
   threadId?: string;
   replyToId?: string;
   timestamp: number;

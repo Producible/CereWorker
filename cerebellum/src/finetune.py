@@ -6,6 +6,7 @@ responsive for heartbeat, verification, and monitoring.
 """
 
 import json
+import inspect
 import logging
 import os
 import threading
@@ -16,6 +17,52 @@ from typing import Callable
 logger = logging.getLogger(__name__)
 
 PENDING_FILE = "pending.jsonl"
+DEFAULT_SFT_MAX_LENGTH = 512
+
+
+def _callable_accepts_kwarg(target: object, kwarg: str) -> bool:
+    """Return whether the given callable/class explicitly accepts a kwarg."""
+    candidate = target.__init__ if inspect.isclass(target) else target
+    try:
+        signature = inspect.signature(candidate)
+    except (TypeError, ValueError):
+        return False
+    return kwarg in signature.parameters
+
+
+def _resolve_sft_sequence_length_kwargs(
+    sft_config_cls: object,
+    sft_trainer_cls: object,
+    max_length: int = DEFAULT_SFT_MAX_LENGTH,
+) -> tuple[dict[str, int], dict[str, int]]:
+    """Choose TRL-compatible sequence-length kwargs for config and trainer."""
+    if _callable_accepts_kwarg(sft_config_cls, "max_length"):
+        return {"max_length": max_length}, {}
+    if _callable_accepts_kwarg(sft_config_cls, "max_seq_length"):
+        return {"max_seq_length": max_length}, {}
+    if _callable_accepts_kwarg(sft_trainer_cls, "max_length"):
+        return {}, {"max_length": max_length}
+    if _callable_accepts_kwarg(sft_trainer_cls, "max_seq_length"):
+        return {}, {"max_seq_length": max_length}
+    logger.warning(
+        "TRL SFT sequence-length kwarg not detected; using library defaults"
+    )
+    return {}, {}
+
+
+def _resolve_sft_processing_kwargs(
+    sft_trainer_cls: object,
+    tokenizer: object,
+) -> dict[str, object]:
+    """Choose TRL-compatible tokenizer/processor kwargs for SFTTrainer."""
+    if _callable_accepts_kwarg(sft_trainer_cls, "processing_class"):
+        return {"processing_class": tokenizer}
+    if _callable_accepts_kwarg(sft_trainer_cls, "tokenizer"):
+        return {"tokenizer": tokenizer}
+    logger.warning(
+        "TRL SFTTrainer tokenizer kwarg not detected; proceeding without it"
+    )
+    return {}
 
 
 @dataclass
@@ -292,6 +339,11 @@ class FineTuneEngine:
         checkpoint_path = os.path.join(self.checkpoint_dir, job_id)
         os.makedirs(checkpoint_path, exist_ok=True)
 
+        sft_config_seq_kwargs, trainer_seq_kwargs = _resolve_sft_sequence_length_kwargs(
+            SFTConfig,
+            SFTTrainer,
+        )
+
         training_args = SFTConfig(
             output_dir=checkpoint_path,
             num_train_epochs=epochs,
@@ -303,7 +355,7 @@ class FineTuneEngine:
             fp16=torch.cuda.is_available(),
             gradient_accumulation_steps=max(1, 4 // batch_size),
             warmup_ratio=0.1,
-            max_seq_length=512,
+            **sft_config_seq_kwargs,
         )
 
         # 6. Train
@@ -311,8 +363,9 @@ class FineTuneEngine:
             model=model,
             args=training_args,
             train_dataset=dataset,
-            processing_class=tokenizer,
             callbacks=[ProgressCallback()],
+            **_resolve_sft_processing_kwargs(SFTTrainer, tokenizer),
+            **trainer_seq_kwargs,
         )
 
         trainer.train()

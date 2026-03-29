@@ -9,7 +9,9 @@ describe('getChannelInstructions', () => {
   });
 
   it('returns Discord instructions with OAuth2 invite', () => {
-    expect(getChannelInstructions('discord')).toContain('OAuth2 URL');
+    const result = getChannelInstructions('discord');
+    expect(result).toContain('OAuth2 URL');
+    expect(result).toContain('channels');
   });
 
   it('returns Slack instructions mentioning Socket Mode', () => {

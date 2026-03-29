@@ -34,6 +34,9 @@ export function createSlackChannel(config: SlackChannelConfig): ChannelPlugin {
           channelId: 'slack',
           senderId: ('user' in message ? message.user : '') ?? '',
           text: message.text,
+          sessionId: ('thread_ts' in message && message.thread_ts)
+            ? `thread:${message.thread_ts}`
+            : `channel:${message.channel}`,
           threadId: ('thread_ts' in message ? message.thread_ts : undefined) as string | undefined,
           timestamp: parseFloat(message.ts) * 1000,
         };

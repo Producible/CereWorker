@@ -9,6 +9,7 @@ interface ChatViewProps {
   isStreaming: boolean;
   activeToolCall: string | null;
   version: string;
+  showActivity: boolean;
 }
 
 function MessageBlock({ message }: { message: Message }) {
@@ -54,7 +55,14 @@ function MessageBlock({ message }: { message: Message }) {
   );
 }
 
-export function ChatView({ messages, streamingContent, isStreaming, activeToolCall, version }: ChatViewProps) {
+export function ChatView({
+  messages,
+  streamingContent,
+  isStreaming,
+  activeToolCall,
+  version,
+  showActivity,
+}: ChatViewProps) {
   const showBanner = messages.length === 0 && !isStreaming;
 
   return (
@@ -63,7 +71,7 @@ export function ChatView({ messages, streamingContent, isStreaming, activeToolCa
       {messages.map((msg) => (
         <MessageBlock key={msg.id} message={msg} />
       ))}
-      {activeToolCall && (
+      {showActivity && activeToolCall && (
         <Box marginLeft={2}>
           <Text color="yellow">Running tool: {activeToolCall}...</Text>
         </Box>
@@ -74,7 +82,7 @@ export function ChatView({ messages, streamingContent, isStreaming, activeToolCa
           <Text>{streamingContent}<Text color="green">|</Text></Text>
         </Box>
       )}
-      {isStreaming && !streamingContent && !activeToolCall && (
+      {showActivity && isStreaming && !streamingContent && !activeToolCall && (
         <Box>
           <Text color="gray">Thinking...</Text>
         </Box>

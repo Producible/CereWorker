@@ -37,6 +37,7 @@ export function createMatrixChannel(config: MatrixChannelConfig): ChannelPlugin 
           channelId: 'matrix',
           senderId,
           text: content.body ?? '',
+          sessionId: `room:${room.roomId}`,
           threadId: room.roomId,
           timestamp: event.getTs(),
         };

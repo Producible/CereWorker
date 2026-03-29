@@ -11,6 +11,7 @@ interface StatusBarProps {
   cerebellumStatus: CerebellumStatus | null;
   cerebellumLoading?: CerebellumLoading | null;
   isStreaming: boolean;
+  showActivity?: boolean;
   channelCount?: number;
   autoMode?: boolean;
   gatewayMode?: 'gateway' | 'node' | 'standalone';
@@ -48,10 +49,12 @@ function CerebellumIndicator({
   status,
   loading,
   enabled,
+  showActivity,
 }: {
   status: CerebellumStatus | null;
   loading?: CerebellumLoading | null;
   enabled: boolean;
+  showActivity: boolean;
 }) {
   if (status?.healthy) {
     return (
@@ -63,6 +66,9 @@ function CerebellumIndicator({
   }
 
   if (enabled && !status) {
+    if (!showActivity) {
+      return <Text color="yellow">Cerebellum: starting</Text>;
+    }
     return <CerebellumLoadingText loading={loading} />;
   }
 
@@ -80,6 +86,7 @@ export function StatusBar({
   cerebellumStatus,
   cerebellumLoading: loadingInfo = null,
   isStreaming,
+  showActivity = true,
   channelCount = 0,
   autoMode = false,
   gatewayMode = 'standalone',
@@ -98,7 +105,12 @@ export function StatusBar({
     <Box borderStyle="single" borderColor="gray" paddingX={1} justifyContent="space-between">
       <Box gap={2}>
         <Text color="cyan">Cerebrum: {provider}/{model}</Text>
-        <CerebellumIndicator status={cerebellumStatus} loading={loadingInfo} enabled={cerebellumEnabled} />
+        <CerebellumIndicator
+          status={cerebellumStatus}
+          loading={loadingInfo}
+          enabled={cerebellumEnabled}
+          showActivity={showActivity}
+        />
         {channelCount > 0 && (
           <Text color="green">Channels: {channelCount}</Text>
         )}
@@ -129,7 +141,7 @@ export function StatusBar({
         )}
       </Box>
       <Box>
-        {isStreaming && <Text color="yellow">streaming...</Text>}
+        {showActivity && isStreaming && <Text color="yellow">streaming...</Text>}
       </Box>
     </Box>
   );

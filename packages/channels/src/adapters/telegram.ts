@@ -29,6 +29,9 @@ export function createTelegramChannel(config: TelegramChannelConfig): ChannelPlu
           senderId,
           senderName: message.from?.username ?? message.from?.first_name,
           text: message.text,
+          sessionId: message.message_thread_id
+            ? `thread:${message.message_thread_id}`
+            : `chat:${message.chat.id}`,
           threadId: message.message_thread_id ? String(message.message_thread_id) : undefined,
           replyToId: message.reply_to_message ? String(message.reply_to_message.message_id) : undefined,
           timestamp: message.date * 1000,

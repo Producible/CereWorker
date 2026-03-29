@@ -1,21 +1,16 @@
-import { exec } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { platform } from 'node:os';
 import { loadConfig } from '@cereworker/config';
 import {
+  loginMiniMaxPortal,
   runOAuthFlow,
   TokenStore,
   OAUTH_PROVIDERS,
   isRemoteEnvironment,
-  loginOpenAI,
+  loginOpenAICodex,
   loginGoogle,
 } from '@cereworker/cerebrum';
-
-function openBrowser(url: string): void {
-  const cmd =
-    platform() === 'darwin' ? 'open' : platform() === 'win32' ? 'start' : 'xdg-open';
-  exec(`${cmd} ${JSON.stringify(url)}`);
-}
+import { canonicalizeOAuthProvider, isIntegratedOAuthProvider, listSupportedOAuthProviders } from './auth-utils.js';
+import { openBrowser } from './open-browser.js';
 
 function promptLine(message: string): Promise<string> {
   const rl = createInterface({ input: process.stdin, output: process.stderr });
@@ -27,16 +22,20 @@ function promptLine(message: string): Promise<string> {
   });
 }
 
-const PI_AI_PROVIDERS = new Set(['openai', 'google']);
+export async function runAuth(inputProvider: string): Promise<void> {
+  const provider = canonicalizeOAuthProvider(inputProvider);
 
-export async function runAuth(provider: string): Promise<void> {
-  if (!OAUTH_PROVIDERS[provider] && !PI_AI_PROVIDERS.has(provider)) {
-    console.error(`OAuth not supported for provider: ${provider}`);
-    console.error(`Supported: ${[...new Set([...Object.keys(OAUTH_PROVIDERS), ...PI_AI_PROVIDERS])].join(', ')}`);
+  if (!OAUTH_PROVIDERS[provider] && !isIntegratedOAuthProvider(provider)) {
+    console.error(`OAuth not supported for provider: ${inputProvider}`);
+    console.error(`Supported: ${listSupportedOAuthProviders(Object.keys(OAUTH_PROVIDERS)).join(', ')}`);
     process.exit(1);
   }
 
   const remote = isRemoteEnvironment();
+
+  if (inputProvider.trim().toLowerCase() === 'openai' && provider !== inputProvider.trim().toLowerCase()) {
+    console.log(`\n'openai' OAuth is now exposed as '${provider}'. Continuing with ${provider}...`);
+  }
 
   console.log(`\nAuthenticating with ${provider} via OAuth...`);
   if (remote) {
@@ -47,11 +46,13 @@ export async function runAuth(provider: string): Promise<void> {
 
   const store = new TokenStore();
 
-  // Use pi-ai for OpenAI and Google (handles Client IDs internally)
-  if (PI_AI_PROVIDERS.has(provider)) {
-    const loginFn = provider === 'openai' ? loginOpenAI : loginGoogle;
-    const tokens = await loginFn({
-      onAuth: (url) => {
+  // Use provider-owned OAuth flows where supported.
+  if (isIntegratedOAuthProvider(provider)) {
+    const config = loadConfig();
+    const providerConfig =
+      config.cerebrum.providers[provider as keyof typeof config.cerebrum.providers];
+    const commonCallbacks = {
+      onAuth: (url: string) => {
         if (remote) {
           console.log(`Open this URL in your browser:\n  ${url}\n`);
         } else {
@@ -60,12 +61,20 @@ export async function runAuth(provider: string): Promise<void> {
           console.log(`\nIf the browser didn't open, visit:\n  ${url}\n`);
         }
       },
-      onPrompt: (message) => promptLine(`${message}: `),
-      onProgress: (msg) => console.log(msg),
+      onPrompt: (message: string) => promptLine(`${message}: `),
+      onProgress: (msg: string) => console.log(msg),
       onManualCodeInput: remote
         ? () => promptLine('\nPaste the redirect URL from your browser: ')
         : undefined,
-    });
+    };
+    const tokens = provider === 'openai-codex'
+      ? await loginOpenAICodex(commonCallbacks)
+      : provider === 'google'
+        ? await loginGoogle(commonCallbacks)
+        : await loginMiniMaxPortal({
+            ...commonCallbacks,
+            baseUrl: providerConfig?.baseUrl,
+          });
 
     store.save(provider, tokens);
   } else {
