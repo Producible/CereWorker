@@ -139,40 +139,47 @@ export function App({ config, resumeConversationId }: AppProps) {
   const [streamStall, setStreamStall] = useState(orchestrator.getStreamState().stallDetected);
 
   useEffect(() => {
-    const updateStreamState = () => {
-      setStreamStall(orchestrator.getStreamState().stallDetected);
-    };
+    const clearStreamStall = () => setStreamStall(false);
     const clearStreamTrace = () => setStreamTrace(null);
-
-    updateStreamState();
-    const timer = setInterval(updateStreamState, 250);
     const unsubs = [
-      orchestrator.on('message:user', clearStreamTrace),
-      orchestrator.on('message:cerebrum:start', updateStreamState),
-      orchestrator.on('message:cerebrum:chunk', updateStreamState),
-      orchestrator.on('message:cerebrum:end', () => {
-        updateStreamState();
+      orchestrator.on('message:user', () => {
+        clearStreamStall();
         clearStreamTrace();
       }),
-      orchestrator.on('message:cerebrum:toolcall', updateStreamState),
-      orchestrator.on('message:system', updateStreamState),
-      orchestrator.on('cerebrum:stall', updateStreamState),
-      orchestrator.on('cerebrum:stall:nudge', updateStreamState),
+      orchestrator.on('message:cerebrum:start', clearStreamStall),
+      orchestrator.on('message:cerebrum:chunk', clearStreamStall),
+      orchestrator.on('message:cerebrum:end', () => {
+        clearStreamStall();
+        clearStreamTrace();
+      }),
+      orchestrator.on('message:cerebrum:toolcall', clearStreamStall),
+      orchestrator.on('tool:end', clearStreamStall),
+      orchestrator.on('message:system', clearStreamStall),
+      orchestrator.on('cerebrum:stall', () => setStreamStall(true)),
+      orchestrator.on('cerebrum:stall:nudge', () => setStreamStall(true)),
       orchestrator.on('cerebrum:watchdog', ({ stage, message }) => {
+        if (stage === 'stalled' || stage === 'nudge_requested' || stage === 'abort_issued') {
+          setStreamStall(true);
+        } else {
+          clearStreamStall();
+        }
         setStreamTrace({ label: 'Watchdog', stage, message });
       }),
       orchestrator.on('cerebrum:completion', ({ stage, message }) => {
+        clearStreamStall();
         setStreamTrace({ label: 'Completion', stage, message });
       }),
-      orchestrator.on('conversation:resumed', clearStreamTrace),
+      orchestrator.on('conversation:resumed', () => {
+        clearStreamStall();
+        clearStreamTrace();
+      }),
       orchestrator.on('error', () => {
-        updateStreamState();
+        clearStreamStall();
         clearStreamTrace();
       }),
     ];
 
     return () => {
-      clearInterval(timer);
       unsubs.forEach((unsubscribe) => unsubscribe());
     };
   }, [orchestrator]);
