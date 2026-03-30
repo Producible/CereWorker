@@ -24,7 +24,7 @@ interface AppProps {
 }
 
 type StreamTrace = {
-  label: 'Watchdog' | 'Completion';
+  label: 'Watchdog' | 'Completion' | 'Cerebellum';
   stage:
     | 'stalled'
     | 'nudge_requested'
@@ -34,7 +34,10 @@ type StreamTrace = {
     | 'retry_failed'
     | 'teardown_timeout'
     | 'signal_recorded'
-    | 'guard_triggered';
+    | 'guard_triggered'
+    | 'wait'
+    | 'retry'
+    | 'stop';
   message: string;
 };
 
@@ -172,6 +175,11 @@ export function App({ config, resumeConversationId, debugMode = false }: AppProp
       orchestrator.on('cerebrum:completion', ({ stage, message }) => {
         clearStreamStall();
         setStreamTrace({ label: 'Completion', stage, message });
+      }),
+      orchestrator.on('cerebellum:recovery', ({ action, operatorMessage, diagnosis, source }) => {
+        clearStreamStall();
+        const prefix = source === 'cerebellum' ? operatorMessage : `${operatorMessage} ${diagnosis}`.trim();
+        setStreamTrace({ label: 'Cerebellum', stage: action, message: prefix });
       }),
       orchestrator.on('conversation:resumed', () => {
         clearStreamStall();
@@ -350,7 +358,7 @@ export function App({ config, resumeConversationId, debugMode = false }: AppProp
         <Box paddingX={1}>
           <Text
             color={
-              streamTrace.stage === 'retry_failed' ? 'red'
+              streamTrace.stage === 'retry_failed' || streamTrace.stage === 'stop' ? 'red'
                 : streamTrace.stage === 'stalled' || streamTrace.stage === 'abort_issued' || streamTrace.stage === 'teardown_timeout' || streamTrace.stage === 'guard_triggered' ? 'yellow'
                   : 'cyan'
             }

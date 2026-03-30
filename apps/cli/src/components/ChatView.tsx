@@ -44,16 +44,33 @@ function MessageBlock({ message, debugMode }: { message: Message; debugMode: boo
   }
 
   if (message.role === 'tool') {
-    const output = message.content.length > 500
-      ? message.content.slice(0, 500) + '\n... (truncated)'
-      : message.content;
+    const stringify = (value: unknown, maxChars = 1200): string => {
+      const raw = typeof value === 'string' ? value : JSON.stringify(value, null, 2) ?? String(value);
+      return raw.length > maxChars ? `${raw.slice(0, maxChars)}\n... (truncated)` : raw;
+    };
+    const toolName = String(message.metadata?.toolName ?? 'unknown');
+    const requestedToolName = typeof message.metadata?.requestedToolName === 'string'
+      ? message.metadata.requestedToolName
+      : null;
+    const toolArgs = message.metadata?.toolArgs;
+    const details = message.toolResult?.details;
+    const resume = message.toolResult?.metadata && typeof message.toolResult.metadata === 'object'
+      ? message.toolResult.metadata.resume
+      : undefined;
+    const output = stringify(message.content, 1500);
     return (
       <Box flexDirection="column" marginLeft={2} marginBottom={1}>
         <Text color="yellow" dimColor>
-          Tool: {message.toolResult?.callId ?? 'unknown'}
+          Tool: {toolName}
+          {requestedToolName ? ` (requested as ${requestedToolName})` : ''}
+          {' '}
+          [{message.toolResult?.callId ?? 'unknown'}]
           {message.toolResult?.isError ? ' (error)' : ''}
         </Text>
-        <Text dimColor>{output}</Text>
+        {Boolean(toolArgs) && <Text dimColor>{`Args:\n${stringify(toolArgs)}`}</Text>}
+        {Boolean(details) && <Text dimColor>{`Details:\n${stringify(details)}`}</Text>}
+        {resume !== undefined && <Text dimColor>{`Resume:\n${stringify(resume)}`}</Text>}
+        <Text dimColor>{`Output:\n${output}`}</Text>
       </Box>
     );
   }

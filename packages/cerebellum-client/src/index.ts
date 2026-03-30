@@ -9,4 +9,6 @@ export type {
   AgentHealthAction,
   AgentStateInput,
   SystemStatus,
+  TurnRecoveryAssessment,
+  TurnRecoveryRequest,
 } from './client.js';

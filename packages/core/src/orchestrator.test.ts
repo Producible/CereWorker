@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Orchestrator } from './orchestrator.js';
 import type { CerebrumAdapter, CerebellumAdapter, ToolDefinition } from './orchestrator.js';
 import { ConversationStore } from './conversation.js';
-import type { Message, StreamFinishMetadata } from './types.js';
+import type { Message, StreamFinishMetadata, TurnRecoveryRequest } from './types.js';
 
 function createMockCerebrum(): CerebrumAdapter {
   return {
@@ -17,6 +17,14 @@ function createMockCerebrum(): CerebrumAdapter {
 function createMockCerebellum(): CerebellumAdapter {
   return {
     isConnected: vi.fn(() => true),
+    assessTurnRecovery: vi.fn(async () => ({
+      action: 'retry',
+      operatorMessage: '[Cerebellum] Retry from the last verified state.',
+      modelMessage: '[Cerebellum recovery guidance]\nRetry from the last verified state.\nEnd your final answer by calling task_complete or task_blocked.',
+      diagnosis: 'The turn should retry from the last verified state.',
+      nextStep: 'Continue from the next unfinished step.',
+      completedSteps: [],
+    })),
     verifyToolResult: vi.fn(async () => ({ passed: true, checks: [], modelVerdict: true })),
     ingestTrainingData: vi.fn(async () => 5),
     startFineTune: vi.fn(async () => ({ jobId: 'ft-1', started: true, error: '' })),
@@ -440,11 +448,11 @@ describe('Orchestrator', () => {
         ]);
         expect(watchdogStages).toEqual([]);
         expect(errors).toHaveLength(1);
-        expect(errors[0]?.message).toBe('Turn ended without a valid completion signal or final answer.');
+        expect(errors[0]?.message).toBe('Recovery guidance is unavailable after the turn ended with tool-calls.');
         // Failed attempt messages are cleaned up — only user + diagnostic remain
         expect(localOrch.getMessages().map((message) => [message.role, message.content])).toEqual([
           ['user', 'finish the task'],
-          ['system', '[Cerebellum] The turn ended repeatedly without a valid completion signal or final answer.'],
+          ['system', '[System fallback] The turn ended repeatedly without a valid completion signal or final answer.'],
         ]);
       } finally {
         await localOrch.stop();
@@ -459,7 +467,19 @@ describe('Orchestrator', () => {
         localOrch.registerTool('workTool', createTestTool('Opened the profile page.'));
         localOrch.setCerebellum({
           ...createMockCerebellum(),
-          verifyToolResult: vi.fn(async () => ({ passed: false, checks: [], modelVerdict: false })),
+          assessTurnRecovery: vi.fn(async (request: TurnRecoveryRequest) => ({
+            action: 'retry',
+            operatorMessage: '[Cerebellum] Retry from the last verified state.',
+            modelMessage: [
+              '[Cerebellum recovery guidance]',
+              ...request.progressEntries.map((entry) => entry.summary),
+              request.partialContent ?? '',
+              'End your final answer by calling task_complete or task_blocked.',
+            ].join('\n'),
+            diagnosis: 'Retry from the last verified state.',
+            nextStep: 'Continue from the next unfinished step.',
+            completedSteps: request.progressEntries.map((entry) => entry.summary),
+          })),
         });
 
         const attemptInputs: Message[][] = [];

@@ -6,18 +6,22 @@ import { createSubAgentTools } from './sub-agent-tools.js';
 import { createLogger } from './logger.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import type {
-  Message,
-  ToolCall,
-  ToolResult,
-  VerificationResult,
-  AgentHealthAction,
-  StreamPhase,
-  StreamFinishMetadata,
   BrowserStateSnapshot,
   BrowserTabSnapshot,
+  Message,
+  AgentHealthAction,
   ProgressEntry,
+  RecoveryAction,
+  RecoveryCause,
   TaskCheckpoint,
   TaskCheckpointStatus,
+  ToolCall,
+  ToolResult,
+  TurnRecoveryAssessment,
+  TurnRecoveryRequest,
+  VerificationResult,
+  StreamFinishMetadata,
+  StreamPhase,
 } from './types.js';
 import { estimateMessageTokens, shouldCompact, buildCompactionMessages } from './context.js';
 import type { InstanceStore, FineTuneRecord } from './instance.js';
@@ -34,8 +38,12 @@ const TASK_COMPLETE_TOOL = 'task_complete';
 const TASK_BLOCKED_TOOL = 'task_blocked';
 const TASK_CHECKPOINT_TOOL = 'task_checkpoint';
 const INTERNAL_TASK_TOOL_NAMES = new Set([TASK_COMPLETE_TOOL, TASK_BLOCKED_TOOL, TASK_CHECKPOINT_TOOL]);
-const COMPLETION_RETRY_PROMPT =
-  '[Cerebellum] Your last turn ended without a final answer. Continue from where you left off and end by calling task_complete or task_blocked before your final answer.';
+const SYSTEM_FALLBACK_COMPLETION_PROMPT =
+  '[System fallback] The last turn ended without a final answer. Continue from the last verified state and end by calling task_complete or task_blocked before your final answer.';
+const SYSTEM_FALLBACK_STALL_PROMPT =
+  '[System fallback] The stalled turn is being retried from the last verified state.';
+const DEBUG_TOOL_OUTPUT_MAX_CHARS = 8_000;
+const DEBUG_TOOL_STRUCTURED_MAX_CHARS = 16_000;
 const READ_ONLY_TOOL_NAMES = new Set([
   'browserGetText',
   'browserGetUrl',
@@ -52,6 +60,7 @@ const READ_ONLY_TOOL_NAMES = new Set([
 ]);
 
 type CompletionSignal = 'none' | 'complete' | 'blocked';
+type RecoverySource = 'cerebellum' | 'fallback';
 
 interface TurnContinuityState {
   progressLedger: ProgressEntry[];
@@ -75,30 +84,7 @@ interface CompletionGuardFailure {
   signal: CompletionSignal;
 }
 
-interface StallRetrySnapshot {
-  cause: 'stall';
-  attempt: number;
-  phase: StreamPhase;
-  activeToolName?: string;
-  activeToolCallId?: string;
-  partialContent?: string;
-  progressEntries: ProgressEntry[];
-  taskCheckpoints: TaskCheckpoint[];
-  browserState: BrowserStateSnapshot;
-}
-
-interface CompletionRetrySnapshot {
-  cause: 'completion';
-  attempt: number;
-  finishReason?: string;
-  partialContent?: string;
-  progressEntries: ProgressEntry[];
-  taskCheckpoints: TaskCheckpoint[];
-  browserState: BrowserStateSnapshot;
-}
-
 type RetryCause = 'stall' | 'completion';
-type RetryContinuitySnapshot = StallRetrySnapshot | CompletionRetrySnapshot;
 
 interface BrowserResumeMetadata {
   action?: string;
@@ -160,6 +146,9 @@ export interface TrainingPair {
 
 export interface CerebellumAdapter {
   isConnected(): boolean;
+  assessTurnRecovery?(
+    request: TurnRecoveryRequest,
+  ): Promise<TurnRecoveryAssessment | null>;
   verifyToolResult(
     toolName: string,
     toolArgs: Record<string, string>,
@@ -250,6 +239,7 @@ export class Orchestrator extends TypedEventEmitter {
   private lastStreamActivityAt = 0;
   private streamWatchdog: ReturnType<typeof setInterval> | null = null;
   private streamNudgeCount = 0;
+  private streamDeferredUntil = 0;
   private streamStallThreshold = 30_000;
   private maxNudgeRetries = 2;
   private maxCompletionRetries = 2;
@@ -257,6 +247,8 @@ export class Orchestrator extends TypedEventEmitter {
   private activeToolCall: { id: string; name: string; startedAt: number } | null = null;
   private currentStreamTurn: { turnId: string; attempt: number; conversationId: string } | null = null;
   private currentAttemptCompletionState: AttemptCompletionState | null = null;
+  private currentPartialContent = '';
+  private pendingRecoveryDecision: { cause: RecoveryCause; source: RecoverySource; assessment: TurnRecoveryAssessment } | null = null;
   private streamAbortGraceMs = 1_000;
   private taskConversations = new Map<string, string>();
   private taskRunning = new Set<string>();
@@ -970,6 +962,8 @@ export class Orchestrator extends TypedEventEmitter {
   private resetStreamState(): void {
     this.streamPhase = 'idle';
     this.activeToolCall = null;
+    this.streamDeferredUntil = 0;
+    this.currentPartialContent = '';
   }
 
   private getStreamDiagnostics(elapsedSeconds?: number): {
@@ -1107,146 +1101,216 @@ export class Orchestrator extends TypedEventEmitter {
     };
   }
 
-  private buildStallRetrySnapshot(params: {
-    attempt: number;
-    phase: StreamPhase;
-    activeToolName?: string;
-    activeToolCallId?: string;
-    partialContent: string;
-    completionState: AttemptCompletionState;
-  }): StallRetrySnapshot | null {
-    const partialContent = this.truncateResumeText(params.partialContent, 600);
-    const continuity = params.completionState.continuity;
-    if (
-      !partialContent
-      && continuity.progressLedger.length === 0
-      && continuity.taskCheckpoints.length === 0
-      && !params.activeToolName
-      && !continuity.browserState.currentUrl
-      && !continuity.browserState.activeTabId
-    ) {
-      return null;
-    }
-
-    return {
-      cause: 'stall',
-      attempt: params.attempt,
-      phase: params.phase,
-      activeToolName: params.activeToolName,
-      activeToolCallId: params.activeToolCallId,
-      partialContent: partialContent || undefined,
-      progressEntries: continuity.progressLedger.slice(-20),
-      taskCheckpoints: continuity.taskCheckpoints.slice(-8),
-      browserState: this.cloneBrowserState(continuity.browserState),
-    };
-  }
-
-  private buildCompletionRetrySnapshot(params: {
+  private buildRecoveryRequest(params: {
+    cause: RecoveryCause;
     attempt: number;
     partialContent: string;
     completionState: AttemptCompletionState;
+    latestUserMessage?: string;
+    elapsedSeconds?: number;
+    completionRetryCount?: number;
     finishMeta?: StreamFinishMetadata;
-  }): CompletionRetrySnapshot | null {
+  }): TurnRecoveryRequest {
     const partialContent = this.truncateResumeText(params.partialContent, 600);
     const continuity = params.completionState.continuity;
-    const finishReason = params.finishMeta?.finishReason ?? params.finishMeta?.stepFinishReasons.at(-1);
-    if (
-      !partialContent
-      && continuity.progressLedger.length === 0
-      && continuity.taskCheckpoints.length === 0
-      && !continuity.browserState.currentUrl
-      && !continuity.browserState.activeTabId
-      && !finishReason
-    ) {
-      return null;
-    }
-
     return {
-      cause: 'completion',
+      conversationId: this.currentStreamTurn?.conversationId ?? '',
+      turnId: this.currentStreamTurn?.turnId ?? '',
       attempt: params.attempt,
-      finishReason,
+      cause: params.cause,
+      phase: this.streamPhase,
+      activeToolName: this.activeToolCall?.name,
+      activeToolCallId: this.activeToolCall?.id,
+      stallRetryCount: this.streamNudgeCount,
+      completionRetryCount: params.completionRetryCount ?? 0,
+      finishReason: params.finishMeta?.finishReason ?? params.finishMeta?.stepFinishReasons.at(-1),
+      elapsedSeconds: params.elapsedSeconds,
       partialContent: partialContent || undefined,
-      progressEntries: continuity.progressLedger.slice(-20),
-      taskCheckpoints: continuity.taskCheckpoints.slice(-8),
+      latestUserMessage: params.latestUserMessage ? this.truncateResumeText(params.latestUserMessage, 600) : undefined,
+      progressEntries: continuity.progressLedger.slice(-50).map((entry) => ({ ...entry })),
+      taskCheckpoints: continuity.taskCheckpoints.map((checkpoint) => ({ ...checkpoint })),
       browserState: this.cloneBrowserState(continuity.browserState),
     };
   }
 
-  private buildRetryContextMessage(snapshot: RetryContinuitySnapshot | null): Message | null {
-    if (!snapshot) return null;
+  private emitRecoveryTrace(
+    cause: RecoveryCause,
+    source: RecoverySource,
+    assessment: TurnRecoveryAssessment,
+    level: 'debug' | 'info' | 'warn' | 'error' = 'info',
+  ): void {
+    if (!this.currentStreamTurn) return;
 
-    const isStall = snapshot.cause === 'stall';
-    const header = isStall ? '[Watchdog resume context]' : '[Completion resume context]';
-    const lines = [
-      header,
-      isStall
-        ? `The previous attempt (${snapshot.attempt}) was interrupted after stalling while ${this.describeStreamLocation(snapshot.phase, snapshot.activeToolName)}.`
-        : `The previous attempt (${snapshot.attempt}) ended without a valid completion${snapshot.finishReason ? ` (finish reason: ${snapshot.finishReason})` : ''}.`,
-      'IMPORTANT: The tool call history from the failed attempt has been removed from this conversation. The ledger below is the authoritative record of what was already verified.',
-      'Do NOT repeat completed steps unless the current page state clearly contradicts this ledger.',
-      'Continue from the NEXT incomplete step, then either finish the task or report a concrete blocker.',
-    ];
+    const payload = {
+      type: 'cerebellum:recovery' as const,
+      cause,
+      action: assessment.action,
+      turnId: this.currentStreamTurn.turnId,
+      attempt: this.currentStreamTurn.attempt,
+      conversationId: this.currentStreamTurn.conversationId,
+      message: assessment.operatorMessage,
+      operatorMessage: assessment.operatorMessage,
+      diagnosis: assessment.diagnosis,
+      nextStep: assessment.nextStep,
+      completedSteps: assessment.completedSteps,
+      waitSeconds: assessment.waitSeconds,
+      source,
+      ...this.getStreamDiagnostics(),
+    };
 
-    if (snapshot.browserState.currentUrl || snapshot.browserState.activeTabId || snapshot.browserState.tabs?.length) {
-      lines.push('', 'Last known browser state:');
-      if (snapshot.browserState.currentUrl) {
-        lines.push(`- Current URL: ${snapshot.browserState.currentUrl}`);
-      }
-      if (snapshot.browserState.activeTabId) {
-        lines.push(`- Active tab: ${snapshot.browserState.activeTabId}`);
-      }
-      if (snapshot.browserState.tabs?.length) {
-        const visibleTabs = snapshot.browserState.tabs.slice(0, 6);
-        for (const tab of visibleTabs) {
-          lines.push(`- Tab ${tab.id}${tab.active ? ' [active]' : ''}: ${tab.url}${tab.title ? ` (${tab.title})` : ''}`);
+    switch (level) {
+      case 'debug':
+        log.debug('cerebellum_recovery', payload);
+        break;
+      case 'warn':
+        log.warn('cerebellum_recovery', payload);
+        break;
+      case 'error':
+        log.error('cerebellum_recovery', payload);
+        break;
+      default:
+        log.info('cerebellum_recovery', payload);
+        break;
+    }
+
+    this.emit(payload);
+  }
+
+  private async assessTurnRecovery(
+    request: TurnRecoveryRequest,
+  ): Promise<{ source: RecoverySource; assessment: TurnRecoveryAssessment }> {
+    log.debug('turn_recovery_request', {
+      turnId: request.turnId,
+      attempt: request.attempt,
+      conversationId: request.conversationId,
+      cause: request.cause,
+      phase: request.phase,
+      activeToolName: request.activeToolName,
+      activeToolCallId: request.activeToolCallId,
+      stallRetryCount: request.stallRetryCount,
+      completionRetryCount: request.completionRetryCount,
+      finishReason: request.finishReason,
+      elapsedSeconds: request.elapsedSeconds,
+      hasPartialContent: Boolean(request.partialContent),
+      latestUserMessage: request.latestUserMessage ? this.truncateResumeText(request.latestUserMessage, 300) : '',
+      browserState: request.browserState,
+      progressEntries: request.progressEntries,
+      taskCheckpoints: request.taskCheckpoints,
+    });
+
+    if (this.cerebellum?.isConnected() && this.cerebellum.assessTurnRecovery) {
+      try {
+        const assessment = await this.cerebellum.assessTurnRecovery(request);
+        if (assessment) {
+          if (request.cause === 'completion' && assessment.action === 'wait') {
+            return {
+              source: 'cerebellum',
+              assessment: {
+                ...assessment,
+                action: 'retry',
+                waitSeconds: undefined,
+              },
+            };
+          }
+          return { source: 'cerebellum', assessment };
         }
-        if (snapshot.browserState.tabs.length > visibleTabs.length) {
-          lines.push(`- ... ${snapshot.browserState.tabs.length - visibleTabs.length} more tab(s)`);
-        }
+      } catch (error) {
+        log.warn('Turn recovery assessment failed', {
+          turnId: request.turnId,
+          attempt: request.attempt,
+          conversationId: request.conversationId,
+          cause: request.cause,
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
     }
-
-    if (snapshot.taskCheckpoints.length > 0) {
-      lines.push('', 'Recorded task checkpoints:');
-      for (const checkpoint of snapshot.taskCheckpoints) {
-        lines.push(`- ${checkpoint.summary}`);
-      }
-    }
-
-    const toolEntries = snapshot.progressEntries.filter((entry) => entry.source === 'tool');
-    if (toolEntries.length > 0) {
-      lines.push('', 'Confirmed actions from the previous attempt:');
-      for (const entry of toolEntries) {
-        const prefix = entry.isError ? '[error]' : entry.stateChanging ? '[done]' : '[seen]';
-        lines.push(`- ${prefix} ${entry.summary}`);
-      }
-    }
-
-    if (snapshot.cause === 'stall' && snapshot.activeToolName) {
-      lines.push(
-        '',
-        `The attempt was last waiting on: ${snapshot.activeToolName}${snapshot.activeToolCallId ? ` (${snapshot.activeToolCallId})` : ''}.`,
-      );
-    }
-
-    if (snapshot.partialContent) {
-      lines.push(
-        '',
-        'Partial assistant text emitted before the attempt ended:',
-        snapshot.partialContent,
-      );
-    }
-
-    lines.push('', 'End your final answer by calling task_complete or task_blocked.');
 
     return {
-      id: `system:${snapshot.cause}-retry:${snapshot.attempt}`,
+      source: 'fallback',
+      assessment: this.buildFallbackRecoveryAssessment(request),
+    };
+  }
+
+  private deriveCompletedSteps(request: TurnRecoveryRequest): string[] {
+    const completed = new Set<string>();
+    for (const checkpoint of request.taskCheckpoints) {
+      if (checkpoint.status === 'done') {
+        completed.add(checkpoint.summary);
+      }
+    }
+
+    for (const entry of request.progressEntries) {
+      if (entry.source === 'tool' && entry.stateChanging && !entry.isError) {
+        completed.add(entry.summary);
+      }
+    }
+
+    return Array.from(completed).slice(-10);
+  }
+
+  private buildFallbackRecoveryAssessment(
+    request: TurnRecoveryRequest,
+    options?: { reason?: string; action?: RecoveryAction },
+  ): TurnRecoveryAssessment {
+    const completedSteps = this.deriveCompletedSteps(request);
+    const browserHints: string[] = [];
+    if (request.browserState.currentUrl) browserHints.push(`Current URL: ${request.browserState.currentUrl}`);
+    if (request.browserState.activeTabId) browserHints.push(`Active tab: ${request.browserState.activeTabId}`);
+
+    const diagnosis = options?.reason
+      ?? (request.cause === 'stall'
+        ? `Recovery guidance is unavailable while the stream is stalled in ${this.describeStreamLocation(request.phase, request.activeToolName)}.`
+        : `Recovery guidance is unavailable after the turn ended with ${request.finishReason ?? 'no final answer'}.`);
+    const nextStep = request.cause === 'stall'
+      ? 'Resume from the last verified browser state and continue with the next unfinished step.'
+      : 'Use the verified progress below to continue from the next unfinished step and avoid repeating confirmed work.';
+    const lines = [
+      '[System fallback recovery]',
+      diagnosis,
+      'The failed attempt tool history has been removed; rely on this verified summary instead.',
+    ];
+    if (completedSteps.length > 0) {
+      lines.push('', 'Completed steps:');
+      for (const step of completedSteps) lines.push(`- ${step}`);
+    }
+    if (browserHints.length > 0) {
+      lines.push('', 'Last known browser state:');
+      for (const hint of browserHints) lines.push(`- ${hint}`);
+    }
+    if (request.partialContent) {
+      lines.push('', 'Partial assistant text from the failed attempt:', request.partialContent);
+    }
+    lines.push('', `Next step: ${nextStep}`);
+    lines.push('Only repeat a completed action if the current page state clearly contradicts this summary.');
+    lines.push('End your final answer by calling task_complete or task_blocked.');
+
+    return {
+      action: options?.action ?? 'retry',
+      operatorMessage: request.cause === 'stall'
+        ? SYSTEM_FALLBACK_STALL_PROMPT
+        : SYSTEM_FALLBACK_COMPLETION_PROMPT,
+      modelMessage: lines.join('\n'),
+      diagnosis,
+      nextStep,
+      completedSteps,
+    };
+  }
+
+  private buildRetryContextMessage(
+    cause: RecoveryCause,
+    attempt: number,
+    modelMessage: string,
+    source: RecoverySource,
+  ): Message {
+    return {
+      id: `system:${cause}-retry:${attempt}`,
       role: 'system',
-      content: lines.join('\n'),
+      content: modelMessage,
       timestamp: 0,
       metadata: {
         transient: true,
-        source: snapshot.cause === 'stall' ? 'watchdog-resume' : 'completion-resume',
+        source: cause === 'stall' ? 'watchdog-resume' : 'completion-resume',
+        recoverySource: source,
       },
     };
   }
@@ -1261,6 +1325,61 @@ export class Orchestrator extends TypedEventEmitter {
     const normalized = text.replace(/\r\n/g, '\n').trim();
     if (normalized.length <= maxChars) return normalized;
     return `${normalized.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
+  }
+
+  private serializeDebugValue(value: unknown, maxChars: number): { value: string; truncated: boolean } {
+    const raw = typeof value === 'string'
+      ? value
+      : JSON.stringify(value, null, 2) ?? String(value);
+    if (raw.length <= maxChars) {
+      return { value: raw, truncated: false };
+    }
+    return {
+      value: `${raw.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`,
+      truncated: true,
+    };
+  }
+
+  private buildToolDebugPayload(
+    toolCall: ToolCall,
+    result?: ToolResult,
+    toolName?: string,
+  ): Record<string, unknown> {
+    const argsPreview = this.serializeDebugValue(toolCall.args, DEBUG_TOOL_STRUCTURED_MAX_CHARS);
+    if (!result) {
+      return {
+        requestedToolName: toolCall.name,
+        toolName: toolName ?? (toolCall.name.trim() || toolCall.name),
+        toolCallId: toolCall.id,
+        toolArgs: argsPreview.value,
+        debugPayloadTruncated: argsPreview.truncated,
+      };
+    }
+
+    const outputPreview = this.serializeDebugValue(result.output, DEBUG_TOOL_OUTPUT_MAX_CHARS);
+    const detailsPreview = result.details
+      ? this.serializeDebugValue(result.details, DEBUG_TOOL_STRUCTURED_MAX_CHARS)
+      : null;
+    const resumeMetadata = result.metadata && typeof result.metadata === 'object'
+      ? (result.metadata.resume ?? null)
+      : null;
+    const resumePreview = resumeMetadata
+      ? this.serializeDebugValue(resumeMetadata, DEBUG_TOOL_STRUCTURED_MAX_CHARS)
+      : null;
+
+    return {
+      requestedToolName: toolCall.name,
+      toolName: toolName ?? (toolCall.name.trim() || toolCall.name),
+      toolCallId: toolCall.id,
+      toolArgs: argsPreview.value,
+      toolOutput: outputPreview.value,
+      toolDetails: detailsPreview?.value ?? null,
+      toolResume: resumePreview?.value ?? null,
+      isError: result.isError,
+      warnings: result.warnings ?? [],
+      truncated: result.truncated ?? false,
+      debugPayloadTruncated: argsPreview.truncated || outputPreview.truncated || Boolean(detailsPreview?.truncated) || Boolean(resumePreview?.truncated),
+    };
   }
 
   private recordCheckpoint(
@@ -1352,7 +1471,7 @@ export class Orchestrator extends TypedEventEmitter {
 
     continuity.progressLedger.push(entry);
 
-    while (continuity.progressLedger.length > 20) {
+    while (continuity.progressLedger.length > 50) {
       const removableIndex = continuity.progressLedger.findIndex((candidate) =>
         candidate.source === 'tool' && !candidate.stateChanging,
       );
@@ -1495,11 +1614,14 @@ export class Orchestrator extends TypedEventEmitter {
     });
   }
 
-  private startStreamWatchdog(): void {
+  private startStreamWatchdog(latestUserMessage?: string): void {
     this.stopStreamWatchdog();
     this.markStreamWaitingModel();
+    this.streamDeferredUntil = 0;
 
     this.streamWatchdog = setInterval(() => {
+      if (!this.currentAttemptCompletionState || !this.currentStreamTurn) return;
+      if (this.streamDeferredUntil > Date.now()) return;
       const elapsed = Date.now() - this.lastStreamActivityAt;
       const stallThresholdMs = this.getCurrentStallThresholdMs();
       if (elapsed < stallThresholdMs) return;
@@ -1516,7 +1638,6 @@ export class Orchestrator extends TypedEventEmitter {
       this.emit({ type: 'cerebrum:stall', ...diagnostics });
 
       if (!this.cerebellum?.isConnected()) {
-        // Cerebellum dropped mid-stream — abort the current turn
         this.emitWatchdog(
           'abort_issued',
           'Cerebellum disconnected during an active stream; aborting the turn.',
@@ -1528,39 +1649,77 @@ export class Orchestrator extends TypedEventEmitter {
 
       this._nudgeInFlight = true;
 
-      const doNudge = () => {
-        this.streamNudgeCount++;
-        this.emitWatchdog(
-          'nudge_requested',
-          `Cerebellum requested nudge ${this.streamNudgeCount}/${this.maxNudgeRetries} after ${elapsedSeconds}s while ${this.describeStreamLocation()}.`,
-          { level: 'info', elapsedSeconds },
-        );
-        this.emit({ type: 'cerebrum:stall:nudge', attempt: this.streamNudgeCount, ...diagnostics });
-        this.emitWatchdog(
-          'abort_issued',
-          `Aborting stalled stream attempt ${this.currentStreamTurn?.attempt ?? 0}.`,
-          { level: 'warn', elapsedSeconds },
-        );
-        this.abortController?.abort();
-      };
-
       void (async () => {
         try {
-          const result = await this.cerebellum!.verifyToolResult(
-            'stream_watchdog',
-            { action: 'check_stall', elapsed: String(elapsedSeconds) },
-            `Stream silent for ${elapsedSeconds}s — no chunks or tool calls received`,
-            false, // claimedSuccess=false → deterministic check fails → passed=false → nudge
-          );
+          const request = this.buildRecoveryRequest({
+            cause: 'stall',
+            attempt: this.currentStreamTurn!.attempt,
+            partialContent: this.currentPartialContent,
+            completionState: this.currentAttemptCompletionState!,
+            latestUserMessage,
+            elapsedSeconds,
+          });
+          const { source, assessment } = await this.assessTurnRecovery(request);
+          this.emitRecoveryTrace('stall', source, assessment, assessment.action === 'stop' ? 'warn' : 'info');
 
-          // Cerebellum decides: passed=false → nudge. passed=true → wait.
-          // null (disconnected mid-call) → nudge as safety fallback.
-          if (!result || !result.passed) {
-            doNudge();
+          if (assessment.action === 'wait') {
+            const waitSeconds = Math.max(15, assessment.waitSeconds ?? this.streamStallThreshold / 1000);
+            this.streamDeferredUntil = Date.now() + (waitSeconds * 1000);
+            return;
           }
+
+          if (assessment.action === 'retry') {
+            this.streamNudgeCount++;
+            this.pendingRecoveryDecision = { cause: 'stall', source, assessment };
+            this.emitWatchdog(
+              'nudge_requested',
+              `Cerebellum requested nudge ${this.streamNudgeCount}/${this.maxNudgeRetries} after ${elapsedSeconds}s while ${this.describeStreamLocation()}.`,
+              { level: 'info', elapsedSeconds },
+            );
+            this.emit({ type: 'cerebrum:stall:nudge', attempt: this.streamNudgeCount, ...diagnostics });
+            this.emitWatchdog(
+              'abort_issued',
+              `Aborting stalled stream attempt ${this.currentStreamTurn?.attempt ?? 0}.`,
+              { level: 'warn', elapsedSeconds },
+            );
+            this.abortController?.abort();
+            return;
+          }
+
+          this.pendingRecoveryDecision = { cause: 'stall', source, assessment };
+          this.emitWatchdog(
+            'abort_issued',
+            'Aborting stalled stream because recovery guidance requested stop.',
+            { level: 'warn', elapsedSeconds },
+          );
+          this.abortController?.abort();
         } catch {
-          // gRPC error (including deadline exceeded) → nudge
-          doNudge();
+          const request = this.buildRecoveryRequest({
+            cause: 'stall',
+            attempt: this.currentStreamTurn!.attempt,
+            partialContent: this.currentPartialContent,
+            completionState: this.currentAttemptCompletionState!,
+            latestUserMessage,
+            elapsedSeconds,
+          });
+          const assessment = this.buildFallbackRecoveryAssessment(request, {
+            reason: `Recovery assessment failed after ${elapsedSeconds}s while ${this.describeStreamLocation()}.`,
+          });
+          this.pendingRecoveryDecision = { cause: 'stall', source: 'fallback', assessment };
+          this.emitRecoveryTrace('stall', 'fallback', assessment, 'warn');
+          this.streamNudgeCount++;
+          this.emitWatchdog(
+            'nudge_requested',
+            `Fallback retry ${this.streamNudgeCount}/${this.maxNudgeRetries} after ${elapsedSeconds}s while ${this.describeStreamLocation()}.`,
+            { level: 'info', elapsedSeconds },
+          );
+          this.emit({ type: 'cerebrum:stall:nudge', attempt: this.streamNudgeCount, ...diagnostics });
+          this.emitWatchdog(
+            'abort_issued',
+            `Aborting stalled stream attempt ${this.currentStreamTurn?.attempt ?? 0}.`,
+            { level: 'warn', elapsedSeconds },
+          );
+          this.abortController?.abort();
         } finally {
           this._nudgeInFlight = false;
         }
@@ -1590,6 +1749,9 @@ export class Orchestrator extends TypedEventEmitter {
       const userMessage = this.conversations.appendMessage(convId, 'user', content);
       this.emit({ type: 'message:user', message: userMessage });
     }
+    const latestUserMessage = content
+      || [...this.conversations.getMessages(convId)].reverse().find((message) => message.role === 'user')?.content
+      || '';
 
     this.streamNudgeCount = 0;
     let completionRetryCount = 0;
@@ -1620,6 +1782,8 @@ export class Orchestrator extends TypedEventEmitter {
           attempt: attemptNumber,
           conversationId: convId,
         };
+        this.currentPartialContent = '';
+        this.pendingRecoveryDecision = null;
         log.info('stream_started', {
           turnId,
           attempt: attemptNumber,
@@ -1629,7 +1793,7 @@ export class Orchestrator extends TypedEventEmitter {
           retryCause,
         });
         this.emit({ type: 'message:cerebrum:start', conversationId: convId });
-        this.startStreamWatchdog();
+        this.startStreamWatchdog(latestUserMessage);
 
         let messages = this.conversations.getMessages(convId);
 
@@ -1704,6 +1868,8 @@ export class Orchestrator extends TypedEventEmitter {
 
         const toolDefs = Object.fromEntries(allTools);
         let fullContent = '';
+        let finalDisplayContent = '';
+        let attemptFinishMeta: StreamFinishMetadata | undefined;
         const throwIfToolAttemptAborted = () => {
           if (!isCurrentAttempt()) {
             throw createAbortError('Tool execution aborted');
@@ -1716,15 +1882,13 @@ export class Orchestrator extends TypedEventEmitter {
             onChunk: (chunk) => {
               if (!isCurrentAttempt() || abortController.signal.aborted) return;
               fullContent += chunk;
+              this.currentPartialContent = fullContent;
               this.markStreamWaitingModel();
               this.emit({ type: 'message:cerebrum:chunk', chunk });
             },
             onToolCall: async (toolCall) => {
               throwIfToolAttemptAborted();
-              this.logStreamDebug('tool_callback_started', {
-                toolName: toolCall.name.trim() || toolCall.name,
-                toolCallId: toolCall.id,
-              });
+              this.logStreamDebug('tool_callback_started', this.buildToolDebugPayload(toolCall));
 
               this.markStreamWaitingTool(toolCall);
               const requestedToolName = toolCall.name;
@@ -1735,7 +1899,13 @@ export class Orchestrator extends TypedEventEmitter {
               } else {
                 completionState.externalToolCallCount++;
                 this.emit({ type: 'message:cerebrum:toolcall', toolCall: { ...toolCall, name: normalizedToolName } });
-                this.emit({ type: 'tool:start', callId: toolCall.id, name: normalizedToolName });
+                this.emit({
+                  type: 'tool:start',
+                  callId: toolCall.id,
+                  name: normalizedToolName,
+                  requestedName: requestedToolName !== normalizedToolName ? requestedToolName : undefined,
+                  args: toolCall.args,
+                });
               }
 
               const { toolName, result } = await this.toolRuntime.execute({
@@ -1746,17 +1916,20 @@ export class Orchestrator extends TypedEventEmitter {
                 scopeKey: convId,
                 abortSignal: abortController.signal,
               });
-              this.logStreamDebug('tool_callback_finished', {
-                toolName,
-                toolCallId: toolCall.id,
-                isError: result.isError,
-              });
+              this.logStreamDebug('tool_callback_finished', this.buildToolDebugPayload(toolCall, result, toolName));
 
               throwIfAborted(abortController.signal, 'Tool execution aborted');
 
               this.markStreamWaitingModel();
               if (!isInternalTaskSignal) {
-                this.emit({ type: 'tool:end', result });
+                this.emit({
+                  type: 'tool:end',
+                  callId: toolCall.id,
+                  name: toolName,
+                  requestedName: requestedToolName !== toolName ? requestedToolName : undefined,
+                  args: toolCall.args,
+                  result,
+                });
               }
 
               if (!isInternalTaskSignal && !result.isError) {
@@ -1833,6 +2006,8 @@ export class Orchestrator extends TypedEventEmitter {
               if (!isCurrentAttempt() || abortController.signal.aborted) return;
               this.stopStreamWatchdog();
               let displayContent = content;
+              finalDisplayContent = content;
+              attemptFinishMeta = finishMeta;
               const visibleToolCalls = toolCalls?.filter((toolCall) => !this.isInternalTaskSignalTool(toolCall.name));
 
               log.info('stream_finish_observed', {
@@ -1855,6 +2030,7 @@ export class Orchestrator extends TypedEventEmitter {
                 displayContent = content
                   .replace(/<discovery_complete>[\s\S]*?<\/discovery_complete>/g, '')
                   .trim();
+                finalDisplayContent = displayContent;
                 if (parsed && this.onDiscoveryComplete) {
                   this.discoveryMode = false;
                   this.onDiscoveryComplete(parsed);
@@ -1865,29 +2041,7 @@ export class Orchestrator extends TypedEventEmitter {
               const guardFailure = this.evaluateCompletionGuard(displayContent, finishMeta, completionState);
               if (guardFailure) {
                 completionGuardFailure = guardFailure;
-                nextRetryContext = this.buildRetryContextMessage(this.buildCompletionRetrySnapshot({
-                  attempt: attemptNumber,
-                  partialContent: fullContent || displayContent,
-                  completionState,
-                  finishMeta,
-                }));
-                if (nextRetryContext) {
-                  log.info('completion_retry_context_prepared', {
-                    turnId,
-                    attempt: attemptNumber,
-                    conversationId: convId,
-                    finishReason: finishMeta?.finishReason,
-                    rawFinishReason: finishMeta?.rawFinishReason,
-                    hasPartialContent: (fullContent || displayContent).trim().length > 0,
-                    progressEntries: completionState.continuity.progressLedger.length,
-                    taskCheckpoints: completionState.continuity.taskCheckpoints.length,
-                    hasBrowserState: Boolean(
-                      completionState.continuity.browserState.currentUrl
-                      || completionState.continuity.browserState.activeTabId
-                      || completionState.continuity.browserState.tabs?.length,
-                    ),
-                  });
-                }
+                finalDisplayContent = displayContent;
                 this.emitCompletionTrace(
                   'guard_triggered',
                   guardFailure.message,
@@ -1960,12 +2114,64 @@ export class Orchestrator extends TypedEventEmitter {
           const completionFailure = completionGuardFailure as CompletionGuardFailure | null;
           if (completionFailure !== null) {
             const completionSignal = completionFailure.signal;
+            const recoveryRequest = this.buildRecoveryRequest({
+              cause: 'completion',
+              attempt: attemptNumber,
+              partialContent: fullContent || finalDisplayContent,
+              completionState,
+              latestUserMessage,
+              completionRetryCount,
+              finishMeta: attemptFinishMeta,
+            });
+            const { source, assessment } = await this.assessTurnRecovery(recoveryRequest);
+            this.emitRecoveryTrace('completion', source, assessment, assessment.action === 'stop' ? 'warn' : 'info');
+            nextRetryContext = this.buildRetryContextMessage('completion', attemptNumber, assessment.modelMessage, source);
+            log.info('completion_retry_context_prepared', {
+              turnId,
+              attempt: attemptNumber,
+              conversationId: convId,
+              source,
+              action: assessment.action,
+              finishReason: attemptFinishMeta?.finishReason,
+              rawFinishReason: attemptFinishMeta?.rawFinishReason,
+              hasPartialContent: (fullContent || finalDisplayContent).trim().length > 0,
+              progressEntries: completionState.continuity.progressLedger.length,
+              taskCheckpoints: completionState.continuity.taskCheckpoints.length,
+              completedSteps: assessment.completedSteps,
+              nextStep: assessment.nextStep,
+            });
+
+            if (assessment.action === 'stop') {
+              failedAttemptMessageIds.push(...attemptMessageIds);
+              const diagnosticMessage = this.conversations.appendMessage(
+                convId,
+                'system',
+                assessment.operatorMessage,
+              );
+              this.emit({ type: 'message:system', message: diagnosticMessage });
+              this.emitCompletionTrace(
+                'retry_failed',
+                assessment.diagnosis,
+                completionSignal,
+                'error',
+              );
+              this.emit({
+                type: 'error',
+                error: new Error(assessment.diagnosis || 'Turn ended without a valid completion signal or final answer.'),
+              });
+              if (failedAttemptMessageIds.length > 0) {
+                this.conversations.deleteMessages(convId, failedAttemptMessageIds);
+              }
+              loopTerminated = true;
+              break;
+            }
+
             if (completionRetryCount < this.maxCompletionRetries) {
               completionRetryCount++;
               const systemMessage = this.conversations.appendMessage(
                 convId,
                 'system',
-                COMPLETION_RETRY_PROMPT,
+                assessment.operatorMessage,
               );
               attemptMessageIds.push(systemMessage.id);
               failedAttemptMessageIds.push(...attemptMessageIds);
@@ -1984,18 +2190,20 @@ export class Orchestrator extends TypedEventEmitter {
             const diagnosticMessage = this.conversations.appendMessage(
               convId,
               'system',
-              '[Cerebellum] The turn ended repeatedly without a valid completion signal or final answer.',
+              source === 'cerebellum'
+                ? '[Cerebellum] The turn ended repeatedly without a valid completion signal or final answer.'
+                : '[System fallback] The turn ended repeatedly without a valid completion signal or final answer.',
             );
             this.emit({ type: 'message:system', message: diagnosticMessage });
             this.emitCompletionTrace(
               'retry_failed',
-              `Completion retries exhausted after ${completionRetryCount}/${this.maxCompletionRetries}: ${completionFailure.message}`,
+              `Completion retries exhausted after ${completionRetryCount}/${this.maxCompletionRetries}: ${assessment.diagnosis || completionFailure.message}`,
               completionSignal,
               'error',
             );
             this.emit({
               type: 'error',
-              error: new Error('Turn ended without a valid completion signal or final answer.'),
+              error: new Error(assessment.diagnosis || 'Turn ended without a valid completion signal or final answer.'),
             });
             // Clean up all failed attempt messages on exhaustion
             if (failedAttemptMessageIds.length > 0) {
@@ -2010,26 +2218,27 @@ export class Orchestrator extends TypedEventEmitter {
           const failureState = this.getStreamState();
           this.stopStreamWatchdog();
           failedAttemptMessageIds.push(...attemptMessageIds);
+          const recoveryDecision = this.pendingRecoveryDecision;
+          this.pendingRecoveryDecision = null;
+          const stallRecovery = recoveryDecision as { cause: 'stall'; source: RecoverySource; assessment: TurnRecoveryAssessment } | null;
 
-          // Check if this was a nudge-abort (not emergency stop, not a real error)
-          const isNudgeAbort =
+          const isRecoveryRetryAbort =
             abortController.signal.aborted
+            && stallRecovery !== null
+            && stallRecovery.assessment.action === 'retry'
             && this.streamNudgeCount > stallRetryCountAtStart
             && this.streamNudgeCount <= this.maxNudgeRetries;
 
-          if (isNudgeAbort) {
-            nextRetryContext = this.buildRetryContextMessage(this.buildStallRetrySnapshot({
-              attempt: attemptNumber,
-              phase: failureState.phase,
-              activeToolName: failureState.activeToolName,
-              activeToolCallId: failureState.activeToolCallId,
-              partialContent: fullContent,
-              completionState,
-            }));
-            // Inject nudge message and retry via the loop
+          if (isRecoveryRetryAbort && stallRecovery) {
+            nextRetryContext = this.buildRetryContextMessage(
+              'stall',
+              attemptNumber,
+              stallRecovery.assessment.modelMessage,
+              stallRecovery.source,
+            );
             const systemMessage = this.conversations.appendMessage(
               convId, 'system',
-              '[Cerebellum] You stopped mid-response. Continue from where you left off.',
+              stallRecovery.assessment.operatorMessage,
             );
             attemptMessageIds.push(systemMessage.id);
             failedAttemptMessageIds.push(...attemptMessageIds);
@@ -2041,6 +2250,25 @@ export class Orchestrator extends TypedEventEmitter {
             );
             nextRetryCause = 'stall';
             continue; // retry loop
+          }
+
+          if (
+            abortController.signal.aborted
+            && stallRecovery !== null
+            && stallRecovery.assessment.action === 'stop'
+          ) {
+            const systemMessage = this.conversations.appendMessage(
+              convId,
+              'system',
+              stallRecovery.assessment.operatorMessage,
+            );
+            this.emit({ type: 'message:system', message: systemMessage });
+            this.emit({ type: 'error', error: new Error(stallRecovery.assessment.diagnosis) });
+            if (failedAttemptMessageIds.length > 0) {
+              this.conversations.deleteMessages(convId, failedAttemptMessageIds);
+            }
+            loopTerminated = true;
+            break;
           }
 
           // Check if Cerebellum dropped mid-stream

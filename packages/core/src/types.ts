@@ -108,6 +108,38 @@ export interface ProgressEntry {
   checkpointStatus?: TaskCheckpointStatus;
 }
 
+export type RecoveryCause = 'stall' | 'completion';
+export type RecoveryAction = 'wait' | 'retry' | 'stop';
+
+export interface TurnRecoveryRequest {
+  conversationId: string;
+  turnId: string;
+  attempt: number;
+  cause: RecoveryCause;
+  phase: StreamPhase;
+  activeToolName?: string;
+  activeToolCallId?: string;
+  stallRetryCount: number;
+  completionRetryCount: number;
+  finishReason?: string;
+  elapsedSeconds?: number;
+  partialContent?: string;
+  latestUserMessage?: string;
+  browserState: BrowserStateSnapshot;
+  progressEntries: ProgressEntry[];
+  taskCheckpoints: TaskCheckpoint[];
+}
+
+export interface TurnRecoveryAssessment {
+  action: RecoveryAction;
+  operatorMessage: string;
+  modelMessage: string;
+  diagnosis: string;
+  nextStep: string;
+  completedSteps: string[];
+  waitSeconds?: number;
+}
+
 export type SubAgentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'timeout';
 export type SubAgentCleanup = 'delete' | 'keep';
 

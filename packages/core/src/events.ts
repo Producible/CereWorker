@@ -1,4 +1,15 @@
-import type { Message, ToolCall, ToolResult, TaskAction, CerebellumStatus, VerificationResult, AgentHealthAction, StreamPhase } from './types.js';
+import type {
+  AgentHealthAction,
+  CerebellumStatus,
+  Message,
+  RecoveryAction,
+  RecoveryCause,
+  StreamPhase,
+  TaskAction,
+  ToolCall,
+  ToolResult,
+  VerificationResult,
+} from './types.js';
 
 interface StreamDiagnosticEvent {
   elapsedSeconds?: number;
@@ -31,8 +42,8 @@ export type OrchestratorEvent =
   | { type: 'message:cerebrum:chunk'; chunk: string }
   | { type: 'message:cerebrum:end'; message: Message }
   | { type: 'message:cerebrum:toolcall'; toolCall: ToolCall }
-  | { type: 'tool:start'; callId: string; name: string }
-  | { type: 'tool:end'; result: ToolResult }
+  | { type: 'tool:start'; callId: string; name: string; requestedName?: string; args: Record<string, unknown> }
+  | { type: 'tool:end'; callId: string; name: string; requestedName?: string; args: Record<string, unknown>; result: ToolResult }
   | { type: 'verification:start'; callId: string; toolName: string }
   | { type: 'verification:end'; result: VerificationResult }
   | { type: 'heartbeat:tick'; actions: TaskAction[] }
@@ -82,6 +93,21 @@ export type OrchestratorEvent =
       conversationId: string;
       message: string;
       signal?: 'complete' | 'blocked' | 'none';
+    } & StreamDiagnosticEvent)
+  | ({
+      type: 'cerebellum:recovery';
+      cause: RecoveryCause;
+      action: RecoveryAction;
+      turnId: string;
+      attempt: number;
+      conversationId: string;
+      message: string;
+      operatorMessage: string;
+      diagnosis: string;
+      nextStep: string;
+      completedSteps: string[];
+      waitSeconds?: number;
+      source: 'cerebellum' | 'fallback';
     } & StreamDiagnosticEvent)
   | { type: 'error'; error: Error };
 

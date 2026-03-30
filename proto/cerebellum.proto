@@ -24,6 +24,9 @@ service Cerebellum {
   // Verify a tool execution result (Muscle+Skeleton)
   rpc VerifyToolResult(VerifyRequest) returns (VerifyResponse);
 
+  // Assess how a stalled or incomplete turn should recover.
+  rpc AssessTurnRecovery(AssessTurnRecoveryRequest) returns (AssessTurnRecoveryResponse);
+
   // Report sub-agent states for health monitoring
   rpc ReportAgentStates(AgentStatesRequest) returns (AgentStatesResponse);
 
@@ -118,6 +121,67 @@ message VerifyResponse {
   bool passed = 1;                   // overall verdict
   repeated VerifyCheck checks = 2;
   bool model_verdict = 3;            // what the LLM specifically said
+}
+
+message RecoveryTab {
+  string id = 1;
+  string title = 2;
+  string url = 3;
+  bool active = 4;
+}
+
+message RecoveryBrowserState {
+  string current_url = 1;
+  string active_tab_id = 2;
+  repeated RecoveryTab tabs = 3;
+}
+
+message RecoveryProgressEntry {
+  string source = 1;
+  string action = 2;
+  string summary = 3;
+  string tool_name = 4;
+  string url = 5;
+  string tab_id = 6;
+  bool state_changing = 7;
+  bool is_error = 8;
+  string checkpoint_status = 9;
+}
+
+message RecoveryTaskCheckpoint {
+  string step = 1;
+  string status = 2;
+  string evidence = 3;
+  string summary = 4;
+}
+
+message AssessTurnRecoveryRequest {
+  string conversation_id = 1;
+  string turn_id = 2;
+  int32 attempt = 3;
+  string cause = 4;                  // "stall" | "completion"
+  string phase = 5;                  // current stream phase
+  string active_tool_name = 6;
+  string active_tool_call_id = 7;
+  int32 stall_retry_count = 8;
+  int32 completion_retry_count = 9;
+  string finish_reason = 10;
+  int32 elapsed_seconds = 11;
+  string partial_content = 12;
+  string latest_user_message = 13;
+  RecoveryBrowserState browser_state = 14;
+  repeated RecoveryProgressEntry progress_entries = 15;
+  repeated RecoveryTaskCheckpoint task_checkpoints = 16;
+}
+
+message AssessTurnRecoveryResponse {
+  string action = 1;                 // "wait" | "retry" | "stop"
+  string operator_message = 2;       // visible notice for operators
+  string model_message = 3;          // transient retry context for Cerebrum
+  string diagnosis = 4;
+  string next_step = 5;
+  repeated string completed_steps = 6;
+  int32 wait_seconds = 7;
 }
 
 // Sub-agent monitoring messages

@@ -43,6 +43,67 @@ export interface VerificationResult {
   modelVerdict: boolean;
 }
 
+export interface RecoveryBrowserTab {
+  id: string;
+  title?: string;
+  url: string;
+  active: boolean;
+}
+
+export interface RecoveryBrowserState {
+  currentUrl?: string;
+  activeTabId?: string;
+  tabs?: RecoveryBrowserTab[];
+}
+
+export interface RecoveryProgressEntry {
+  source: 'tool' | 'checkpoint';
+  action: string;
+  summary: string;
+  toolName?: string;
+  url?: string;
+  tabId?: string;
+  stateChanging: boolean;
+  isError: boolean;
+  checkpointStatus?: 'done' | 'in_progress';
+}
+
+export interface RecoveryTaskCheckpoint {
+  step: string;
+  status: 'done' | 'in_progress';
+  evidence: string;
+  summary: string;
+}
+
+export interface TurnRecoveryRequest {
+  conversationId: string;
+  turnId: string;
+  attempt: number;
+  cause: 'stall' | 'completion';
+  phase: string;
+  activeToolName?: string;
+  activeToolCallId?: string;
+  stallRetryCount: number;
+  completionRetryCount: number;
+  finishReason?: string;
+  elapsedSeconds?: number;
+  partialContent?: string;
+  latestUserMessage?: string;
+  browserState: RecoveryBrowserState;
+  progressEntries: RecoveryProgressEntry[];
+  taskCheckpoints: RecoveryTaskCheckpoint[];
+}
+
+export interface TurnRecoveryAssessment {
+  action: 'wait' | 'retry' | 'stop';
+  operatorMessage: string;
+  modelMessage: string;
+  diagnosis: string;
+  nextStep: string;
+  completedSteps: string[];
+  waitSeconds?: number;
+}
+
 export interface AgentHealthAction {
   agentId: string;
   action: 'ok' | 'ping' | 'retry' | 'cancel' | 'timeout';
@@ -301,6 +362,74 @@ export class CerebellumClient {
               passed: c.passed,
               description: c.description,
             })),
+          });
+        },
+      );
+    });
+  }
+
+  async assessTurnRecovery(request: TurnRecoveryRequest): Promise<TurnRecoveryAssessment | null> {
+    if (!this.connected) return null;
+
+    return new Promise((resolve, reject) => {
+      const deadline = new Date(Date.now() + 5_000);
+      this.client.assessTurnRecovery(
+        {
+          conversationId: request.conversationId,
+          turnId: request.turnId,
+          attempt: request.attempt,
+          cause: request.cause,
+          phase: request.phase,
+          activeToolName: request.activeToolName ?? '',
+          activeToolCallId: request.activeToolCallId ?? '',
+          stallRetryCount: request.stallRetryCount,
+          completionRetryCount: request.completionRetryCount,
+          finishReason: request.finishReason ?? '',
+          elapsedSeconds: request.elapsedSeconds ?? 0,
+          partialContent: request.partialContent ?? '',
+          latestUserMessage: request.latestUserMessage ?? '',
+          browserState: {
+            currentUrl: request.browserState.currentUrl ?? '',
+            activeTabId: request.browserState.activeTabId ?? '',
+            tabs: (request.browserState.tabs ?? []).map((tab: RecoveryBrowserTab) => ({
+              id: tab.id,
+              title: tab.title ?? '',
+              url: tab.url,
+              active: tab.active,
+            })),
+          },
+          progressEntries: request.progressEntries.map((entry: RecoveryProgressEntry) => ({
+            source: entry.source,
+            action: entry.action,
+            summary: entry.summary,
+            toolName: entry.toolName ?? '',
+            url: entry.url ?? '',
+            tabId: entry.tabId ?? '',
+            stateChanging: entry.stateChanging,
+            isError: entry.isError,
+            checkpointStatus: entry.checkpointStatus ?? '',
+          })),
+          taskCheckpoints: request.taskCheckpoints.map((checkpoint: RecoveryTaskCheckpoint) => ({
+            step: checkpoint.step,
+            status: checkpoint.status,
+            evidence: checkpoint.evidence,
+            summary: checkpoint.summary,
+          })),
+        },
+        { deadline },
+        (err: Error | null, response: GrpcClient) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          resolve({
+            action: response.action,
+            operatorMessage: response.operatorMessage,
+            modelMessage: response.modelMessage,
+            diagnosis: response.diagnosis,
+            nextStep: response.nextStep,
+            completedSteps: response.completedSteps ?? [],
+            waitSeconds: response.waitSeconds || undefined,
           });
         },
       );

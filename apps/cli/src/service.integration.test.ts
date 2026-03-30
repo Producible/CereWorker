@@ -45,6 +45,14 @@ function makeConfig(overrides: Record<string, unknown> = {}): CereWorkerConfig {
 function createWatchdogCerebellum(): CerebellumAdapter {
   return {
     isConnected: vi.fn(() => true),
+    assessTurnRecovery: vi.fn(async () => ({
+      action: 'retry' as const,
+      operatorMessage: '[Cerebellum] Retry from the last verified state.',
+      modelMessage: '[Cerebellum recovery guidance]\nRetry from the last verified state.\nEnd your final answer by calling task_complete or task_blocked.',
+      diagnosis: 'Retry from the last verified state.',
+      nextStep: 'Continue from the next unfinished step.',
+      completedSteps: [],
+    })),
     verifyToolResult: vi.fn(async () => ({ passed: false, checks: [], modelVerdict: false })),
     ingestTrainingData: vi.fn(async () => 0),
     startFineTune: vi.fn(async () => ({ jobId: '', started: false, error: '' })),
@@ -198,7 +206,7 @@ describe('createService integration', () => {
     expect(errors).toEqual([]);
     expect(nudges).toEqual([1]);
     expect(systemMessages).toEqual([
-      '[Cerebellum] You stopped mid-response. Continue from where you left off.',
+      '[Cerebellum] Retry from the last verified state.',
     ]);
     // Failed attempt messages cleaned up on success
     expect(messages.at(-1)).toMatchObject({
@@ -341,7 +349,7 @@ describe('createService integration', () => {
 
     expect(attempts).toBe(2);
     const completionResumeMessage = attemptInputs[1]?.find((message) =>
-      message.content.startsWith('[Completion resume context]'));
+      message.content.startsWith('[System fallback recovery]'));
     expect(completionResumeMessage).toBeDefined();
     expect(completionResumeMessage?.content).toContain('verified work result');
     expect(completionResumeMessage?.content).toContain('I already reviewed the profile and just need to finalize the response.');

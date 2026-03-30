@@ -23,6 +23,10 @@ export type {
   TaskCheckpointStatus,
   TaskCheckpoint,
   ProgressEntry,
+  RecoveryCause,
+  RecoveryAction,
+  TurnRecoveryRequest,
+  TurnRecoveryAssessment,
 } from './types.js';
 
 export type { OrchestratorEvent } from './events.js';

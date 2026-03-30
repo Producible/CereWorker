@@ -173,6 +173,135 @@ class CerebellumServicer(cerebellum_pb2_grpc.CerebellumServicer):
             vc.description = check.description
         return response
 
+    def _truncate(self, text, max_chars=300):
+        text = (text or "").strip()
+        if len(text) <= max_chars:
+            return text
+        return text[: max_chars - 1].rstrip() + "…"
+
+    def _derive_completed_steps(self, request):
+        completed = []
+        seen = set()
+
+        for checkpoint in request.task_checkpoints:
+            if checkpoint.status == "done" and checkpoint.summary and checkpoint.summary not in seen:
+                completed.append(checkpoint.summary)
+                seen.add(checkpoint.summary)
+
+        for entry in request.progress_entries:
+            if entry.source == "tool" and entry.state_changing and not entry.is_error and entry.summary and entry.summary not in seen:
+                completed.append(entry.summary)
+                seen.add(entry.summary)
+
+        return completed[-10:]
+
+    def _looks_repetitive(self, request):
+        recent_actions = [entry.action for entry in request.progress_entries if entry.source == "tool"][-6:]
+        recent_summaries = [entry.summary for entry in request.progress_entries if entry.source == "tool"][-6:]
+        if len(recent_actions) >= 4 and len(set(recent_actions)) <= 2:
+            return True
+        if len(recent_summaries) >= 4 and len(set(recent_summaries)) <= 2:
+            return True
+        return False
+
+    def _derive_next_step(self, request, completed_steps):
+        current_url = request.browser_state.current_url
+        if current_url and "x.com/home" in current_url:
+            return "Stay on the current home timeline and continue from the next unfinished engagement or publishing step without reopening already verified pages."
+        if current_url and "x.com/" in current_url and current_url.rstrip("/").split("/")[-1]:
+            return f"Continue from the current page ({current_url}) and move to the next unfinished step without restarting the browser workflow."
+        if completed_steps:
+            return "Continue from the next unfinished step using the verified progress below; do not repeat completed navigation or scans."
+        return "Use the current browser state and recent verified actions to continue from the next unfinished step."
+
+    def _build_model_message(self, request, diagnosis, next_step, completed_steps):
+        lines = [
+            "[Cerebellum recovery guidance]",
+            diagnosis,
+            "The failed attempt tool history has been removed. Treat the verified state below as authoritative.",
+        ]
+
+        if completed_steps:
+            lines.append("")
+            lines.append("Completed steps:")
+            for step in completed_steps:
+                lines.append(f"- {step}")
+
+        if request.browser_state.current_url or request.browser_state.active_tab_id or request.browser_state.tabs:
+            lines.append("")
+            lines.append("Last known browser state:")
+            if request.browser_state.current_url:
+                lines.append(f"- Current URL: {request.browser_state.current_url}")
+            if request.browser_state.active_tab_id:
+                lines.append(f"- Active tab: {request.browser_state.active_tab_id}")
+            for tab in list(request.browser_state.tabs)[:6]:
+                title = f" ({tab.title})" if tab.title else ""
+                active = " [active]" if tab.active else ""
+                lines.append(f"- Tab {tab.id}{active}: {tab.url}{title}")
+
+        if request.partial_content:
+            lines.extend([
+                "",
+                "Partial assistant text from the previous attempt:",
+                self._truncate(request.partial_content, 600),
+            ])
+
+        lines.extend([
+            "",
+            f"Next step: {next_step}",
+            "Do not repeat completed work unless the current page state clearly contradicts it.",
+            "End your final answer by calling task_complete or task_blocked.",
+        ])
+        return "\n".join(lines)
+
+    async def AssessTurnRecovery(self, request, context):
+        """Assess whether a stalled or incomplete turn should wait, retry, or stop."""
+        completed_steps = self._derive_completed_steps(request)
+        repetitive = self._looks_repetitive(request)
+        cause = request.cause or "completion"
+        phase = request.phase or "idle"
+        wait_seconds = 0
+
+        if cause == "stall":
+            if phase == "waiting_model" and request.stall_retry_count == 0 and request.elapsed_seconds <= 90:
+                action = "wait"
+                wait_seconds = max(45, min(90, request.elapsed_seconds + 15))
+                diagnosis = f"The model is stalled in {phase}, but this still looks salvageable without restarting."
+            elif repetitive:
+                action = "stop"
+                diagnosis = "The run is repeating the same browser navigation pattern without advancing the task."
+            else:
+                action = "retry"
+                diagnosis = f"The stalled turn should be retried from the last verified state instead of continuing to wait in {phase}."
+        else:
+            if repetitive and request.completion_retry_count >= 1:
+                action = "stop"
+                diagnosis = "The turn is repeating the same verified browser steps without producing a final answer."
+            else:
+                action = "retry"
+                finish_reason = request.finish_reason or "tool-calls"
+                diagnosis = f"The turn ended with {finish_reason} and no valid final answer, so it should resume from the verified state instead of restarting."
+
+        next_step = self._derive_next_step(request, completed_steps)
+        if action == "wait":
+            operator_message = f"[Cerebellum] Waiting {wait_seconds}s longer before interrupting; the turn still looks salvageable."
+        elif action == "stop":
+            operator_message = f"[Cerebellum] Stop retrying: {diagnosis}"
+        else:
+            operator_message = f"[Cerebellum] Retry from the last verified state. Next step: {next_step}"
+
+        model_message = self._build_model_message(request, diagnosis, next_step, completed_steps)
+
+        return cerebellum_pb2.AssessTurnRecoveryResponse(
+            action=action,
+            operator_message=operator_message,
+            model_message=model_message,
+            diagnosis=diagnosis,
+            next_step=next_step,
+            completed_steps=completed_steps,
+            wait_seconds=wait_seconds,
+        )
+
 
     async def ReportAgentStates(self, request, context):
         """Evaluate sub-agent health and return recommended actions."""

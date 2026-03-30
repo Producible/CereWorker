@@ -62,16 +62,21 @@ export function useChat(orchestrator: Orchestrator) {
     );
 
     unsubs.push(
-      orchestrator.on('tool:end', ({ result }) => {
+      orchestrator.on('tool:end', ({ callId, name, requestedName, args, result }) => {
         setActiveToolCall(null);
         setMessages((prev) => [
           ...prev,
           {
-            id: result.callId,
+            id: callId,
             role: 'tool' as const,
             content: result.output,
             toolResult: result,
             timestamp: Date.now(),
+            metadata: {
+              toolName: name,
+              ...(requestedName ? { requestedToolName: requestedName } : {}),
+              toolArgs: args,
+            },
           },
         ]);
       }),
