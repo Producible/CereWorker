@@ -335,7 +335,8 @@ describe('Orchestrator', () => {
         expect.objectContaining({ content: 'Completed the task.' }),
       ]);
       expect(messages.some((message) => message.role === 'cerebrum' && message.content.trim().length === 0)).toBe(false);
-      expect(messages.some((message) => message.role === 'system' && message.content.includes('task_complete or task_blocked'))).toBe(true);
+      // Failed attempt messages (including retry nudge) are cleaned up on success
+      expect(messages.filter((message) => message.role === 'tool')).toHaveLength(0);
     });
 
     it('accepts task_blocked as a valid terminal signal', async () => {
@@ -561,6 +562,15 @@ describe('Orchestrator', () => {
         expect(resumeMessage?.content).toContain('Opened the profile page.');
         expect(resumeMessage?.content).toContain('I followed the account and am ready to publish the summary.');
         expect(localOrch.getMessages().some((message) => message.metadata?.source === 'completion-resume')).toBe(false);
+
+        // The retry input must NOT contain the failed attempt's tool messages
+        const retryToolMessages = retryMessages.filter((m) => m.role === 'tool');
+        expect(retryToolMessages).toHaveLength(0);
+
+        // After success, the conversation store should NOT contain the failed attempt's tool output
+        const storedMessages = localOrch.getMessages();
+        const storedToolMessages = storedMessages.filter((m) => m.role === 'tool' && m.content === 'Opened the profile page.');
+        expect(storedToolMessages).toHaveLength(0);
       } finally {
         await localOrch.stop();
       }

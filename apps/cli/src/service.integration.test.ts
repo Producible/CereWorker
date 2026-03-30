@@ -113,9 +113,9 @@ describe('createService integration', () => {
     expect(attempts).toBe(2);
     expect(errors).toEqual([]);
     expect(nudges).toEqual([1]);
-    expect(messages.slice(-3).map((message) => [message.role, message.content])).toEqual([
+    // Failed attempt messages cleaned up on success — only user + final cerebrum remain
+    expect(messages.slice(-2).map((message) => [message.role, message.content])).toEqual([
       ['user', 'hello from watchdog'],
-      ['system', '[Cerebellum] You stopped mid-response. Continue from where you left off.'],
       ['cerebrum', 'Recovered reply'],
     ]);
 
@@ -200,14 +200,12 @@ describe('createService integration', () => {
     expect(systemMessages).toEqual([
       '[Cerebellum] You stopped mid-response. Continue from where you left off.',
     ]);
-    expect([...messages].reverse().find((message) => message.role === 'system')?.content).toBe(
-      '[Cerebellum] You stopped mid-response. Continue from where you left off.',
-    );
+    // Failed attempt messages cleaned up on success
     expect(messages.at(-1)).toMatchObject({
       role: 'cerebrum',
       content: 'Recovered reply',
     });
-    expect(messages.some((message) => message.role === 'tool' && message.content.includes('Tool execution aborted'))).toBe(false);
+    expect(messages.some((message) => message.role === 'tool')).toBe(false);
 
     await service.shutdown();
   });
@@ -353,11 +351,9 @@ describe('createService integration', () => {
       'signal_recorded',
       'retry_recovered',
     ]);
+    // Failed attempt messages cleaned up on success — only user + final cerebrum remain
     expect(service.orchestrator.getMessages().map((message) => [message.role, message.content])).toEqual([
       ['user', 'finish the task'],
-      ['tool', 'verified work result'],
-      ['system', '[Cerebellum] Your last turn ended without a final answer. Continue from where you left off and end by calling task_complete or task_blocked before your final answer.'],
-      ['tool', 'verified work result'],
       ['cerebrum', 'Completed with evidence.'],
     ]);
     expect(service.orchestrator.getMessages().some((message) => message.metadata?.source === 'completion-resume')).toBe(false);
@@ -468,12 +464,9 @@ describe('createService integration', () => {
       'signal_recorded',
       'retry_recovered',
     ]);
+    // Failed attempt messages cleaned up on success — only user + final cerebrum remain
     expect(service.orchestrator.getMessages().map((message) => [message.role, message.content])).toEqual([
       ['user', 'finish the task'],
-      ['system', '[Cerebellum] You stopped mid-response. Continue from where you left off.'],
-      ['tool', 'verified work result'],
-      ['system', '[Cerebellum] Your last turn ended without a final answer. Continue from where you left off and end by calling task_complete or task_blocked before your final answer.'],
-      ['tool', 'verified work result'],
       ['cerebrum', 'Completed after mixed retries.'],
     ]);
 

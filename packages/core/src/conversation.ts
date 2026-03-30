@@ -170,6 +170,22 @@ export class ConversationStore {
     }));
   }
 
+  /** Delete messages in a conversation after a given index (0-based). */
+  deleteMessagesAfter(conversationId: string, keepCount: number): number {
+    const messages = this.getMessages(conversationId);
+    if (keepCount >= messages.length) return 0;
+
+    const idsToDelete = messages.slice(keepCount).map((m) => m.id);
+    if (idsToDelete.length === 0) return 0;
+
+    const placeholders = idsToDelete.map(() => '?').join(',');
+    const result = this.db
+      .prepare(`DELETE FROM messages WHERE conversationId = ? AND id IN (${placeholders})`)
+      .run(conversationId, ...idsToDelete);
+
+    return Number(result.changes);
+  }
+
   delete(id: string): boolean {
     const result = this.db
       .prepare('DELETE FROM conversations WHERE id = ?')

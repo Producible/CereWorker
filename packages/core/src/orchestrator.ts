@@ -1330,9 +1330,10 @@ export class Orchestrator extends TypedEventEmitter {
     this.streamNudgeCount = 0;
     let completionRetryCount = 0;
     let nextRetryContext: Message | null = null;
-    // Track message count before this turn so retries can exclude the failed attempt's messages
+    // Track message count before this turn so retries can exclude the failed attempt's messages.
+    // This cutoff never changes — on retry, everything after this point is excluded and replaced
+    // by the transient resume context which summarizes the failed attempt.
     const messagesBeforeTurn = this.conversations.getMessages(convId).length;
-    let retryMessageCutoff = messagesBeforeTurn;
     const turnId = nanoid(10);
     const maxTotalAttempts = 1 + this.maxNudgeRetries + this.maxCompletionRetries;
     let loopTerminated = false;
@@ -1372,7 +1373,7 @@ export class Orchestrator extends TypedEventEmitter {
         // The resume context already summarizes what happened — sending the raw tool calls
         // causes the model to repeat the exact same steps instead of continuing.
         if (retryCause) {
-          messages = messages.slice(0, retryMessageCutoff);
+          messages = messages.slice(0, messagesBeforeTurn);
         }
 
         // Context window compaction
@@ -1636,6 +1637,15 @@ export class Orchestrator extends TypedEventEmitter {
                 return;
               }
 
+              // On retry success: clean up failed attempt messages from conversation store
+              // so they don't leak into future turns
+              if (retryCause) {
+                const deleted = this.conversations.deleteMessagesAfter(convId, messagesBeforeTurn);
+                if (deleted > 0) {
+                  log.info('Cleaned up failed attempt messages', { deleted, convId, attempt: attemptNumber });
+                }
+              }
+
               const cerebrumMessage = this.conversations.appendMessage(
                 convId, 'cerebrum', displayContent,
                 visibleToolCalls?.length ? { toolCalls: visibleToolCalls } : undefined,
@@ -1686,8 +1696,6 @@ export class Orchestrator extends TypedEventEmitter {
                 COMPLETION_RETRY_PROMPT,
               );
               this.emit({ type: 'message:system', message: systemMessage });
-              // Update cutoff so next retry includes the nudge but excludes tool calls
-              retryMessageCutoff = this.conversations.getMessages(convId).length;
               this.emitCompletionTrace(
                 'retry_started',
                 `Retrying attempt ${attemptNumber + 1} after incomplete completion (${completionRetryCount}/${this.maxCompletionRetries}).`,
@@ -1744,8 +1752,6 @@ export class Orchestrator extends TypedEventEmitter {
               '[Cerebellum] You stopped mid-response. Continue from where you left off.',
             );
             this.emit({ type: 'message:system', message: systemMessage });
-            // Update cutoff so next retry includes the nudge but excludes tool calls
-            retryMessageCutoff = this.conversations.getMessages(convId).length;
             this.emitWatchdog(
               'retry_started',
               `Retrying stalled turn with attempt ${attemptNumber + 1} (stall retry ${this.streamNudgeCount}/${this.maxNudgeRetries}).`,
