@@ -41,11 +41,21 @@ interface AttemptCompletionState {
   successfulExternalToolCount: number;
   externalToolCallCount: number;
   internalToolCallCount: number;
+  recentExternalToolSummaries: Array<{ toolName: string; outputPreview: string; isError: boolean }>;
 }
 
 interface CompletionGuardFailure {
   message: string;
   signal: CompletionSignal;
+}
+
+interface StallRetrySnapshot {
+  attempt: number;
+  phase: StreamPhase;
+  activeToolName?: string;
+  activeToolCallId?: string;
+  partialContent?: string;
+  recentExternalToolSummaries: Array<{ toolName: string; outputPreview: string; isError: boolean }>;
 }
 
 type RetryCause = 'stall' | 'completion';
@@ -786,10 +796,11 @@ export class Orchestrator extends TypedEventEmitter {
   }
 
   getStreamState(): StreamState {
+    const stallThresholdMs = this.getCurrentStallThresholdMs();
     return {
       streaming: this.streamWatchdog !== null,
       lastActivityAt: this.lastStreamActivityAt,
-      stallDetected: this.streamWatchdog !== null && (Date.now() - this.lastStreamActivityAt) > this.streamStallThreshold,
+      stallDetected: this.streamWatchdog !== null && (Date.now() - this.lastStreamActivityAt) > stallThresholdMs,
       nudgeCount: this.streamNudgeCount,
       phase: this.streamPhase,
       activeToolName: this.activeToolCall?.name,
@@ -853,13 +864,20 @@ export class Orchestrator extends TypedEventEmitter {
     };
   }
 
-  private describeStreamLocation(): string {
-    if (this.streamPhase === 'waiting_tool') {
-      return this.activeToolCall?.name
-        ? `waiting_tool/${this.activeToolCall.name}`
+  private describeStreamLocation(phase = this.streamPhase, activeToolName = this.activeToolCall?.name): string {
+    if (phase === 'waiting_tool') {
+      return activeToolName
+        ? `waiting_tool/${activeToolName}`
         : 'waiting_tool';
     }
-    return this.streamPhase;
+    return phase;
+  }
+
+  private getCurrentStallThresholdMs(phase = this.streamPhase, nudgeCount = this.streamNudgeCount): number {
+    const phaseBase = phase === 'waiting_model'
+      ? this.streamStallThreshold * 3
+      : this.streamStallThreshold;
+    return phaseBase + (nudgeCount * this.streamStallThreshold);
   }
 
   private logStreamDebug(msg: string, data?: Record<string, unknown>): void {
@@ -953,7 +971,103 @@ export class Orchestrator extends TypedEventEmitter {
       successfulExternalToolCount: 0,
       externalToolCallCount: 0,
       internalToolCallCount: 0,
+      recentExternalToolSummaries: [],
     };
+  }
+
+  private buildStallRetrySnapshot(params: {
+    attempt: number;
+    phase: StreamPhase;
+    activeToolName?: string;
+    activeToolCallId?: string;
+    partialContent: string;
+    completionState: AttemptCompletionState;
+  }): StallRetrySnapshot | null {
+    const partialContent = this.truncateResumeText(params.partialContent, 600);
+    const recentExternalToolSummaries = params.completionState.recentExternalToolSummaries.slice(-4);
+    if (!partialContent && recentExternalToolSummaries.length === 0 && !params.activeToolName) {
+      return null;
+    }
+
+    return {
+      attempt: params.attempt,
+      phase: params.phase,
+      activeToolName: params.activeToolName,
+      activeToolCallId: params.activeToolCallId,
+      partialContent: partialContent || undefined,
+      recentExternalToolSummaries,
+    };
+  }
+
+  private buildStallRetryContextMessage(snapshot: StallRetrySnapshot | null): Message | null {
+    if (!snapshot) return null;
+
+    const lines = [
+      '[Watchdog resume context]',
+      `The previous attempt (${snapshot.attempt}) was interrupted after stalling while ${this.describeStreamLocation(snapshot.phase, snapshot.activeToolName)}.`,
+      'Resume from the most advanced confirmed state below. Do not restart already completed actions unless the current page state contradicts them.',
+    ];
+
+    if (snapshot.recentExternalToolSummaries.length > 0) {
+      lines.push('', 'Confirmed external tool results from the interrupted attempt:');
+      for (const summary of snapshot.recentExternalToolSummaries) {
+        const prefix = summary.isError ? '[error]' : '[ok]';
+        lines.push(`- ${summary.toolName}: ${prefix} ${summary.outputPreview}`);
+      }
+    }
+
+    if (snapshot.activeToolName) {
+      lines.push(
+        '',
+        `The attempt was last waiting on: ${snapshot.activeToolName}${snapshot.activeToolCallId ? ` (${snapshot.activeToolCallId})` : ''}.`,
+      );
+    }
+
+    if (snapshot.partialContent) {
+      lines.push(
+        '',
+        'Partial assistant text emitted before interruption:',
+        snapshot.partialContent,
+      );
+    }
+
+    return {
+      id: `system:stall-retry:${snapshot.attempt}`,
+      role: 'system',
+      content: lines.join('\n'),
+      timestamp: 0,
+      metadata: {
+        transient: true,
+        source: 'watchdog-resume',
+      },
+    };
+  }
+
+  private formatToolOutputPreview(output: string): string {
+    return this.truncateResumeText(output, 180)
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  private truncateResumeText(text: string, maxChars: number): string {
+    const normalized = text.replace(/\r\n/g, '\n').trim();
+    if (normalized.length <= maxChars) return normalized;
+    return `${normalized.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
+  }
+
+  private recordAttemptToolSummary(
+    completionState: AttemptCompletionState,
+    toolName: string,
+    result: ToolResult,
+  ): void {
+    completionState.recentExternalToolSummaries.push({
+      toolName,
+      outputPreview: this.formatToolOutputPreview(result.output),
+      isError: result.isError,
+    });
+    if (completionState.recentExternalToolSummaries.length > 6) {
+      completionState.recentExternalToolSummaries.splice(0, completionState.recentExternalToolSummaries.length - 6);
+    }
   }
 
   private evaluateCompletionGuard(
@@ -1055,7 +1169,8 @@ export class Orchestrator extends TypedEventEmitter {
 
     this.streamWatchdog = setInterval(() => {
       const elapsed = Date.now() - this.lastStreamActivityAt;
-      if (elapsed < this.streamStallThreshold) return;
+      const stallThresholdMs = this.getCurrentStallThresholdMs();
+      if (elapsed < stallThresholdMs) return;
       if (this.streamNudgeCount >= this.maxNudgeRetries) return;
       if (this._nudgeInFlight) return;
 
@@ -1146,6 +1261,7 @@ export class Orchestrator extends TypedEventEmitter {
 
     this.streamNudgeCount = 0;
     let completionRetryCount = 0;
+    let nextStallRetryContext: Message | null = null;
     const turnId = nanoid(10);
     const maxTotalAttempts = 1 + this.maxNudgeRetries + this.maxCompletionRetries;
     let loopTerminated = false;
@@ -1234,8 +1350,11 @@ export class Orchestrator extends TypedEventEmitter {
         if (this.systemContext) systemParts.push(this.systemContext);
         const fullSystemPrompt = systemParts.join('\n\n---\n\n');
 
+        const transientRetryMessages = nextStallRetryContext ? [nextStallRetryContext] : [];
+        nextStallRetryContext = null;
         const allMessages: Message[] = [
           { id: 'system', role: 'system' as const, content: fullSystemPrompt, timestamp: 0 },
+          ...transientRetryMessages,
           ...messages,
         ];
 
@@ -1353,6 +1472,7 @@ export class Orchestrator extends TypedEventEmitter {
               throwIfToolAttemptAborted();
 
               if (!isInternalTaskSignal) {
+                this.recordAttemptToolSummary(completionState, toolName, result);
                 this.conversations.appendMessage(convId, 'tool', result.output, {
                   toolResult: result,
                   metadata: {
@@ -1513,6 +1633,14 @@ export class Orchestrator extends TypedEventEmitter {
             && this.streamNudgeCount <= this.maxNudgeRetries;
 
           if (isNudgeAbort) {
+            nextStallRetryContext = this.buildStallRetryContextMessage(this.buildStallRetrySnapshot({
+              attempt: attemptNumber,
+              phase: failureState.phase,
+              activeToolName: failureState.activeToolName,
+              activeToolCallId: failureState.activeToolCallId,
+              partialContent: fullContent,
+              completionState,
+            }));
             // Inject nudge message and retry via the loop
             const systemMessage = this.conversations.appendMessage(
               convId, 'system',

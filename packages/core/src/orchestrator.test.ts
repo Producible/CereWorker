@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Orchestrator } from './orchestrator.js';
 import type { CerebrumAdapter, CerebellumAdapter, ToolDefinition } from './orchestrator.js';
 import { ConversationStore } from './conversation.js';
-import type { StreamFinishMetadata } from './types.js';
+import type { Message, StreamFinishMetadata } from './types.js';
 
 function createMockCerebrum(): CerebrumAdapter {
   return {
@@ -430,6 +430,130 @@ describe('Orchestrator', () => {
           ['system', '[Cerebellum] The turn ended repeatedly without a valid completion signal or final answer.'],
         ]);
       } finally {
+        await localOrch.stop();
+      }
+    });
+
+    it('injects transient resume context after a stalled retry', async () => {
+      vi.useFakeTimers();
+
+      const localOrch = new Orchestrator({ streamStallThreshold: 10, maxNudgeRetries: 1 });
+      try {
+        localOrch.registerTool('workTool', createTestTool('Opened the profile page.'));
+        localOrch.setCerebellum({
+          ...createMockCerebellum(),
+          verifyToolResult: vi.fn(async () => ({ passed: false, checks: [], modelVerdict: false })),
+        });
+
+        const attemptInputs: Message[][] = [];
+        let attempts = 0;
+        const cerebrum: CerebrumAdapter = {
+          stream: vi.fn(async (messages, _tools, callbacks, options) => {
+            attemptInputs.push(messages);
+            attempts++;
+
+            if (attempts === 1) {
+              await callbacks.onToolCall({ id: 'tool-1', name: 'workTool', args: {} });
+              callbacks.onChunk('Drafting the final report after opening the profile page.');
+
+              await new Promise<never>((_resolve, reject) => {
+                const signal = options?.abortSignal;
+                if (!signal) {
+                  reject(new Error('missing abort signal'));
+                  return;
+                }
+                const onAbort = () => reject(new Error('intentional nudge abort'));
+                if (signal.aborted) {
+                  onAbort();
+                  return;
+                }
+                signal.addEventListener('abort', onAbort, { once: true });
+              });
+              return;
+            }
+
+            callbacks.onFinish('Recovered reply');
+          }),
+          summarize: vi.fn(async () => 'summary'),
+        };
+        localOrch.setCerebrum(cerebrum);
+        localOrch.startConversation();
+
+        const sendPromise = localOrch.sendMessage('finish the task');
+        await vi.advanceTimersByTimeAsync(30_000);
+        await sendPromise;
+
+        expect(attempts).toBe(2);
+        const retryMessages = attemptInputs[1] ?? [];
+        const resumeMessage = retryMessages.find(
+          (message) => message.role === 'system' && message.metadata?.source === 'watchdog-resume',
+        );
+        expect(resumeMessage?.content).toContain('Opened the profile page.');
+        expect(resumeMessage?.content).toContain('Drafting the final report after opening the profile page.');
+        expect(localOrch.getMessages().some((message) => message.metadata?.source === 'watchdog-resume')).toBe(false);
+      } finally {
+        vi.useRealTimers();
+        await localOrch.stop();
+      }
+    });
+
+    it('uses a longer waiting_model stall threshold with backoff across retries', async () => {
+      vi.useFakeTimers();
+
+      const localOrch = new Orchestrator({ streamStallThreshold: 10, maxNudgeRetries: 2 });
+      try {
+        localOrch.setCerebellum({
+          ...createMockCerebellum(),
+          verifyToolResult: vi.fn(async () => ({ passed: false, checks: [], modelVerdict: false })),
+        });
+
+        let attempts = 0;
+        const nudgeTimes: number[] = [];
+        const cerebrum: CerebrumAdapter = {
+          stream: vi.fn(async (_messages, _tools, callbacks, options) => {
+            attempts++;
+            if (attempts < 3) {
+              await new Promise<never>((_resolve, reject) => {
+                const signal = options?.abortSignal;
+                if (!signal) {
+                  reject(new Error('missing abort signal'));
+                  return;
+                }
+                const onAbort = () => reject(new Error('intentional nudge abort'));
+                if (signal.aborted) {
+                  onAbort();
+                  return;
+                }
+                signal.addEventListener('abort', onAbort, { once: true });
+              });
+              return;
+            }
+
+            callbacks.onFinish('Recovered after patient retries.');
+          }),
+          summarize: vi.fn(async () => 'summary'),
+        };
+        localOrch.setCerebrum(cerebrum);
+        localOrch.startConversation();
+        localOrch.on('cerebrum:stall:nudge', () => nudgeTimes.push(Date.now()));
+
+        const sendPromise = localOrch.sendMessage('finish the task');
+        await vi.advanceTimersByTimeAsync(15_000);
+        expect(nudgeTimes).toEqual([]);
+
+        await vi.advanceTimersByTimeAsync(15_000);
+        expect(nudgeTimes).toHaveLength(1);
+
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(nudgeTimes).toHaveLength(1);
+
+        await vi.advanceTimersByTimeAsync(15_000);
+        expect(nudgeTimes).toHaveLength(2);
+
+        await sendPromise;
+        expect(attempts).toBe(3);
+      } finally {
+        vi.useRealTimers();
         await localOrch.stop();
       }
     });
