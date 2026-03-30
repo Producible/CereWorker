@@ -8,6 +8,7 @@ import { buildSystemPrompt } from './system-prompt.js';
 import type { Message, ToolCall, ToolResult, VerificationResult, AgentHealthAction, StreamPhase } from './types.js';
 import { estimateMessageTokens, shouldCompact, buildCompactionMessages } from './context.js';
 import type { InstanceStore, FineTuneRecord } from './instance.js';
+import { createAbortError, throwIfAborted } from './abort.js';
 import {
   ToolRuntime,
   type ToolExecutionContext,
@@ -833,6 +834,12 @@ export class Orchestrator extends TypedEventEmitter {
 
     const toolDefs = Object.fromEntries(this.tools);
     let fullContent = '';
+    const throwIfToolAttemptAborted = () => {
+      if (!isCurrentAttempt()) {
+        throw createAbortError('Tool execution aborted');
+      }
+      throwIfAborted(abortController.signal, 'Tool execution aborted');
+    };
 
     try {
       await this.cerebrum.stream(allMessages, toolDefs, {
@@ -843,11 +850,7 @@ export class Orchestrator extends TypedEventEmitter {
           this.emit({ type: 'message:cerebrum:chunk', chunk });
         },
         onToolCall: async (toolCall) => {
-          if (!isCurrentAttempt() || abortController.signal.aborted) {
-            const error = new Error('Tool execution aborted');
-            error.name = 'AbortError';
-            throw error;
-          }
+          throwIfToolAttemptAborted();
 
           this.markStreamWaitingTool(toolCall);
           const requestedToolName = toolCall.name;
@@ -864,11 +867,7 @@ export class Orchestrator extends TypedEventEmitter {
             abortSignal: abortController.signal,
           });
 
-          if (abortController.signal.aborted) {
-            const error = new Error('Tool execution aborted');
-            error.name = 'AbortError';
-            throw error;
-          }
+          throwIfAborted(abortController.signal, 'Tool execution aborted');
 
           this.markStreamWaitingModel();
           this.emit({ type: 'tool:end', result });
@@ -876,11 +875,7 @@ export class Orchestrator extends TypedEventEmitter {
           // Cerebellum verification (non-blocking)
           if (this.cerebellum?.isConnected() && this.verificationEnabled) {
             try {
-              if (abortController.signal.aborted) {
-                const error = new Error('Tool execution aborted');
-                error.name = 'AbortError';
-                throw error;
-              }
+              throwIfAborted(abortController.signal, 'Tool execution aborted');
 
               this.emit({ type: 'verification:start', callId: toolCall.id, toolName });
 
@@ -902,11 +897,7 @@ export class Orchestrator extends TypedEventEmitter {
 
               const verification = await Promise.race([verifyPromise, timeoutPromise]);
 
-              if (abortController.signal.aborted) {
-                const error = new Error('Tool execution aborted');
-                error.name = 'AbortError';
-                throw error;
-              }
+              throwIfAborted(abortController.signal, 'Tool execution aborted');
 
               if (verification && !verification.passed) {
                 const failedChecks = verification.checks
@@ -931,11 +922,7 @@ export class Orchestrator extends TypedEventEmitter {
             }
           }
 
-          if (!isCurrentAttempt() || abortController.signal.aborted) {
-            const error = new Error('Tool execution aborted');
-            error.name = 'AbortError';
-            throw error;
-          }
+          throwIfToolAttemptAborted();
 
           this.conversations.appendMessage(convId, 'tool', result.output, {
             toolResult: result,

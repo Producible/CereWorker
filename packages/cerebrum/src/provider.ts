@@ -9,7 +9,13 @@ import {
   OPENAI_CODEX_BASE_URL,
   type ProviderRuntimeFamily,
 } from '@cereworker/config';
-import type { Message, ToolCall as CWToolCall, ToolDefinition } from '@cereworker/core';
+import {
+  raceWithAbort,
+  throwIfAborted,
+  type Message,
+  type ToolCall as CWToolCall,
+  type ToolDefinition,
+} from '@cereworker/core';
 import type { CerebrumConfig, ProviderConfig, StreamCallbacks } from './types.js';
 import { withRetry, type RetryOptions } from './retry.js';
 import { buildCompactionPrompt } from './context.js';
@@ -495,7 +501,7 @@ export class CerebrumProvider {
 
         try {
         while (true) {
-          if (abortSignal?.aborted) throw createAbortError('Stream aborted');
+          throwIfAborted(abortSignal, 'Stream aborted');
 
           const nextResult = abortSignal
             ? await raceWithAbort(iterator.next(), abortSignal, 'Stream aborted')
@@ -1317,40 +1323,4 @@ function isLegacyParameterDescriptor(value: unknown): value is Record<string, un
   additionalProperties?: unknown;
 } {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function raceWithAbort<T>(promise: Promise<T>, abortSignal: AbortSignal, message: string): Promise<T> {
-  if (abortSignal.aborted) {
-    return Promise.reject(createAbortError(message));
-  }
-
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => {
-      cleanup();
-      reject(createAbortError(message));
-    };
-
-    const cleanup = () => {
-      abortSignal.removeEventListener('abort', onAbort);
-    };
-
-    abortSignal.addEventListener('abort', onAbort, { once: true });
-
-    promise.then(
-      (value) => {
-        cleanup();
-        resolve(value);
-      },
-      (error) => {
-        cleanup();
-        reject(error);
-      },
-    );
-  });
-}
-
-function createAbortError(message: string): Error {
-  const error = new Error(message);
-  error.name = 'AbortError';
-  return error;
 }

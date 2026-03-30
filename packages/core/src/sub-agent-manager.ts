@@ -11,6 +11,7 @@ import {
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { ConversationStore } from './conversation.js';
+import { createAbortError, throwIfAborted } from './abort.js';
 import { ToolRuntime } from './tool-runtime.js';
 import type {
   Message,
@@ -296,11 +297,11 @@ export class SubAgentManager {
 
       await new Promise<void>((resolve, reject) => {
         if (instance.abortController.signal.aborted) {
-          reject(new Error('Agent aborted'));
+          reject(createAbortError('Agent aborted'));
           return;
         }
 
-        const abortHandler = () => reject(new Error('Agent aborted'));
+        const abortHandler = () => reject(createAbortError('Agent aborted'));
         instance.abortController.signal.addEventListener('abort', abortHandler, { once: true });
 
         this.cerebrum
@@ -322,11 +323,7 @@ export class SubAgentManager {
                 abortSignal: instance.abortController.signal,
               });
 
-              if (instance.abortController.signal.aborted) {
-                const error = new Error('Agent aborted');
-                error.name = 'AbortError';
-                throw error;
-              }
+              throwIfAborted(instance.abortController.signal, 'Agent aborted');
 
               instance.conversation.appendMessage(instance.conversationId, 'tool', result.output, {
                 toolResult: result,

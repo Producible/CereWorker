@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { ToolCall, ToolResult } from './types.js';
 import type { ToolDefinition } from './orchestrator.js';
+import { isAbortError, raceWithAbort, throwIfAborted } from './abort.js';
 
 export type ToolRuntimeEngine = 'legacy' | 'enhanced';
 export type ToolLoopDetectorKind =
@@ -196,9 +197,7 @@ export class ToolRuntime {
 
     let rawResult: unknown;
     try {
-      if (params.abortSignal?.aborted) {
-        throw createAbortError('Tool execution aborted');
-      }
+      throwIfAborted(params.abortSignal, 'Tool execution aborted');
 
       const execution = Promise.resolve(tool.execute(args, context));
       rawResult = params.abortSignal
@@ -595,44 +594,4 @@ function normalizeToolName(name: string): string {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
-}
-
-function raceWithAbort<T>(promise: Promise<T>, abortSignal: AbortSignal, message: string): Promise<T> {
-  if (abortSignal.aborted) {
-    return Promise.reject(createAbortError(message));
-  }
-
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => {
-      cleanup();
-      reject(createAbortError(message));
-    };
-
-    const cleanup = () => {
-      abortSignal.removeEventListener('abort', onAbort);
-    };
-
-    abortSignal.addEventListener('abort', onAbort, { once: true });
-
-    promise.then(
-      (value) => {
-        cleanup();
-        resolve(value);
-      },
-      (error) => {
-        cleanup();
-        reject(error);
-      },
-    );
-  });
-}
-
-function createAbortError(message: string): Error {
-  const error = new Error(message);
-  error.name = 'AbortError';
-  return error;
-}
-
-function isAbortError(error: unknown): boolean {
-  return error instanceof Error && error.name === 'AbortError';
 }
