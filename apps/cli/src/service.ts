@@ -88,6 +88,8 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
   const execFileSyncImpl = deps.execFileSync ?? execFileSync;
   const spawnImpl = deps.spawn ?? spawn;
   const homeDir = deps.homeDir ?? homedir;
+  const dataDir = join(homeDir(), '.cereworker');
+  const dataDbPath = join(dataDir, 'conversations.db');
   const createCerebrumImpl = deps.createCerebrum
     ?? ((providerConfig, options) => new CerebrumProvider(providerConfig, options));
   const createChannelManagerImpl = deps.createChannelManager ?? createChannelManager;
@@ -95,10 +97,10 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
     ?? ((address: string) => new CerebellumClient(address));
 
   // Create persistent conversation store
-  const conversationStore = new ConversationStore();
+  const conversationStore = new ConversationStore(dataDbPath);
 
   // Instance identity
-  const instanceStore = new InstanceStore();
+  const instanceStore = new InstanceStore(dataDir);
   let instance = instanceStore.load();
   let needsDiscovery = false;
   if (instance) {
@@ -406,7 +408,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
   const channelManager = createChannelManagerImpl(config, CHANNEL_COMMANDS);
 
   // Create pairing store and wire to channel manager
-  const pairingStore = new PairingStore();
+  const pairingStore = new PairingStore(dataDbPath);
   channelManager.setDmPolicy(config.channels.dmPolicy);
   channelManager.setPairingProvider(pairingStore);
 
@@ -1132,7 +1134,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
   // --- Proactive Controller ---
   let proactiveController: ProactiveController | null = null;
   if (config.proactive.enabled) {
-    const planStore = new PlanStore();
+    const planStore = new PlanStore(dataDbPath);
 
     proactiveController = new ProactiveController({
       planStore,

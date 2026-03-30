@@ -381,6 +381,59 @@ describe('Orchestrator', () => {
       expect(messages.some((message) => message.role === 'system' && message.content.includes('task_complete or task_blocked'))).toBe(false);
     });
 
+    it('exhausts completion retries without consuming watchdog retries', async () => {
+      const localOrch = new Orchestrator({ maxNudgeRetries: 1 });
+      try {
+        localOrch.registerTool('workTool', createTestTool('worked'));
+        const cerebrum: CerebrumAdapter = {
+          stream: vi.fn(async (_messages, _tools, callbacks) => {
+            const callId = `tool-${Math.random().toString(36).slice(2, 8)}`;
+            await callbacks.onToolCall({ id: callId, name: 'workTool', args: {} });
+            callbacks.onFinish('', [{ id: callId, name: 'workTool', args: {} }], makeFinishMeta({
+              finishReason: 'tool-calls',
+              rawFinishReason: 'tool_calls',
+              stepFinishReasons: ['tool-calls'],
+              toolCallCount: 1,
+              hadToolActivity: true,
+              textChars: 0,
+            }));
+          }),
+          summarize: vi.fn(async () => 'summary'),
+        };
+        localOrch.setCerebrum(cerebrum);
+        localOrch.startConversation();
+
+        const completionStages: string[] = [];
+        const watchdogStages: string[] = [];
+        const errors: Error[] = [];
+        localOrch.on('cerebrum:completion', ({ stage }) => completionStages.push(stage));
+        localOrch.on('cerebrum:watchdog', ({ stage }) => watchdogStages.push(stage));
+        localOrch.on('error', ({ error }) => errors.push(error));
+
+        await localOrch.sendMessage('finish the task');
+
+        expect(cerebrum.stream).toHaveBeenCalledTimes(2);
+        expect(completionStages).toEqual([
+          'guard_triggered',
+          'retry_started',
+          'guard_triggered',
+          'retry_failed',
+        ]);
+        expect(watchdogStages).toEqual([]);
+        expect(errors).toHaveLength(1);
+        expect(errors[0]?.message).toBe('Turn ended without a valid completion signal or final answer.');
+        expect(localOrch.getMessages().map((message) => [message.role, message.content])).toEqual([
+          ['user', 'finish the task'],
+          ['tool', 'worked'],
+          ['system', '[Cerebellum] Your last turn ended without a final answer. Continue from where you left off and end by calling task_complete or task_blocked before your final answer.'],
+          ['tool', 'worked'],
+          ['system', '[Cerebellum] The turn ended repeatedly without a valid completion signal or final answer.'],
+        ]);
+      } finally {
+        await localOrch.stop();
+      }
+    });
+
     it('emits error event on stream failure', async () => {
       const cerebrum = createMockCerebrum();
       (cerebrum.stream as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('stream fail'));

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -120,6 +120,22 @@ describe('createService integration', () => {
     ]);
 
     await service.shutdown();
+  });
+
+  it('uses the configured home directory for persisted service state', async () => {
+    const homeOne = join(homeDir, 'one');
+    const homeTwo = join(homeDir, 'two');
+    mkdirSync(homeOne, { recursive: true });
+    mkdirSync(homeTwo, { recursive: true });
+
+    const firstService = createService(makeConfig(), { homeDir: () => homeOne });
+    const firstConversationId = firstService.orchestrator.startConversation();
+    expect(firstService.orchestrator.getConversation(firstConversationId)).toBeDefined();
+    await firstService.shutdown();
+
+    const secondService = createService(makeConfig(), { homeDir: () => homeTwo });
+    expect(secondService.orchestrator.getConversation(firstConversationId)).toBeUndefined();
+    await secondService.shutdown();
   });
 
   it('retries when a streamed tool call hangs until the watchdog aborts it', async () => {
@@ -331,6 +347,121 @@ describe('createService integration', () => {
       ['system', '[Cerebellum] Your last turn ended without a final answer. Continue from where you left off and end by calling task_complete or task_blocked before your final answer.'],
       ['tool', 'verified work result'],
       ['cerebrum', 'Completed with evidence.'],
+    ]);
+
+    await service.shutdown();
+  });
+
+  it('keeps stall retries and completion retries independent across a mixed recovery path', async () => {
+    vi.useFakeTimers();
+
+    const service = createService(makeConfig());
+    service.orchestrator.startConversation();
+    const cerebellum = createWatchdogCerebellum();
+    service.orchestrator.setCerebellum(cerebellum, { enabled: false });
+    service.orchestrator.registerTool('workTool', {
+      description: 'perform work',
+      parameters: {},
+      execute: async () => 'verified work result',
+    });
+
+    let attempts = 0;
+    service.cerebrum.stream = vi.fn(async (_messages, _tools, callbacks, options) => {
+      attempts++;
+
+      if (attempts === 1) {
+        await new Promise<never>((_resolve, reject) => {
+          const signal = options?.abortSignal;
+          if (!signal) {
+            reject(new Error('missing abort signal'));
+            return;
+          }
+          const onAbort = () => {
+            callbacks.onError(new Error('intentional nudge abort'));
+            reject(new Error('intentional nudge abort'));
+          };
+          if (signal.aborted) {
+            onAbort();
+            return;
+          }
+          signal.addEventListener('abort', onAbort, { once: true });
+        });
+        return;
+      }
+
+      if (attempts === 2) {
+        await callbacks.onToolCall({ id: 'tool-1', name: 'workTool', args: {} });
+        callbacks.onFinish(
+          '',
+          [{ id: 'tool-1', name: 'workTool', args: {} }],
+          {
+            finishReason: 'tool-calls',
+            rawFinishReason: 'tool_calls',
+            stepFinishReasons: ['tool-calls'],
+            chunkCount: 1,
+            textChars: 0,
+            toolCallCount: 1,
+            hadToolActivity: true,
+            stepCount: 1,
+          },
+        );
+        return;
+      }
+
+      await callbacks.onToolCall({ id: 'tool-2', name: 'workTool', args: {} });
+      await callbacks.onToolCall({
+        id: 'sig-1',
+        name: 'task_complete',
+        args: { summary: 'done', evidence: 'Observed verified work result.' },
+      });
+      callbacks.onFinish(
+        'Completed after mixed retries.',
+        [
+          { id: 'tool-2', name: 'workTool', args: {} },
+          { id: 'sig-1', name: 'task_complete', args: { summary: 'done', evidence: 'Observed verified work result.' } },
+        ],
+        {
+          finishReason: 'stop',
+          rawFinishReason: 'stop',
+          stepFinishReasons: ['tool-calls', 'stop'],
+          chunkCount: 2,
+          textChars: 'Completed after mixed retries.'.length,
+          toolCallCount: 2,
+          hadToolActivity: true,
+          stepCount: 2,
+        },
+      );
+    });
+
+    const watchdogStages: string[] = [];
+    const completionStages: string[] = [];
+    service.orchestrator.on('cerebrum:watchdog', ({ stage }) => watchdogStages.push(stage));
+    service.orchestrator.on('cerebrum:completion', ({ stage }) => completionStages.push(stage));
+
+    const sendPromise = service.orchestrator.sendMessage('finish the task');
+    await vi.advanceTimersByTimeAsync(15_000);
+    await sendPromise;
+
+    expect(attempts).toBe(3);
+    expect(watchdogStages).toEqual([
+      'stalled',
+      'nudge_requested',
+      'abort_issued',
+      'retry_started',
+    ]);
+    expect(completionStages).toEqual([
+      'guard_triggered',
+      'retry_started',
+      'signal_recorded',
+      'retry_recovered',
+    ]);
+    expect(service.orchestrator.getMessages().map((message) => [message.role, message.content])).toEqual([
+      ['user', 'finish the task'],
+      ['system', '[Cerebellum] You stopped mid-response. Continue from where you left off.'],
+      ['tool', 'verified work result'],
+      ['system', '[Cerebellum] Your last turn ended without a final answer. Continue from where you left off and end by calling task_complete or task_blocked before your final answer.'],
+      ['tool', 'verified work result'],
+      ['cerebrum', 'Completed after mixed retries.'],
     ]);
 
     await service.shutdown();

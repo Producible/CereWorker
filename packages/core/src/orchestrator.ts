@@ -48,6 +48,8 @@ interface CompletionGuardFailure {
   signal: CompletionSignal;
 }
 
+type RetryCause = 'stall' | 'completion';
+
 export interface CerebrumAdapter {
   stream(
     messages: Message[],
@@ -188,6 +190,7 @@ export class Orchestrator extends TypedEventEmitter {
   private streamNudgeCount = 0;
   private streamStallThreshold = 30_000;
   private maxNudgeRetries = 2;
+  private maxCompletionRetries = 2;
   private streamPhase: StreamPhase = 'idle';
   private activeToolCall: { id: string; name: string; startedAt: number } | null = null;
   private currentStreamTurn: { turnId: string; attempt: number; conversationId: string } | null = null;
@@ -213,7 +216,10 @@ export class Orchestrator extends TypedEventEmitter {
       this.compactionConfig = { ...this.compactionConfig, ...options.compaction };
     }
     if (options?.streamStallThreshold) this.streamStallThreshold = options.streamStallThreshold * 1000;
-    if (options?.maxNudgeRetries) this.maxNudgeRetries = options.maxNudgeRetries;
+    if (options?.maxNudgeRetries) {
+      this.maxNudgeRetries = options.maxNudgeRetries;
+      this.maxCompletionRetries = options.maxNudgeRetries;
+    }
   }
 
   setCerebrum(cerebrum: CerebrumAdapter): void {
@@ -956,12 +962,11 @@ export class Orchestrator extends TypedEventEmitter {
     completionState: AttemptCompletionState,
   ): CompletionGuardFailure | null {
     const trimmedContent = displayContent.trim();
-    const hadExternalToolActivity = completionState.externalToolCallCount > 0
-      || completionState.successfulExternalToolCount > 0;
+    const hadExternalToolActivity = completionState.externalToolCallCount > 0;
     const endedOnToolCalls = finishMeta?.finishReason === 'tool-calls'
       || finishMeta?.stepFinishReasons.at(-1) === 'tool-calls';
 
-    if (trimmedContent.length === 0 && (hadExternalToolActivity || finishMeta?.hadToolActivity)) {
+    if (trimmedContent.length === 0 && hadExternalToolActivity) {
       return {
         message: 'Turn ended after tool activity without a final answer.',
         signal: completionState.signal,
@@ -1140,15 +1145,21 @@ export class Orchestrator extends TypedEventEmitter {
     }
 
     this.streamNudgeCount = 0;
+    let completionRetryCount = 0;
     const turnId = nanoid(10);
+    const maxTotalAttempts = 1 + this.maxNudgeRetries + this.maxCompletionRetries;
+    let loopTerminated = false;
+    let nextRetryCause: RetryCause | null = null;
 
     try {
-      // Retry loop — nudge aborts land here for retry
-      for (let attempt = 0; attempt <= this.maxNudgeRetries; attempt++) {
+      for (let attempt = 0; attempt < maxTotalAttempts; attempt++) {
         const abortController = new AbortController();
         const attemptNumber = attempt + 1;
+        const retryCause = nextRetryCause;
+        nextRetryCause = null;
         const completionState = this.createAttemptCompletionState();
         let completionGuardFailure: CompletionGuardFailure | null = null;
+        const stallRetryCountAtStart = this.streamNudgeCount;
         const isCurrentAttempt = () => this.abortController === abortController;
         this.abortController = abortController;
         this.currentAttemptCompletionState = completionState;
@@ -1157,17 +1168,13 @@ export class Orchestrator extends TypedEventEmitter {
           attempt: attemptNumber,
           conversationId: convId,
         };
-        if (attempt > 0) {
-          this.emitWatchdog(
-            'retry_started',
-            `Retrying stalled turn with attempt ${attemptNumber}.`,
-            { level: 'info' },
-          );
-        }
         log.info('stream_started', {
           turnId,
           attempt: attemptNumber,
           conversationId: convId,
+          stallRetryCount: this.streamNudgeCount,
+          completionRetryCount,
+          retryCause,
         });
         this.emit({ type: 'message:cerebrum:start', conversationId: convId });
         this.startStreamWatchdog();
@@ -1423,22 +1430,23 @@ export class Orchestrator extends TypedEventEmitter {
                 turnId,
                 attempt: attemptNumber,
                 conversationId: convId,
+                stallRetryCount: this.streamNudgeCount,
+                completionRetryCount,
+                retryCause,
               });
-              if (attempt > 0) {
-                if (completionState.signal !== 'none') {
-                  this.emitCompletionTrace(
-                    'retry_recovered',
-                    `Retry attempt ${attemptNumber} produced a valid completion.`,
-                    completionState.signal,
-                    'info',
-                  );
-                } else {
-                  this.emitWatchdog(
-                    'retry_recovered',
-                    `Retry attempt ${attemptNumber} recovered the stalled turn.`,
-                    { level: 'info' },
-                  );
-                }
+              if (retryCause === 'completion') {
+                this.emitCompletionTrace(
+                  'retry_recovered',
+                  `Completion retry ${completionRetryCount}/${this.maxCompletionRetries} recovered on attempt ${attemptNumber}.`,
+                  completionState.signal,
+                  'info',
+                );
+              } else if (retryCause === 'stall') {
+                this.emitWatchdog(
+                  'retry_recovered',
+                  `Stall retry ${this.streamNudgeCount}/${this.maxNudgeRetries} recovered on attempt ${attemptNumber}.`,
+                  { level: 'info' },
+                );
               }
             },
             onError: (error) => {
@@ -1455,7 +1463,8 @@ export class Orchestrator extends TypedEventEmitter {
           const completionFailure = completionGuardFailure as CompletionGuardFailure | null;
           if (completionFailure !== null) {
             const completionSignal = completionFailure.signal;
-            if (attempt < this.maxNudgeRetries) {
+            if (completionRetryCount < this.maxCompletionRetries) {
+              completionRetryCount++;
               const systemMessage = this.conversations.appendMessage(
                 convId,
                 'system',
@@ -1464,10 +1473,11 @@ export class Orchestrator extends TypedEventEmitter {
               this.emit({ type: 'message:system', message: systemMessage });
               this.emitCompletionTrace(
                 'retry_started',
-                `Retrying attempt ${attemptNumber + 1} after incomplete completion.`,
+                `Retrying attempt ${attemptNumber + 1} after incomplete completion (${completionRetryCount}/${this.maxCompletionRetries}).`,
                 completionSignal,
                 'info',
               );
+              nextRetryCause = 'completion';
               continue;
             }
 
@@ -1479,7 +1489,7 @@ export class Orchestrator extends TypedEventEmitter {
             this.emit({ type: 'message:system', message: diagnosticMessage });
             this.emitCompletionTrace(
               'retry_failed',
-              'The turn ended repeatedly without a valid completion signal or final answer.',
+              `Completion retries exhausted after ${completionRetryCount}/${this.maxCompletionRetries}: ${completionFailure.message}`,
               completionSignal,
               'error',
             );
@@ -1487,22 +1497,34 @@ export class Orchestrator extends TypedEventEmitter {
               type: 'error',
               error: new Error('Turn ended without a valid completion signal or final answer.'),
             });
+            loopTerminated = true;
             break;
           }
+          loopTerminated = true;
+          break; // success — exit retry loop
         } catch (error) {
           const failureState = this.getStreamState();
           this.stopStreamWatchdog();
 
           // Check if this was a nudge-abort (not emergency stop, not a real error)
-          const isNudgeAbort = abortController.signal.aborted && this.streamNudgeCount > 0 && this.streamNudgeCount <= this.maxNudgeRetries;
+          const isNudgeAbort =
+            abortController.signal.aborted
+            && this.streamNudgeCount > stallRetryCountAtStart
+            && this.streamNudgeCount <= this.maxNudgeRetries;
 
           if (isNudgeAbort) {
-            // Inject nudge message and retry via the for-loop
+            // Inject nudge message and retry via the loop
             const systemMessage = this.conversations.appendMessage(
               convId, 'system',
               '[Cerebellum] You stopped mid-response. Continue from where you left off.',
             );
             this.emit({ type: 'message:system', message: systemMessage });
+            this.emitWatchdog(
+              'retry_started',
+              `Retrying stalled turn with attempt ${attemptNumber + 1} (stall retry ${this.streamNudgeCount}/${this.maxNudgeRetries}).`,
+              { level: 'info' },
+            );
+            nextRetryCause = 'stall';
             continue; // retry loop
           }
 
@@ -1511,14 +1533,22 @@ export class Orchestrator extends TypedEventEmitter {
             const err = new Error('Cerebellum disconnected during active response. Restart it with: docker compose up -d cerebellum');
             log.error('Cerebellum disconnected mid-stream', { error: err.message });
             this.emit({ type: 'error', error: err });
+            loopTerminated = true;
             break;
           }
 
           const err = error instanceof Error ? error : new Error(String(error));
-          if (attempt > 0) {
+          if (retryCause === 'completion') {
+            this.emitCompletionTrace(
+              'retry_failed',
+              `Completion retry attempt ${attemptNumber} failed: ${err.message}`,
+              completionState.signal,
+              'error',
+            );
+          } else if (retryCause === 'stall') {
             this.emitWatchdog(
               'retry_failed',
-              `Retry attempt ${attemptNumber} failed: ${err.message}`,
+              `Stall retry attempt ${attemptNumber} failed: ${err.message}`,
               { level: 'error' },
             );
           }
@@ -1531,14 +1561,29 @@ export class Orchestrator extends TypedEventEmitter {
             activeToolName: failureState.activeToolName,
             activeToolCallId: failureState.activeToolCallId,
             activeToolStartedAt: failureState.activeToolStartedAt,
+            stallRetryCount: this.streamNudgeCount,
+            completionRetryCount,
+            retryCause,
           });
           this.emit({ type: 'error', error: err });
+          loopTerminated = true;
+          break;
         } finally {
           this.currentAttemptCompletionState = null;
         }
+      }
 
-        break; // success — exit retry loop
-      } // end retry for-loop
+      if (!loopTerminated) {
+        const err = new Error(`Retry safety limit reached after ${maxTotalAttempts} attempts.`);
+        log.error('Send message failed', {
+          error: err.message,
+          turnId,
+          conversationId: convId,
+          stallRetryCount: this.streamNudgeCount,
+          completionRetryCount,
+        });
+        this.emit({ type: 'error', error: err });
+      }
     } finally {
       this.currentStreamTurn = null;
     }
