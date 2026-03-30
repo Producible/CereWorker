@@ -362,6 +362,178 @@ describe('createService integration', () => {
     await service.shutdown();
   });
 
+  it('resumes a long browser-style task from preserved checkpoints instead of restarting cold', async () => {
+    const service = createService(makeConfig());
+    service.orchestrator.startConversation();
+    service.orchestrator.registerTool('browserConnect', {
+      description: 'connect browser',
+      parameters: {},
+      execute: async () => ({
+        output: 'Connected to Chrome via extension',
+        metadata: {
+          resume: {
+            action: 'connect_browser',
+            summary: 'Connected to Chrome via extension.',
+            stateChanging: true,
+          },
+        },
+      }),
+    });
+    service.orchestrator.registerTool('browserNavigateProfile', {
+      description: 'open profile',
+      parameters: {},
+      execute: async () => ({
+        output: 'Navigated to https://x.com/CereWorkerX - Title: Profile / X',
+        metadata: {
+          resume: {
+            action: 'navigate',
+            summary: 'Opened the CereWorkerX profile on X.',
+            url: 'https://x.com/CereWorkerX',
+            stateChanging: true,
+          },
+        },
+      }),
+    });
+    service.orchestrator.registerTool('browserReadTimeline', {
+      description: 'read timeline',
+      parameters: {},
+      execute: async () => ({
+        output: 'Reviewed recent profile posts.',
+        metadata: {
+          resume: {
+            action: 'read_page_text',
+            summary: 'Reviewed recent profile posts for continuity.',
+            url: 'https://x.com/CereWorkerX',
+            stateChanging: false,
+          },
+        },
+      }),
+    });
+    service.orchestrator.registerTool('browserNavigateHome', {
+      description: 'open home',
+      parameters: {},
+      execute: async () => ({
+        output: 'Navigated to https://x.com/home - Title: Home / X',
+        metadata: {
+          resume: {
+            action: 'navigate',
+            summary: 'Returned to the X home timeline.',
+            url: 'https://x.com/home',
+            stateChanging: true,
+          },
+        },
+      }),
+    });
+    service.orchestrator.registerTool('browserLikePost', {
+      description: 'like a post',
+      parameters: {},
+      execute: async () => ({
+        output: 'clicked like',
+        metadata: {
+          resume: {
+            action: 'click_text',
+            summary: 'Liked one Science girl post on the home timeline.',
+            url: 'https://x.com/home',
+            targetText: 'Like',
+            stateChanging: true,
+          },
+        },
+      }),
+    });
+
+    const attemptInputs: Array<Array<{ role: string; content: string; source?: unknown }>> = [];
+    let attempts = 0;
+    service.cerebrum.stream = vi.fn(async (messages, _tools, callbacks) => {
+      attemptInputs.push(messages.map((message: { role: string; content: string; metadata?: Record<string, unknown> }) => ({
+        role: message.role,
+        content: message.content,
+        source: message.metadata?.source,
+      })));
+      attempts++;
+
+      if (attempts === 1) {
+        await callbacks.onToolCall({ id: 'tool-1', name: 'browserConnect', args: {} });
+        await callbacks.onToolCall({ id: 'tool-2', name: 'browserNavigateProfile', args: {} });
+        await callbacks.onToolCall({
+          id: 'cp-1',
+          name: 'task_checkpoint',
+          args: { step: 'session verified', status: 'done', evidence: 'Connected to Chrome and opened the CereWorkerX profile.' },
+        });
+        await callbacks.onToolCall({ id: 'tool-3', name: 'browserReadTimeline', args: {} });
+        await callbacks.onToolCall({ id: 'tool-4', name: 'browserNavigateHome', args: {} });
+        await callbacks.onToolCall({ id: 'tool-5', name: 'browserLikePost', args: {} });
+        await callbacks.onToolCall({
+          id: 'cp-2',
+          name: 'task_checkpoint',
+          args: { step: 'engagement pass', status: 'done', evidence: 'Liked one Science girl post on the home timeline.' },
+        });
+        callbacks.onFinish(
+          '',
+          [
+            { id: 'tool-1', name: 'browserConnect', args: {} },
+            { id: 'tool-2', name: 'browserNavigateProfile', args: {} },
+            { id: 'cp-1', name: 'task_checkpoint', args: { step: 'session verified', status: 'done', evidence: 'Connected to Chrome and opened the CereWorkerX profile.' } },
+            { id: 'tool-3', name: 'browserReadTimeline', args: {} },
+            { id: 'tool-4', name: 'browserNavigateHome', args: {} },
+            { id: 'tool-5', name: 'browserLikePost', args: {} },
+            { id: 'cp-2', name: 'task_checkpoint', args: { step: 'engagement pass', status: 'done', evidence: 'Liked one Science girl post on the home timeline.' } },
+          ],
+          {
+            finishReason: 'tool-calls',
+            rawFinishReason: 'tool_calls',
+            stepFinishReasons: ['tool-calls'],
+            chunkCount: 1,
+            textChars: 0,
+            toolCallCount: 7,
+            hadToolActivity: true,
+            stepCount: 1,
+          },
+        );
+        return;
+      }
+
+      await callbacks.onToolCall({
+        id: 'sig-1',
+        name: 'task_complete',
+        args: {
+          summary: 'Finished the daily X run.',
+          evidence: 'The retry ledger already shows the session verification, profile continuity check, and confirmed like.',
+        },
+      });
+      callbacks.onFinish(
+        'Completed from preserved browser progress.',
+        [{ id: 'sig-1', name: 'task_complete', args: { summary: 'Finished the daily X run.', evidence: 'The retry ledger already shows the session verification, profile continuity check, and confirmed like.' } }],
+        {
+          finishReason: 'stop',
+          rawFinishReason: 'stop',
+          stepFinishReasons: ['stop'],
+          chunkCount: 1,
+          textChars: 'Completed from preserved browser progress.'.length,
+          toolCallCount: 1,
+          hadToolActivity: true,
+          stepCount: 1,
+        },
+      );
+    });
+
+    await service.orchestrator.sendMessage('run the X task');
+
+    expect(attempts).toBe(2);
+    const resumeMessage = attemptInputs[1]?.find((message) => message.source === 'completion-resume');
+    expect(resumeMessage?.content).toContain('session verified');
+    expect(resumeMessage?.content).toContain('engagement pass');
+    expect(resumeMessage?.content).toContain('Opened the CereWorkerX profile on X.');
+    expect(resumeMessage?.content).toContain('Liked one Science girl post on the home timeline.');
+    expect(resumeMessage?.content).toContain('Current URL: https://x.com/home');
+    expect(attemptInputs[1]?.filter((message) => message.role === 'tool')).toHaveLength(0);
+    expect(service.orchestrator.getMessages().map((message) => [message.role, message.content])).toEqual([
+      ['user', 'run the X task'],
+      ['cerebrum', 'Completed from preserved browser progress.'],
+    ]);
+
+    await service.shutdown();
+  });
+
   it('keeps stall retries and completion retries independent across a mixed recovery path', async () => {
     vi.useFakeTimers();
 

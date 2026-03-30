@@ -13,6 +13,11 @@ import type {
   AgentHealthAction,
   StreamPhase,
   StreamFinishMetadata,
+  BrowserStateSnapshot,
+  BrowserTabSnapshot,
+  ProgressEntry,
+  TaskCheckpoint,
+  TaskCheckpointStatus,
 } from './types.js';
 import { estimateMessageTokens, shouldCompact, buildCompactionMessages } from './context.js';
 import type { InstanceStore, FineTuneRecord } from './instance.js';
@@ -27,11 +32,32 @@ import {
 const log = createLogger('orchestrator');
 const TASK_COMPLETE_TOOL = 'task_complete';
 const TASK_BLOCKED_TOOL = 'task_blocked';
-const INTERNAL_TASK_SIGNAL_TOOL_NAMES = new Set([TASK_COMPLETE_TOOL, TASK_BLOCKED_TOOL]);
+const TASK_CHECKPOINT_TOOL = 'task_checkpoint';
+const INTERNAL_TASK_TOOL_NAMES = new Set([TASK_COMPLETE_TOOL, TASK_BLOCKED_TOOL, TASK_CHECKPOINT_TOOL]);
 const COMPLETION_RETRY_PROMPT =
   '[Cerebellum] Your last turn ended without a final answer. Continue from where you left off and end by calling task_complete or task_blocked before your final answer.';
+const READ_ONLY_TOOL_NAMES = new Set([
+  'browserGetText',
+  'browserGetUrl',
+  'browserListTabs',
+  'browserWait',
+  'browserEval',
+  'readFile',
+  'listDirectory',
+  'searchFiles',
+  'glob',
+  'memory_read',
+  'webSearch',
+  'httpFetch',
+]);
 
 type CompletionSignal = 'none' | 'complete' | 'blocked';
+
+interface TurnContinuityState {
+  progressLedger: ProgressEntry[];
+  taskCheckpoints: TaskCheckpoint[];
+  browserState: BrowserStateSnapshot;
+}
 
 interface AttemptCompletionState {
   signal: CompletionSignal;
@@ -41,7 +67,7 @@ interface AttemptCompletionState {
   successfulExternalToolCount: number;
   externalToolCallCount: number;
   internalToolCallCount: number;
-  recentExternalToolSummaries: Array<{ toolName: string; outputPreview: string; isError: boolean }>;
+  continuity: TurnContinuityState;
 }
 
 interface CompletionGuardFailure {
@@ -50,22 +76,41 @@ interface CompletionGuardFailure {
 }
 
 interface StallRetrySnapshot {
+  cause: 'stall';
   attempt: number;
   phase: StreamPhase;
   activeToolName?: string;
   activeToolCallId?: string;
   partialContent?: string;
-  recentExternalToolSummaries: Array<{ toolName: string; outputPreview: string; isError: boolean }>;
+  progressEntries: ProgressEntry[];
+  taskCheckpoints: TaskCheckpoint[];
+  browserState: BrowserStateSnapshot;
 }
 
 interface CompletionRetrySnapshot {
+  cause: 'completion';
   attempt: number;
   finishReason?: string;
   partialContent?: string;
-  recentExternalToolSummaries: Array<{ toolName: string; outputPreview: string; isError: boolean }>;
+  progressEntries: ProgressEntry[];
+  taskCheckpoints: TaskCheckpoint[];
+  browserState: BrowserStateSnapshot;
 }
 
 type RetryCause = 'stall' | 'completion';
+type RetryContinuitySnapshot = StallRetrySnapshot | CompletionRetrySnapshot;
+
+interface BrowserResumeMetadata {
+  action?: string;
+  summary?: string;
+  url?: string;
+  tabId?: string;
+  activeTabId?: string;
+  tabs?: BrowserTabSnapshot[];
+  targetText?: string;
+  targetSelector?: string;
+  stateChanging?: boolean;
+}
 
 export interface CerebrumAdapter {
   stream(
@@ -327,6 +372,21 @@ export class Orchestrator extends TypedEventEmitter {
       },
       execute: async (args) => this.recordCompletionSignal('blocked', args),
     });
+
+    this.internalTools.set(TASK_CHECKPOINT_TOOL, {
+      description: 'Record a completed or in-progress milestone during a multi-step task. Use this after each major verified step so retries can resume from the right place.',
+      parameters: {
+        type: 'object',
+        properties: {
+          step: { type: 'string', description: 'Short milestone name, such as "profile continuity checked"' },
+          status: { type: 'string', enum: ['done', 'in_progress'], description: 'Whether the milestone is done or currently in progress' },
+          evidence: { type: 'string', description: 'Concrete evidence showing what happened at this milestone' },
+        },
+        required: ['step', 'status', 'evidence'],
+        additionalProperties: false,
+      },
+      execute: async (args) => this.recordTaskCheckpoint(args),
+    });
   }
 
   private getAllTools(): Map<string, ToolDefinition> {
@@ -334,7 +394,7 @@ export class Orchestrator extends TypedEventEmitter {
   }
 
   private isInternalTaskSignalTool(name: string): boolean {
-    return INTERNAL_TASK_SIGNAL_TOOL_NAMES.has(name.trim() || name);
+    return INTERNAL_TASK_TOOL_NAMES.has(name.trim() || name);
   }
 
   private async recordCompletionSignal(
@@ -365,9 +425,11 @@ export class Orchestrator extends TypedEventEmitter {
           isError: true,
         };
       }
-      if (state.successfulExternalToolCount === 0) {
+      const hasVerifiedProgress = state.successfulExternalToolCount > 0
+        || state.continuity.progressLedger.some((entry) => entry.source === 'tool' && !entry.isError);
+      if (!hasVerifiedProgress) {
         return {
-          output: 'task_complete requires at least one successful external tool result in this attempt.',
+          output: 'task_complete requires at least one successful external tool result in this turn.',
           isError: true,
         };
       }
@@ -404,6 +466,61 @@ export class Orchestrator extends TypedEventEmitter {
       metadata: {
         internal: true,
         signal,
+      },
+    };
+  }
+
+  private async recordTaskCheckpoint(args: Record<string, unknown>): Promise<ToolExecutionValue> {
+    const state = this.currentAttemptCompletionState;
+    if (!state) {
+      return {
+        output: 'No active turn is available for task checkpoint tracking.',
+        isError: true,
+      };
+    }
+
+    const step = String(args.step ?? '').trim();
+    const evidence = String(args.evidence ?? '').trim();
+    const statusValue = String(args.status ?? '').trim();
+    const status = statusValue === 'done' || statusValue === 'in_progress'
+      ? statusValue
+      : null;
+
+    if (!step) {
+      return {
+        output: 'A non-empty step field is required.',
+        isError: true,
+      };
+    }
+    if (!status) {
+      return {
+        output: 'status must be either "done" or "in_progress".',
+        isError: true,
+      };
+    }
+    if (!evidence) {
+      return {
+        output: 'A non-empty evidence field is required.',
+        isError: true,
+      };
+    }
+
+    const checkpoint = this.recordCheckpoint(state.continuity, step, status, evidence);
+    log.info('task_checkpoint_recorded', {
+      turnId: this.currentStreamTurn?.turnId,
+      attempt: this.currentStreamTurn?.attempt,
+      conversationId: this.currentStreamTurn?.conversationId,
+      step,
+      status,
+      evidence,
+    });
+
+    return {
+      output: `Checkpoint recorded: ${checkpoint.summary}`,
+      isError: false,
+      metadata: {
+        internal: true,
+        checkpoint,
       },
     };
   }
@@ -971,14 +1088,22 @@ export class Orchestrator extends TypedEventEmitter {
     this.emit({ type: 'cerebrum:completion', ...payload });
   }
 
-  private createAttemptCompletionState(): AttemptCompletionState {
+  private createAttemptCompletionState(continuity: TurnContinuityState): AttemptCompletionState {
     return {
       signal: 'none',
       evidence: '',
       successfulExternalToolCount: 0,
       externalToolCallCount: 0,
       internalToolCallCount: 0,
-      recentExternalToolSummaries: [],
+      continuity,
+    };
+  }
+
+  private createTurnContinuityState(): TurnContinuityState {
+    return {
+      progressLedger: [],
+      taskCheckpoints: [],
+      browserState: {},
     };
   }
 
@@ -991,63 +1116,28 @@ export class Orchestrator extends TypedEventEmitter {
     completionState: AttemptCompletionState;
   }): StallRetrySnapshot | null {
     const partialContent = this.truncateResumeText(params.partialContent, 600);
-    const recentExternalToolSummaries = params.completionState.recentExternalToolSummaries.slice(-4);
-    if (!partialContent && recentExternalToolSummaries.length === 0 && !params.activeToolName) {
+    const continuity = params.completionState.continuity;
+    if (
+      !partialContent
+      && continuity.progressLedger.length === 0
+      && continuity.taskCheckpoints.length === 0
+      && !params.activeToolName
+      && !continuity.browserState.currentUrl
+      && !continuity.browserState.activeTabId
+    ) {
       return null;
     }
 
     return {
+      cause: 'stall',
       attempt: params.attempt,
       phase: params.phase,
       activeToolName: params.activeToolName,
       activeToolCallId: params.activeToolCallId,
       partialContent: partialContent || undefined,
-      recentExternalToolSummaries,
-    };
-  }
-
-  private buildStallRetryContextMessage(snapshot: StallRetrySnapshot | null): Message | null {
-    if (!snapshot) return null;
-
-    const lines = [
-      '[Watchdog resume context]',
-      `The previous attempt (${snapshot.attempt}) was interrupted after stalling while ${this.describeStreamLocation(snapshot.phase, snapshot.activeToolName)}.`,
-      'IMPORTANT: The tool call history from the failed attempt has been removed from this conversation. The summary below is the authoritative record of what was already done.',
-      'Do NOT repeat these steps. Start from the NEXT action after the last confirmed result.',
-    ];
-
-    if (snapshot.recentExternalToolSummaries.length > 0) {
-      lines.push('', 'Confirmed external tool results from the interrupted attempt:');
-      for (const summary of snapshot.recentExternalToolSummaries) {
-        const prefix = summary.isError ? '[error]' : '[ok]';
-        lines.push(`- ${summary.toolName}: ${prefix} ${summary.outputPreview}`);
-      }
-    }
-
-    if (snapshot.activeToolName) {
-      lines.push(
-        '',
-        `The attempt was last waiting on: ${snapshot.activeToolName}${snapshot.activeToolCallId ? ` (${snapshot.activeToolCallId})` : ''}.`,
-      );
-    }
-
-    if (snapshot.partialContent) {
-      lines.push(
-        '',
-        'Partial assistant text emitted before interruption:',
-        snapshot.partialContent,
-      );
-    }
-
-    return {
-      id: `system:stall-retry:${snapshot.attempt}`,
-      role: 'system',
-      content: lines.join('\n'),
-      timestamp: 0,
-      metadata: {
-        transient: true,
-        source: 'watchdog-resume',
-      },
+      progressEntries: continuity.progressLedger.slice(-20),
+      taskCheckpoints: continuity.taskCheckpoints.slice(-8),
+      browserState: this.cloneBrowserState(continuity.browserState),
     };
   }
 
@@ -1058,37 +1148,85 @@ export class Orchestrator extends TypedEventEmitter {
     finishMeta?: StreamFinishMetadata;
   }): CompletionRetrySnapshot | null {
     const partialContent = this.truncateResumeText(params.partialContent, 600);
-    const recentExternalToolSummaries = params.completionState.recentExternalToolSummaries.slice(-4);
+    const continuity = params.completionState.continuity;
     const finishReason = params.finishMeta?.finishReason ?? params.finishMeta?.stepFinishReasons.at(-1);
-    if (!partialContent && recentExternalToolSummaries.length === 0 && !finishReason) {
+    if (
+      !partialContent
+      && continuity.progressLedger.length === 0
+      && continuity.taskCheckpoints.length === 0
+      && !continuity.browserState.currentUrl
+      && !continuity.browserState.activeTabId
+      && !finishReason
+    ) {
       return null;
     }
 
     return {
+      cause: 'completion',
       attempt: params.attempt,
       finishReason,
       partialContent: partialContent || undefined,
-      recentExternalToolSummaries,
+      progressEntries: continuity.progressLedger.slice(-20),
+      taskCheckpoints: continuity.taskCheckpoints.slice(-8),
+      browserState: this.cloneBrowserState(continuity.browserState),
     };
   }
 
-  private buildCompletionRetryContextMessage(snapshot: CompletionRetrySnapshot | null): Message | null {
+  private buildRetryContextMessage(snapshot: RetryContinuitySnapshot | null): Message | null {
     if (!snapshot) return null;
 
+    const isStall = snapshot.cause === 'stall';
+    const header = isStall ? '[Watchdog resume context]' : '[Completion resume context]';
     const lines = [
-      '[Completion resume context]',
-      `The previous attempt (${snapshot.attempt}) ended without a valid completion${snapshot.finishReason ? ` (finish reason: ${snapshot.finishReason})` : ''}.`,
-      'IMPORTANT: The tool call history from the failed attempt has been removed from this conversation. The summary below is the authoritative record of what was already done.',
-      'Do NOT repeat these steps. Start from the NEXT action after the last confirmed result.',
-      'Continue from that state, then either finish the task or report a concrete blocker. End by calling task_complete or task_blocked before your final answer.',
+      header,
+      isStall
+        ? `The previous attempt (${snapshot.attempt}) was interrupted after stalling while ${this.describeStreamLocation(snapshot.phase, snapshot.activeToolName)}.`
+        : `The previous attempt (${snapshot.attempt}) ended without a valid completion${snapshot.finishReason ? ` (finish reason: ${snapshot.finishReason})` : ''}.`,
+      'IMPORTANT: The tool call history from the failed attempt has been removed from this conversation. The ledger below is the authoritative record of what was already verified.',
+      'Do NOT repeat completed steps unless the current page state clearly contradicts this ledger.',
+      'Continue from the NEXT incomplete step, then either finish the task or report a concrete blocker.',
     ];
 
-    if (snapshot.recentExternalToolSummaries.length > 0) {
-      lines.push('', 'Confirmed external tool results from the previous attempt:');
-      for (const summary of snapshot.recentExternalToolSummaries) {
-        const prefix = summary.isError ? '[error]' : '[ok]';
-        lines.push(`- ${summary.toolName}: ${prefix} ${summary.outputPreview}`);
+    if (snapshot.browserState.currentUrl || snapshot.browserState.activeTabId || snapshot.browserState.tabs?.length) {
+      lines.push('', 'Last known browser state:');
+      if (snapshot.browserState.currentUrl) {
+        lines.push(`- Current URL: ${snapshot.browserState.currentUrl}`);
       }
+      if (snapshot.browserState.activeTabId) {
+        lines.push(`- Active tab: ${snapshot.browserState.activeTabId}`);
+      }
+      if (snapshot.browserState.tabs?.length) {
+        const visibleTabs = snapshot.browserState.tabs.slice(0, 6);
+        for (const tab of visibleTabs) {
+          lines.push(`- Tab ${tab.id}${tab.active ? ' [active]' : ''}: ${tab.url}${tab.title ? ` (${tab.title})` : ''}`);
+        }
+        if (snapshot.browserState.tabs.length > visibleTabs.length) {
+          lines.push(`- ... ${snapshot.browserState.tabs.length - visibleTabs.length} more tab(s)`);
+        }
+      }
+    }
+
+    if (snapshot.taskCheckpoints.length > 0) {
+      lines.push('', 'Recorded task checkpoints:');
+      for (const checkpoint of snapshot.taskCheckpoints) {
+        lines.push(`- ${checkpoint.summary}`);
+      }
+    }
+
+    const toolEntries = snapshot.progressEntries.filter((entry) => entry.source === 'tool');
+    if (toolEntries.length > 0) {
+      lines.push('', 'Confirmed actions from the previous attempt:');
+      for (const entry of toolEntries) {
+        const prefix = entry.isError ? '[error]' : entry.stateChanging ? '[done]' : '[seen]';
+        lines.push(`- ${prefix} ${entry.summary}`);
+      }
+    }
+
+    if (snapshot.cause === 'stall' && snapshot.activeToolName) {
+      lines.push(
+        '',
+        `The attempt was last waiting on: ${snapshot.activeToolName}${snapshot.activeToolCallId ? ` (${snapshot.activeToolCallId})` : ''}.`,
+      );
     }
 
     if (snapshot.partialContent) {
@@ -1099,14 +1237,16 @@ export class Orchestrator extends TypedEventEmitter {
       );
     }
 
+    lines.push('', 'End your final answer by calling task_complete or task_blocked.');
+
     return {
-      id: `system:completion-retry:${snapshot.attempt}`,
+      id: `system:${snapshot.cause}-retry:${snapshot.attempt}`,
       role: 'system',
       content: lines.join('\n'),
       timestamp: 0,
       metadata: {
         transient: true,
-        source: 'completion-resume',
+        source: snapshot.cause === 'stall' ? 'watchdog-resume' : 'completion-resume',
       },
     };
   }
@@ -1123,19 +1263,143 @@ export class Orchestrator extends TypedEventEmitter {
     return `${normalized.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…`;
   }
 
-  private recordAttemptToolSummary(
+  private recordCheckpoint(
+    continuity: TurnContinuityState,
+    step: string,
+    status: TaskCheckpointStatus,
+    evidence: string,
+  ): TaskCheckpoint {
+    const checkpoint: TaskCheckpoint = {
+      step,
+      status,
+      evidence,
+      summary: `${step} (${status}): ${this.truncateResumeText(evidence, 220)}`,
+    };
+
+    const existingIndex = continuity.taskCheckpoints.findIndex((entry) => entry.step === step);
+    if (existingIndex >= 0) {
+      continuity.taskCheckpoints[existingIndex] = checkpoint;
+    } else {
+      continuity.taskCheckpoints.push(checkpoint);
+    }
+
+    this.recordProgressEntry(continuity, {
+      source: 'checkpoint',
+      action: 'task_checkpoint',
+      summary: checkpoint.summary,
+      stateChanging: status === 'done',
+      isError: false,
+      checkpointStatus: status,
+    });
+
+    return checkpoint;
+  }
+
+  private recordAttemptToolProgress(
     completionState: AttemptCompletionState,
     toolName: string,
     result: ToolResult,
   ): void {
-    completionState.recentExternalToolSummaries.push({
-      toolName,
-      outputPreview: this.formatToolOutputPreview(result.output),
-      isError: result.isError,
-    });
-    if (completionState.recentExternalToolSummaries.length > 6) {
-      completionState.recentExternalToolSummaries.splice(0, completionState.recentExternalToolSummaries.length - 6);
+    const continuity = completionState.continuity;
+    const entry = this.createProgressEntry(toolName, result);
+    if (!entry) return;
+    this.recordProgressEntry(continuity, entry);
+    this.updateBrowserState(continuity.browserState, result);
+  }
+
+  private createProgressEntry(toolName: string, result: ToolResult): ProgressEntry | null {
+    const resume = this.getBrowserResumeMetadata(result);
+    if (resume?.summary) {
+      return {
+        source: 'tool',
+        toolName,
+        action: resume.action ?? toolName,
+        summary: this.truncateResumeText(resume.summary, 220),
+        url: resume.url,
+        tabId: resume.tabId ?? resume.activeTabId,
+        stateChanging: resume.stateChanging ?? this.isLikelyStateChangingTool(toolName),
+        isError: result.isError,
+      };
     }
+
+    const outputPreview = this.formatToolOutputPreview(result.output);
+    if (!outputPreview) return null;
+    return {
+      source: 'tool',
+      toolName,
+      action: toolName,
+      summary: `${toolName}: ${outputPreview}`,
+      stateChanging: this.isLikelyStateChangingTool(toolName),
+      isError: result.isError,
+    };
+  }
+
+  private recordProgressEntry(continuity: TurnContinuityState, entry: ProgressEntry): void {
+    const last = continuity.progressLedger.at(-1);
+    if (
+      last
+      && entry.source === 'tool'
+      && last.source === 'tool'
+      && !entry.stateChanging
+      && !last.stateChanging
+      && last.action === entry.action
+      && last.summary === entry.summary
+      && last.url === entry.url
+      && last.tabId === entry.tabId
+    ) {
+      return;
+    }
+
+    continuity.progressLedger.push(entry);
+
+    while (continuity.progressLedger.length > 20) {
+      const removableIndex = continuity.progressLedger.findIndex((candidate) =>
+        candidate.source === 'tool' && !candidate.stateChanging,
+      );
+      continuity.progressLedger.splice(removableIndex >= 0 ? removableIndex : 0, 1);
+    }
+  }
+
+  private getBrowserResumeMetadata(result: ToolResult): BrowserResumeMetadata | null {
+    const metadata = result.metadata;
+    if (!metadata || typeof metadata !== 'object') return null;
+    const resume = metadata.resume;
+    if (!resume || typeof resume !== 'object') return null;
+    return resume as BrowserResumeMetadata;
+  }
+
+  private updateBrowserState(browserState: BrowserStateSnapshot, result: ToolResult): void {
+    const resume = this.getBrowserResumeMetadata(result);
+    if (!resume) return;
+
+    if (resume.url) {
+      browserState.currentUrl = resume.url;
+    }
+    if (resume.activeTabId) {
+      browserState.activeTabId = resume.activeTabId;
+    } else if (resume.tabId && resume.stateChanging) {
+      browserState.activeTabId = resume.tabId;
+    }
+    if (resume.tabs?.length) {
+      browserState.tabs = resume.tabs.map((tab) => ({ ...tab }));
+      const active = resume.tabs.find((tab) => tab.active);
+      if (active) {
+        browserState.activeTabId = active.id;
+        browserState.currentUrl = active.url;
+      }
+    }
+  }
+
+  private cloneBrowserState(browserState: BrowserStateSnapshot): BrowserStateSnapshot {
+    return {
+      currentUrl: browserState.currentUrl,
+      activeTabId: browserState.activeTabId,
+      tabs: browserState.tabs?.map((tab) => ({ ...tab })),
+    };
+  }
+
+  private isLikelyStateChangingTool(toolName: string): boolean {
+    return !READ_ONLY_TOOL_NAMES.has(toolName);
   }
 
   private evaluateCompletionGuard(
@@ -1336,6 +1600,7 @@ export class Orchestrator extends TypedEventEmitter {
     const maxTotalAttempts = 1 + this.maxNudgeRetries + this.maxCompletionRetries;
     let loopTerminated = false;
     let nextRetryCause: RetryCause | null = null;
+    const turnContinuity = this.createTurnContinuityState();
 
     try {
       for (let attempt = 0; attempt < maxTotalAttempts; attempt++) {
@@ -1343,7 +1608,7 @@ export class Orchestrator extends TypedEventEmitter {
         const attemptNumber = attempt + 1;
         const retryCause = nextRetryCause;
         nextRetryCause = null;
-        const completionState = this.createAttemptCompletionState();
+        const completionState = this.createAttemptCompletionState(turnContinuity);
         let completionGuardFailure: CompletionGuardFailure | null = null;
         const stallRetryCountAtStart = this.streamNudgeCount;
         const attemptMessageIds: string[] = [];
@@ -1551,7 +1816,7 @@ export class Orchestrator extends TypedEventEmitter {
               throwIfToolAttemptAborted();
 
               if (!isInternalTaskSignal) {
-                this.recordAttemptToolSummary(completionState, toolName, result);
+                this.recordAttemptToolProgress(completionState, toolName, result);
                 const toolMsg = this.conversations.appendMessage(convId, 'tool', result.output, {
                   toolResult: result,
                   metadata: {
@@ -1600,7 +1865,7 @@ export class Orchestrator extends TypedEventEmitter {
               const guardFailure = this.evaluateCompletionGuard(displayContent, finishMeta, completionState);
               if (guardFailure) {
                 completionGuardFailure = guardFailure;
-                nextRetryContext = this.buildCompletionRetryContextMessage(this.buildCompletionRetrySnapshot({
+                nextRetryContext = this.buildRetryContextMessage(this.buildCompletionRetrySnapshot({
                   attempt: attemptNumber,
                   partialContent: fullContent || displayContent,
                   completionState,
@@ -1614,7 +1879,13 @@ export class Orchestrator extends TypedEventEmitter {
                     finishReason: finishMeta?.finishReason,
                     rawFinishReason: finishMeta?.rawFinishReason,
                     hasPartialContent: (fullContent || displayContent).trim().length > 0,
-                    recentToolSummaries: completionState.recentExternalToolSummaries.length,
+                    progressEntries: completionState.continuity.progressLedger.length,
+                    taskCheckpoints: completionState.continuity.taskCheckpoints.length,
+                    hasBrowserState: Boolean(
+                      completionState.continuity.browserState.currentUrl
+                      || completionState.continuity.browserState.activeTabId
+                      || completionState.continuity.browserState.tabs?.length,
+                    ),
                   });
                 }
                 this.emitCompletionTrace(
@@ -1747,7 +2018,7 @@ export class Orchestrator extends TypedEventEmitter {
             && this.streamNudgeCount <= this.maxNudgeRetries;
 
           if (isNudgeAbort) {
-            nextRetryContext = this.buildStallRetryContextMessage(this.buildStallRetrySnapshot({
+            nextRetryContext = this.buildRetryContextMessage(this.buildStallRetrySnapshot({
               attempt: attemptNumber,
               phase: failureState.phase,
               activeToolName: failureState.activeToolName,

@@ -18,6 +18,11 @@ export type {
   StreamPhase,
   StreamFinishReason,
   StreamFinishMetadata,
+  BrowserTabSnapshot,
+  BrowserStateSnapshot,
+  TaskCheckpointStatus,
+  TaskCheckpoint,
+  ProgressEntry,
 } from './types.js';
 
 export type { OrchestratorEvent } from './events.js';

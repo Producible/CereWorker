@@ -74,6 +74,40 @@ export interface StreamFinishMetadata {
   stepCount: number;
 }
 
+export interface BrowserTabSnapshot {
+  id: string;
+  title?: string;
+  url: string;
+  active: boolean;
+}
+
+export interface BrowserStateSnapshot {
+  currentUrl?: string;
+  activeTabId?: string;
+  tabs?: BrowserTabSnapshot[];
+}
+
+export type TaskCheckpointStatus = 'done' | 'in_progress';
+
+export interface TaskCheckpoint {
+  step: string;
+  status: TaskCheckpointStatus;
+  evidence: string;
+  summary: string;
+}
+
+export interface ProgressEntry {
+  source: 'tool' | 'checkpoint';
+  action: string;
+  summary: string;
+  toolName?: string;
+  url?: string;
+  tabId?: string;
+  stateChanging: boolean;
+  isError: boolean;
+  checkpointStatus?: TaskCheckpointStatus;
+}
+
 export type SubAgentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'timeout';
 export type SubAgentCleanup = 'delete' | 'keep';
 
