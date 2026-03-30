@@ -1777,6 +1777,9 @@ export class Orchestrator extends TypedEventEmitter {
             const err = new Error('Cerebellum disconnected during active response. Restart it with: docker compose up -d cerebellum');
             log.error('Cerebellum disconnected mid-stream', { error: err.message });
             this.emit({ type: 'error', error: err });
+            if (failedAttemptMessageIds.length > 0) {
+              this.conversations.deleteMessages(convId, failedAttemptMessageIds);
+            }
             loopTerminated = true;
             break;
           }
