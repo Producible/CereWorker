@@ -21,6 +21,11 @@ interface AppProps {
   resumeConversationId?: string;
 }
 
+type WatchdogTrace = {
+  stage: 'stalled' | 'nudge_requested' | 'abort_issued' | 'retry_started' | 'retry_recovered' | 'retry_failed' | 'teardown_timeout';
+  message: string;
+};
+
 export function App({ config, resumeConversationId }: AppProps) {
   const { exit } = useApp();
   const [channelCount, setChannelCount] = useState(0);
@@ -34,6 +39,7 @@ export function App({ config, resumeConversationId }: AppProps) {
   const [gatewayServer, setGatewayServer] = useState<GatewayServer | null>(null);
   const [gatewayClient, setGatewayClient] = useState<GatewayNodeClient | null>(null);
   const [updateAvailable, setUpdateAvailable] = useState<string | null>(null);
+  const [watchdogTrace, setWatchdogTrace] = useState<WatchdogTrace | null>(null);
 
   useEffect(() => {
     void checkForUpdate(APP_VERSION).then((v) => { if (v) setUpdateAvailable(v); });
@@ -126,18 +132,30 @@ export function App({ config, resumeConversationId }: AppProps) {
     const updateStreamState = () => {
       setStreamStall(orchestrator.getStreamState().stallDetected);
     };
+    const clearWatchdogTrace = () => setWatchdogTrace(null);
 
     updateStreamState();
     const timer = setInterval(updateStreamState, 250);
     const unsubs = [
+      orchestrator.on('message:user', clearWatchdogTrace),
       orchestrator.on('message:cerebrum:start', updateStreamState),
       orchestrator.on('message:cerebrum:chunk', updateStreamState),
-      orchestrator.on('message:cerebrum:end', updateStreamState),
+      orchestrator.on('message:cerebrum:end', () => {
+        updateStreamState();
+        clearWatchdogTrace();
+      }),
       orchestrator.on('message:cerebrum:toolcall', updateStreamState),
       orchestrator.on('message:system', updateStreamState),
       orchestrator.on('cerebrum:stall', updateStreamState),
       orchestrator.on('cerebrum:stall:nudge', updateStreamState),
-      orchestrator.on('error', updateStreamState),
+      orchestrator.on('cerebrum:watchdog', ({ stage, message }) => {
+        setWatchdogTrace({ stage, message });
+      }),
+      orchestrator.on('conversation:resumed', clearWatchdogTrace),
+      orchestrator.on('error', () => {
+        updateStreamState();
+        clearWatchdogTrace();
+      }),
     ];
 
     return () => {
@@ -157,6 +175,7 @@ export function App({ config, resumeConversationId }: AppProps) {
     (text: string) => {
       setStickyMessage(false);
       setSystemMessage(null);
+      setWatchdogTrace(null);
       orchestrator.sendMessage(text).catch((err) => {
         orchestrator.emit({ type: 'error', error: err instanceof Error ? err : new Error(String(err)) });
       });
@@ -305,6 +324,19 @@ export function App({ config, resumeConversationId }: AppProps) {
         extensionConnected={extensionConnected}
         streamStall={streamStall}
       />
+      {watchdogTrace && (
+        <Box paddingX={1}>
+          <Text
+            color={
+              watchdogTrace.stage === 'retry_failed' ? 'red'
+                : watchdogTrace.stage === 'stalled' || watchdogTrace.stage === 'abort_issued' || watchdogTrace.stage === 'teardown_timeout' ? 'yellow'
+                  : 'cyan'
+            }
+          >
+            Watchdog: {watchdogTrace.message}
+          </Text>
+        </Box>
+      )}
       <ChatView
         messages={visibleMessages}
         streamingContent={streamingContent}

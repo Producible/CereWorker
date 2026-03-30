@@ -196,6 +196,65 @@ describe('createService integration', () => {
     await service.shutdown();
   });
 
+  it('continues retrying when the aborted stream never settles after the watchdog fires', async () => {
+    vi.useFakeTimers();
+
+    const service = createService(makeConfig());
+    const cerebellum = createWatchdogCerebellum();
+    service.orchestrator.setCerebellum(cerebellum, { enabled: false });
+
+    let attempts = 0;
+    service.cerebrum.stream = vi.fn(async (_messages, _tools, callbacks, options) => {
+      attempts++;
+      if (attempts === 1) {
+        await new Promise<void>(() => {
+          const signal = options?.abortSignal;
+          if (!signal) {
+            throw new Error('missing abort signal');
+          }
+
+          signal.addEventListener('abort', () => {
+            // Intentionally never resolve or reject to simulate a provider teardown hang.
+          }, { once: true });
+        });
+        return;
+      }
+
+      callbacks.onChunk('Recovered after hung teardown');
+      callbacks.onFinish('Recovered after hung teardown');
+    });
+
+    const stages: string[] = [];
+    const messages: string[] = [];
+    service.orchestrator.on('cerebrum:watchdog', ({ stage, message }) => {
+      stages.push(stage);
+      messages.push(message);
+    });
+
+    const sendPromise = service.orchestrator.sendMessage('hello from hung teardown');
+    await vi.advanceTimersByTimeAsync(16_000);
+    await sendPromise;
+
+    expect(attempts).toBe(2);
+    expect(stages).toEqual([
+      'stalled',
+      'nudge_requested',
+      'abort_issued',
+      'teardown_timeout',
+      'retry_started',
+      'retry_recovered',
+    ]);
+    expect(messages).toContain(
+      'Provider did not settle within 1000ms after abort; continuing retry.',
+    );
+    expect(service.orchestrator.getMessages().at(-1)).toMatchObject({
+      role: 'cerebrum',
+      content: 'Recovered after hung teardown',
+    });
+
+    await service.shutdown();
+  });
+
   it('keeps short-term channel conversations separate while persisting the session map', async () => {
     const service = createService(makeConfig());
     service.cerebrum.stream = vi.fn(async (messages, _tools, callbacks) => {

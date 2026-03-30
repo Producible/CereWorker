@@ -10,6 +10,7 @@ import {
   type ProviderRuntimeFamily,
 } from '@cereworker/config';
 import {
+  createLogger,
   raceWithAbort,
   throwIfAborted,
   type Message,
@@ -25,6 +26,7 @@ import { getOpenAICodexApiKey, refreshGoogleToken } from './oauth/pi-auth.js';
 const OPENAI_CODEX_PROVIDER = 'openai-codex';
 const DEFAULT_OPENAI_CODEX_INSTRUCTIONS = 'You are the Cerebrum of CereWorker, a dual-LLM autonomous agent.';
 const MAX_REPLAY_TOOL_RESULT_CHARS = 20000;
+const ITERATOR_CLOSE_TIMEOUT_MS = 1_000;
 const GOOGLE_API_HOST = 'generativelanguage.googleapis.com';
 const TOOL_PARAMETER_SCHEMA_KEYS = new Set([
   '$schema',
@@ -40,6 +42,7 @@ const TOOL_PARAMETER_SCHEMA_KEYS = new Set([
   'title',
   'description',
 ]);
+const log = createLogger('provider');
 
 interface RuntimeProviderDefinition {
   runtimeFamily: ProviderRuntimeFamily;
@@ -534,7 +537,8 @@ export class CerebrumProvider {
         }
         } catch (abortErr) {
           // Tear down the underlying stream so tool execution doesn't continue in background
-          await iterator.return?.(undefined);
+          log.debug('provider_abort_observed', { hasAbortSignal: !!abortSignal });
+          await closeStreamIterator(iterator, ITERATOR_CLOSE_TIMEOUT_MS);
           throw abortErr;
         }
 
@@ -1323,4 +1327,41 @@ function isLegacyParameterDescriptor(value: unknown): value is Record<string, un
   additionalProperties?: unknown;
 } {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+async function closeStreamIterator(
+  iterator: AsyncIterator<unknown>,
+  timeoutMs: number,
+): Promise<void> {
+  if (typeof iterator.return !== 'function') {
+    return;
+  }
+
+  const timedOut = Symbol('iterator-close-timeout');
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  try {
+    const result = await Promise.race([
+      Promise.resolve(iterator.return(undefined)),
+      new Promise<symbol>((resolve) => {
+        timer = setTimeout(() => resolve(timedOut), timeoutMs);
+      }),
+    ]);
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+
+    if (result === timedOut) {
+      log.warn('provider_abort_teardown_timeout', { timeoutMs });
+    }
+  } catch (error) {
+    if (timer) {
+      clearTimeout(timer);
+    }
+    log.warn('provider_abort_teardown_failed', {
+      timeoutMs,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }

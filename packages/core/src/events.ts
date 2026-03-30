@@ -1,12 +1,21 @@
 import type { Message, ToolCall, ToolResult, TaskAction, CerebellumStatus, VerificationResult, AgentHealthAction, StreamPhase } from './types.js';
 
 interface StreamDiagnosticEvent {
-  elapsedSeconds: number;
+  elapsedSeconds?: number;
   phase: StreamPhase;
   activeToolName?: string;
   activeToolCallId?: string;
   activeToolStartedAt?: number;
 }
+
+export type WatchdogStage =
+  | 'stalled'
+  | 'nudge_requested'
+  | 'abort_issued'
+  | 'retry_started'
+  | 'retry_recovered'
+  | 'retry_failed'
+  | 'teardown_timeout';
 
 export type OrchestratorEvent =
   | { type: 'message:user'; message: Message }
@@ -50,6 +59,14 @@ export type OrchestratorEvent =
   | { type: 'proactive:report'; report: string }
   | ({ type: 'cerebrum:stall' } & StreamDiagnosticEvent)
   | ({ type: 'cerebrum:stall:nudge'; attempt: number } & StreamDiagnosticEvent)
+  | ({
+      type: 'cerebrum:watchdog';
+      stage: WatchdogStage;
+      turnId: string;
+      attempt: number;
+      conversationId: string;
+      message: string;
+    } & StreamDiagnosticEvent)
   | { type: 'error'; error: Error };
 
 type EventHandler<T> = (event: T) => void;

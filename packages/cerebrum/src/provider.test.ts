@@ -1024,4 +1024,50 @@ describe('CerebrumProvider abortSignal', () => {
     expect(onToolCall).toHaveBeenCalledOnce();
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'Stream aborted' }));
   });
+
+  it('still aborts promptly when iterator teardown hangs', async () => {
+    streamTextMock.mockImplementationOnce(() => ({
+      fullStream: {
+        [Symbol.asyncIterator]: () => ({
+          next: () => new Promise<IteratorResult<unknown>>(() => {}),
+          return: () => new Promise<IteratorResult<unknown>>(() => {}),
+        }),
+      },
+    }));
+
+    const provider = new CerebrumProvider({
+      defaultProvider: 'openai',
+      defaultModel: 'gpt-4o',
+      providers: { openai: { apiKey: 'test-key' } },
+      maxSteps: 10,
+      temperature: 0.7,
+    });
+
+    const abortController = new AbortController();
+    const onError = vi.fn();
+    const streamPromise = provider.stream(
+      [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }],
+      {},
+      {
+        onChunk: vi.fn(),
+        onToolCall: vi.fn(async () => ({ callId: '', output: '', isError: false })),
+        onFinish: vi.fn(),
+        onError,
+      },
+      { abortSignal: abortController.signal },
+    );
+
+    await new Promise<void>((resolve) => {
+      setTimeout(() => {
+        abortController.abort();
+        resolve();
+      }, 0);
+    });
+
+    await expect(streamPromise).rejects.toMatchObject({
+      name: 'AbortError',
+      message: 'Stream aborted',
+    });
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'Stream aborted' }));
+  });
 });

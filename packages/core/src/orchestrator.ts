@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid';
-import { TypedEventEmitter } from './events.js';
+import { TypedEventEmitter, type WatchdogStage } from './events.js';
 import { ConversationStore } from './conversation.js';
 import { SubAgentManager } from './sub-agent-manager.js';
 import { createSubAgentTools } from './sub-agent-tools.js';
@@ -159,6 +159,8 @@ export class Orchestrator extends TypedEventEmitter {
   private maxNudgeRetries = 2;
   private streamPhase: StreamPhase = 'idle';
   private activeToolCall: { id: string; name: string; startedAt: number } | null = null;
+  private currentStreamTurn: { turnId: string; attempt: number; conversationId: string } | null = null;
+  private streamAbortGraceMs = 1_000;
   private taskConversations = new Map<string, string>();
   private taskRunning = new Set<string>();
   private recurringTasks: Array<{ id: string; goal: string; schedule: string }> = [];
@@ -643,19 +645,37 @@ export class Orchestrator extends TypedEventEmitter {
   }
 
   private markStreamWaitingModel(activityAt = Date.now()): void {
+    const phaseChanged = this.streamPhase !== 'waiting_model' || this.activeToolCall !== null;
     this.lastStreamActivityAt = activityAt;
     this.streamPhase = 'waiting_model';
     this.activeToolCall = null;
+    if (phaseChanged) {
+      this.logStreamDebug('stream_phase_changed', {
+        phase: this.streamPhase,
+      });
+    }
   }
 
   private markStreamWaitingTool(toolCall: ToolCall, activityAt = Date.now()): void {
+    const normalizedToolName = toolCall.name.trim() || toolCall.name;
+    const phaseChanged =
+      this.streamPhase !== 'waiting_tool'
+      || this.activeToolCall?.id !== toolCall.id
+      || this.activeToolCall?.name !== normalizedToolName;
     this.lastStreamActivityAt = activityAt;
     this.streamPhase = 'waiting_tool';
     this.activeToolCall = {
       id: toolCall.id,
-      name: toolCall.name.trim() || toolCall.name,
+      name: normalizedToolName,
       startedAt: activityAt,
     };
+    if (phaseChanged) {
+      this.logStreamDebug('stream_phase_changed', {
+        phase: this.streamPhase,
+        activeToolName: normalizedToolName,
+        activeToolCallId: toolCall.id,
+      });
+    }
   }
 
   private resetStreamState(): void {
@@ -663,8 +683,8 @@ export class Orchestrator extends TypedEventEmitter {
     this.activeToolCall = null;
   }
 
-  private getStreamDiagnostics(elapsedSeconds: number): {
-    elapsedSeconds: number;
+  private getStreamDiagnostics(elapsedSeconds?: number): {
+    elapsedSeconds?: number;
     phase: StreamPhase;
     activeToolName?: string;
     activeToolCallId?: string;
@@ -679,6 +699,122 @@ export class Orchestrator extends TypedEventEmitter {
     };
   }
 
+  private describeStreamLocation(): string {
+    if (this.streamPhase === 'waiting_tool') {
+      return this.activeToolCall?.name
+        ? `waiting_tool/${this.activeToolCall.name}`
+        : 'waiting_tool';
+    }
+    return this.streamPhase;
+  }
+
+  private logStreamDebug(msg: string, data?: Record<string, unknown>): void {
+    if (!this.currentStreamTurn) return;
+    log.debug(msg, {
+      turnId: this.currentStreamTurn.turnId,
+      attempt: this.currentStreamTurn.attempt,
+      conversationId: this.currentStreamTurn.conversationId,
+      ...data,
+    });
+  }
+
+  private emitWatchdog(
+    stage: WatchdogStage,
+    message: string,
+    options?: {
+      level?: 'debug' | 'info' | 'warn' | 'error';
+      elapsedSeconds?: number;
+    },
+  ): void {
+    if (!this.currentStreamTurn) return;
+
+    const payload = {
+      stage,
+      turnId: this.currentStreamTurn.turnId,
+      attempt: this.currentStreamTurn.attempt,
+      conversationId: this.currentStreamTurn.conversationId,
+      message,
+      ...this.getStreamDiagnostics(options?.elapsedSeconds),
+    };
+
+    const level = options?.level ?? 'info';
+    switch (level) {
+      case 'debug':
+        log.debug(`watchdog_${stage}`, payload);
+        break;
+      case 'warn':
+        log.warn(`watchdog_${stage}`, payload);
+        break;
+      case 'error':
+        log.error(`watchdog_${stage}`, payload);
+        break;
+      default:
+        log.info(`watchdog_${stage}`, payload);
+        break;
+    }
+
+    this.emit({ type: 'cerebrum:watchdog', ...payload });
+  }
+
+  private async awaitStreamAttempt(
+    streamPromise: Promise<void>,
+    abortController: AbortController,
+  ): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      let settled = false;
+      let abortTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const cleanup = () => {
+        abortController.signal.removeEventListener('abort', onAbort);
+        if (abortTimer) {
+          clearTimeout(abortTimer);
+          abortTimer = null;
+        }
+      };
+
+      const settleResolve = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve();
+      };
+
+      const settleReject = (error: unknown) => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(error);
+      };
+
+      const onAbort = () => {
+        this.logStreamDebug('provider_abort_observed', {
+          phase: this.streamPhase,
+          activeToolName: this.activeToolCall?.name,
+          activeToolCallId: this.activeToolCall?.id,
+        });
+
+        if (abortTimer) return;
+        abortTimer = setTimeout(() => {
+          if (settled) return;
+          const elapsedSeconds = Math.max(1, Math.round((Date.now() - this.lastStreamActivityAt) / 1000));
+          this.emitWatchdog(
+            'teardown_timeout',
+            `Provider did not settle within ${this.streamAbortGraceMs}ms after abort; continuing retry.`,
+            { level: 'warn', elapsedSeconds },
+          );
+          settleReject(createAbortError('Stream aborted'));
+        }, this.streamAbortGraceMs);
+      };
+
+      abortController.signal.addEventListener('abort', onAbort, { once: true });
+      if (abortController.signal.aborted) {
+        onAbort();
+      }
+
+      streamPromise.then(settleResolve, settleReject);
+    });
+  }
+
   private startStreamWatchdog(): void {
     this.stopStreamWatchdog();
     this.markStreamWaitingModel();
@@ -691,12 +827,20 @@ export class Orchestrator extends TypedEventEmitter {
 
       const elapsedSeconds = Math.round(elapsed / 1000);
       const diagnostics = this.getStreamDiagnostics(elapsedSeconds);
-      log.warn('Cerebrum stream stalled', diagnostics);
+      this.emitWatchdog(
+        'stalled',
+        `Stalled after ${elapsedSeconds}s while ${this.describeStreamLocation()}.`,
+        { level: 'warn', elapsedSeconds },
+      );
       this.emit({ type: 'cerebrum:stall', ...diagnostics });
 
       if (!this.cerebellum?.isConnected()) {
         // Cerebellum dropped mid-stream — abort the current turn
-        log.warn('Cerebellum disconnected during active stream — aborting');
+        this.emitWatchdog(
+          'abort_issued',
+          'Cerebellum disconnected during an active stream; aborting the turn.',
+          { level: 'warn', elapsedSeconds },
+        );
         this.abortController?.abort();
         return;
       }
@@ -705,8 +849,17 @@ export class Orchestrator extends TypedEventEmitter {
 
       const doNudge = () => {
         this.streamNudgeCount++;
-        log.info('Cerebellum nudging stalled stream', { attempt: this.streamNudgeCount, ...diagnostics });
+        this.emitWatchdog(
+          'nudge_requested',
+          `Cerebellum requested nudge ${this.streamNudgeCount}/${this.maxNudgeRetries} after ${elapsedSeconds}s while ${this.describeStreamLocation()}.`,
+          { level: 'info', elapsedSeconds },
+        );
         this.emit({ type: 'cerebrum:stall:nudge', attempt: this.streamNudgeCount, ...diagnostics });
+        this.emitWatchdog(
+          'abort_issued',
+          `Aborting stalled stream attempt ${this.currentStreamTurn?.attempt ?? 0}.`,
+          { level: 'warn', elapsedSeconds },
+        );
         this.abortController?.abort();
       };
 
@@ -758,262 +911,303 @@ export class Orchestrator extends TypedEventEmitter {
     }
 
     this.streamNudgeCount = 0;
-
-    // Retry loop — nudge aborts land here for retry
-    for (let attempt = 0; attempt <= this.maxNudgeRetries; attempt++) {
-    const abortController = new AbortController();
-    const isCurrentAttempt = () => this.abortController === abortController;
-    this.abortController = abortController;
-    if (attempt > 0) {
-      log.info('Retrying Cerebrum stream after watchdog nudge', {
-        attempt,
-        conversationId: convId,
-      });
-    }
-    this.emit({ type: 'message:cerebrum:start', conversationId: convId });
-    this.startStreamWatchdog();
-
-    let messages = this.conversations.getMessages(convId);
-
-    // Context window compaction
-    if (
-      this.compactionConfig.enabled &&
-      this.cerebrum?.summarize &&
-      shouldCompact(messages, this.compactionConfig.contextWindow, this.compactionConfig.threshold)
-    ) {
-      try {
-        const keepRecent = this.compactionConfig.keepRecentMessages;
-        const olderMessages = messages.slice(0, Math.max(0, messages.length - keepRecent));
-        if (olderMessages.length > 0) {
-          log.info('Compacting conversation', {
-            totalMessages: messages.length,
-            compactingMessages: olderMessages.length,
-            estimatedTokens: estimateMessageTokens(messages),
-          });
-          const summary = await this.cerebrum.summarize(olderMessages);
-          messages = buildCompactionMessages(messages, summary, keepRecent);
-        }
-      } catch (error) {
-        log.warn('Compaction failed, continuing with full context', {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-
-    // Build system prompt with runtime state + skills context
-    const instance = this.instanceStore?.get();
-    const basePrompt = buildSystemPrompt({
-      cerebellumConnected: this.cerebellum?.isConnected() ?? false,
-      tools: this.tools,
-      autoMode: this.autoMode,
-      gatewayMode: this.gatewayMode,
-      connectedNodes: this.connectedNodes,
-      gatewayUrl: this.gatewayUrl,
-      profile: this.profile,
-      finetuneStatus: {
-        enabled: !!this.fineTuneDataProvider,
-        status: this.fineTuneStatus.status,
-        progress: this.fineTuneStatus.progress,
-        lastJobId: this.fineTuneStatus.jobId || undefined,
-      },
-      recurringTasks: this.recurringTasks,
-      instanceId: instance?.id,
-      instanceCreatedAt: instance?.createdAt,
-      finetuneCount: instance?.finetuneLineage.length,
-      proactiveEnabled: this.proactiveEnabled,
-      discoveryMode: this.discoveryMode,
-    });
-    const systemParts = [basePrompt];
-    if (this.systemContext) systemParts.push(this.systemContext);
-    const fullSystemPrompt = systemParts.join('\n\n---\n\n');
-
-    const allMessages: Message[] = [
-      { id: 'system', role: 'system' as const, content: fullSystemPrompt, timestamp: 0 },
-      ...messages,
-    ];
-
-    const toolDefs = Object.fromEntries(this.tools);
-    let fullContent = '';
-    const throwIfToolAttemptAborted = () => {
-      if (!isCurrentAttempt()) {
-        throw createAbortError('Tool execution aborted');
-      }
-      throwIfAborted(abortController.signal, 'Tool execution aborted');
-    };
+    const turnId = nanoid(10);
 
     try {
-      await this.cerebrum.stream(allMessages, toolDefs, {
-        onChunk: (chunk) => {
-          if (!isCurrentAttempt() || abortController.signal.aborted) return;
-          fullContent += chunk;
-          this.markStreamWaitingModel();
-          this.emit({ type: 'message:cerebrum:chunk', chunk });
-        },
-        onToolCall: async (toolCall) => {
-          throwIfToolAttemptAborted();
-
-          this.markStreamWaitingTool(toolCall);
-          const requestedToolName = toolCall.name;
-          const normalizedToolName = requestedToolName.trim() || requestedToolName;
-          this.emit({ type: 'message:cerebrum:toolcall', toolCall: { ...toolCall, name: normalizedToolName } });
-          this.emit({ type: 'tool:start', callId: toolCall.id, name: normalizedToolName });
-
-          const { toolName, result } = await this.toolRuntime.execute({
-            toolCall,
-            tools: this.tools,
-            conversationId: convId,
-            sessionKey: 'agent:main',
-            scopeKey: convId,
-            abortSignal: abortController.signal,
-          });
-
-          throwIfAborted(abortController.signal, 'Tool execution aborted');
-
-          this.markStreamWaitingModel();
-          this.emit({ type: 'tool:end', result });
-
-          // Cerebellum verification (non-blocking)
-          if (this.cerebellum?.isConnected() && this.verificationEnabled) {
-            try {
-              throwIfAborted(abortController.signal, 'Tool execution aborted');
-
-              this.emit({ type: 'verification:start', callId: toolCall.id, toolName });
-
-              const toolArgs: Record<string, string> = {};
-              for (const [k, v] of Object.entries(toolCall.args)) {
-                toolArgs[k] = String(v);
-              }
-
-              const verifyPromise = this.cerebellum.verifyToolResult(
-                toolName,
-                toolArgs,
-                result.output,
-                !result.isError,
-              );
-
-              const timeoutPromise = new Promise<null>((resolve) =>
-                setTimeout(() => resolve(null), this.verificationTimeoutMs),
-              );
-
-              const verification = await Promise.race([verifyPromise, timeoutPromise]);
-
-              throwIfAborted(abortController.signal, 'Tool execution aborted');
-
-              if (verification && !verification.passed) {
-                const failedChecks = verification.checks
-                  .filter((c) => !c.passed)
-                  .map((c) => c.description)
-                  .join(', ');
-                result.output += `\n[Cerebellum warning: ${failedChecks}]`;
-              }
-
-              if (verification) {
-                const vResult: VerificationResult = {
-                  passed: verification.passed,
-                  checks: verification.checks,
-                  modelVerdict: verification.modelVerdict,
-                  toolCallId: toolCall.id,
-                  toolName,
-                };
-                this.emit({ type: 'verification:end', result: vResult });
-              }
-            } catch {
-              // Verification failure should never block tool execution
-            }
-          }
-
-          throwIfToolAttemptAborted();
-
-          this.conversations.appendMessage(convId, 'tool', result.output, {
-            toolResult: result,
-            metadata: {
-              toolName,
-              ...(requestedToolName !== toolName ? { requestedToolName } : {}),
-            },
-          });
-
-          return result;
-        },
-        onFinish: (content, toolCalls) => {
-          if (!isCurrentAttempt() || abortController.signal.aborted) return;
-          this.stopStreamWatchdog();
-          let displayContent = content;
-
-          // Check for discovery completion — parse and strip the tag before storing
-          if (this.discoveryMode && content.includes('<discovery_complete>')) {
-            const parsed = this.parseDiscoveryCompletion(content);
-            // Strip the tag block from the displayed/stored content
-            displayContent = content
-              .replace(/<discovery_complete>[\s\S]*?<\/discovery_complete>/g, '')
-              .trim();
-            if (parsed && this.onDiscoveryComplete) {
-              this.discoveryMode = false;
-              this.onDiscoveryComplete(parsed);
-              log.info('Discovery completed', { name: parsed.name });
-            }
-          }
-
-          const cerebrumMessage = this.conversations.appendMessage(
-            convId, 'cerebrum', displayContent,
-            toolCalls?.length ? { toolCalls } : undefined,
+      // Retry loop — nudge aborts land here for retry
+      for (let attempt = 0; attempt <= this.maxNudgeRetries; attempt++) {
+        const abortController = new AbortController();
+        const attemptNumber = attempt + 1;
+        const isCurrentAttempt = () => this.abortController === abortController;
+        this.abortController = abortController;
+        this.currentStreamTurn = {
+          turnId,
+          attempt: attemptNumber,
+          conversationId: convId,
+        };
+        if (attempt > 0) {
+          this.emitWatchdog(
+            'retry_started',
+            `Retrying stalled turn with attempt ${attemptNumber}.`,
+            { level: 'info' },
           );
-          this.emit({ type: 'message:cerebrum:end', message: cerebrumMessage });
-          if (attempt > 0) {
-            log.info('Cerebrum stream recovered after watchdog retry', {
-              attempt,
-              conversationId: convId,
+        }
+        log.info('stream_started', {
+          turnId,
+          attempt: attemptNumber,
+          conversationId: convId,
+        });
+        this.emit({ type: 'message:cerebrum:start', conversationId: convId });
+        this.startStreamWatchdog();
+
+        let messages = this.conversations.getMessages(convId);
+
+        // Context window compaction
+        if (
+          this.compactionConfig.enabled &&
+          this.cerebrum?.summarize &&
+          shouldCompact(messages, this.compactionConfig.contextWindow, this.compactionConfig.threshold)
+        ) {
+          try {
+            const keepRecent = this.compactionConfig.keepRecentMessages;
+            const olderMessages = messages.slice(0, Math.max(0, messages.length - keepRecent));
+            if (olderMessages.length > 0) {
+              log.info('Compacting conversation', {
+                totalMessages: messages.length,
+                compactingMessages: olderMessages.length,
+                estimatedTokens: estimateMessageTokens(messages),
+              });
+              const summary = await this.cerebrum.summarize(olderMessages);
+              messages = buildCompactionMessages(messages, summary, keepRecent);
+            }
+          } catch (error) {
+            log.warn('Compaction failed, continuing with full context', {
+              error: error instanceof Error ? error.message : String(error),
             });
           }
-        },
-        onError: (error) => {
-          if (!isCurrentAttempt()) return;
+        }
+
+        // Build system prompt with runtime state + skills context
+        const instance = this.instanceStore?.get();
+        const basePrompt = buildSystemPrompt({
+          cerebellumConnected: this.cerebellum?.isConnected() ?? false,
+          tools: this.tools,
+          autoMode: this.autoMode,
+          gatewayMode: this.gatewayMode,
+          connectedNodes: this.connectedNodes,
+          gatewayUrl: this.gatewayUrl,
+          profile: this.profile,
+          finetuneStatus: {
+            enabled: !!this.fineTuneDataProvider,
+            status: this.fineTuneStatus.status,
+            progress: this.fineTuneStatus.progress,
+            lastJobId: this.fineTuneStatus.jobId || undefined,
+          },
+          recurringTasks: this.recurringTasks,
+          instanceId: instance?.id,
+          instanceCreatedAt: instance?.createdAt,
+          finetuneCount: instance?.finetuneLineage.length,
+          proactiveEnabled: this.proactiveEnabled,
+          discoveryMode: this.discoveryMode,
+        });
+        const systemParts = [basePrompt];
+        if (this.systemContext) systemParts.push(this.systemContext);
+        const fullSystemPrompt = systemParts.join('\n\n---\n\n');
+
+        const allMessages: Message[] = [
+          { id: 'system', role: 'system' as const, content: fullSystemPrompt, timestamp: 0 },
+          ...messages,
+        ];
+
+        const toolDefs = Object.fromEntries(this.tools);
+        let fullContent = '';
+        const throwIfToolAttemptAborted = () => {
+          if (!isCurrentAttempt()) {
+            throw createAbortError('Tool execution aborted');
+          }
+          throwIfAborted(abortController.signal, 'Tool execution aborted');
+        };
+
+        try {
+          const streamPromise = this.cerebrum.stream(allMessages, toolDefs, {
+            onChunk: (chunk) => {
+              if (!isCurrentAttempt() || abortController.signal.aborted) return;
+              fullContent += chunk;
+              this.markStreamWaitingModel();
+              this.emit({ type: 'message:cerebrum:chunk', chunk });
+            },
+            onToolCall: async (toolCall) => {
+              throwIfToolAttemptAborted();
+              this.logStreamDebug('tool_callback_started', {
+                toolName: toolCall.name.trim() || toolCall.name,
+                toolCallId: toolCall.id,
+              });
+
+              this.markStreamWaitingTool(toolCall);
+              const requestedToolName = toolCall.name;
+              const normalizedToolName = requestedToolName.trim() || requestedToolName;
+              this.emit({ type: 'message:cerebrum:toolcall', toolCall: { ...toolCall, name: normalizedToolName } });
+              this.emit({ type: 'tool:start', callId: toolCall.id, name: normalizedToolName });
+
+              const { toolName, result } = await this.toolRuntime.execute({
+                toolCall,
+                tools: this.tools,
+                conversationId: convId,
+                sessionKey: 'agent:main',
+                scopeKey: convId,
+                abortSignal: abortController.signal,
+              });
+              this.logStreamDebug('tool_callback_finished', {
+                toolName,
+                toolCallId: toolCall.id,
+                isError: result.isError,
+              });
+
+              throwIfAborted(abortController.signal, 'Tool execution aborted');
+
+              this.markStreamWaitingModel();
+              this.emit({ type: 'tool:end', result });
+
+              // Cerebellum verification (non-blocking)
+              if (this.cerebellum?.isConnected() && this.verificationEnabled) {
+                try {
+                  throwIfAborted(abortController.signal, 'Tool execution aborted');
+
+                  this.emit({ type: 'verification:start', callId: toolCall.id, toolName });
+
+                  const toolArgs: Record<string, string> = {};
+                  for (const [k, v] of Object.entries(toolCall.args)) {
+                    toolArgs[k] = String(v);
+                  }
+
+                  const verifyPromise = this.cerebellum.verifyToolResult(
+                    toolName,
+                    toolArgs,
+                    result.output,
+                    !result.isError,
+                  );
+
+                  const timeoutPromise = new Promise<null>((resolve) =>
+                    setTimeout(() => resolve(null), this.verificationTimeoutMs),
+                  );
+
+                  const verification = await Promise.race([verifyPromise, timeoutPromise]);
+
+                  throwIfAborted(abortController.signal, 'Tool execution aborted');
+
+                  if (verification && !verification.passed) {
+                    const failedChecks = verification.checks
+                      .filter((c) => !c.passed)
+                      .map((c) => c.description)
+                      .join(', ');
+                    result.output += `\n[Cerebellum warning: ${failedChecks}]`;
+                  }
+
+                  if (verification) {
+                    const vResult: VerificationResult = {
+                      passed: verification.passed,
+                      checks: verification.checks,
+                      modelVerdict: verification.modelVerdict,
+                      toolCallId: toolCall.id,
+                      toolName,
+                    };
+                    this.emit({ type: 'verification:end', result: vResult });
+                  }
+                } catch {
+                  // Verification failure should never block tool execution
+                }
+              }
+
+              throwIfToolAttemptAborted();
+
+              this.conversations.appendMessage(convId, 'tool', result.output, {
+                toolResult: result,
+                metadata: {
+                  toolName,
+                  ...(requestedToolName !== toolName ? { requestedToolName } : {}),
+                },
+              });
+
+              return result;
+            },
+            onFinish: (content, toolCalls) => {
+              if (!isCurrentAttempt() || abortController.signal.aborted) return;
+              this.stopStreamWatchdog();
+              let displayContent = content;
+
+              // Check for discovery completion — parse and strip the tag before storing
+              if (this.discoveryMode && content.includes('<discovery_complete>')) {
+                const parsed = this.parseDiscoveryCompletion(content);
+                // Strip the tag block from the displayed/stored content
+                displayContent = content
+                  .replace(/<discovery_complete>[\s\S]*?<\/discovery_complete>/g, '')
+                  .trim();
+                if (parsed && this.onDiscoveryComplete) {
+                  this.discoveryMode = false;
+                  this.onDiscoveryComplete(parsed);
+                  log.info('Discovery completed', { name: parsed.name });
+                }
+              }
+
+              const cerebrumMessage = this.conversations.appendMessage(
+                convId, 'cerebrum', displayContent,
+                toolCalls?.length ? { toolCalls } : undefined,
+              );
+              this.emit({ type: 'message:cerebrum:end', message: cerebrumMessage });
+              log.info('stream_finished', {
+                turnId,
+                attempt: attemptNumber,
+                conversationId: convId,
+              });
+              if (attempt > 0) {
+                this.emitWatchdog(
+                  'retry_recovered',
+                  `Retry attempt ${attemptNumber} recovered the stalled turn.`,
+                  { level: 'info' },
+                );
+              }
+            },
+            onError: (error) => {
+              if (!isCurrentAttempt()) return;
+              this.stopStreamWatchdog();
+              // Don't log/emit if the abort was intentional (nudge or Cerebellum disconnect) — catch block handles it
+              if (abortController.signal.aborted) return;
+              log.error('Cerebrum stream error', { error: error.message });
+              this.emit({ type: 'error', error });
+            },
+          }, { abortSignal: abortController.signal });
+          await this.awaitStreamAttempt(streamPromise, abortController);
+        } catch (error) {
+          const failureState = this.getStreamState();
           this.stopStreamWatchdog();
-          // Don't log/emit if the abort was intentional (nudge or Cerebellum disconnect) — catch block handles it
-          if (abortController.signal.aborted) return;
-          log.error('Cerebrum stream error', { error: error.message });
-          this.emit({ type: 'error', error });
-        },
-      }, { abortSignal: abortController.signal });
-    } catch (error) {
-      const failureState = this.getStreamState();
-      this.stopStreamWatchdog();
 
-      // Check if this was a nudge-abort (not emergency stop, not a real error)
-      const isNudgeAbort = abortController.signal.aborted && this.streamNudgeCount > 0 && this.streamNudgeCount <= this.maxNudgeRetries;
+          // Check if this was a nudge-abort (not emergency stop, not a real error)
+          const isNudgeAbort = abortController.signal.aborted && this.streamNudgeCount > 0 && this.streamNudgeCount <= this.maxNudgeRetries;
 
-      if (isNudgeAbort) {
-        // Inject nudge message and retry via the for-loop
-        const systemMessage = this.conversations.appendMessage(
-          convId, 'system',
-          '[Cerebellum] You stopped mid-response. Continue from where you left off.',
-        );
-        this.emit({ type: 'message:system', message: systemMessage });
-        continue; // retry loop
-      }
+          if (isNudgeAbort) {
+            // Inject nudge message and retry via the for-loop
+            const systemMessage = this.conversations.appendMessage(
+              convId, 'system',
+              '[Cerebellum] You stopped mid-response. Continue from where you left off.',
+            );
+            this.emit({ type: 'message:system', message: systemMessage });
+            continue; // retry loop
+          }
 
-      // Check if Cerebellum dropped mid-stream
-      if (this.cerebellum && !this.cerebellum.isConnected() && abortController.signal.aborted) {
-        const err = new Error('Cerebellum disconnected during active response. Restart it with: docker compose up -d cerebellum');
-        log.error('Cerebellum disconnected mid-stream', { error: err.message });
-        this.emit({ type: 'error', error: err });
-        break;
-      }
+          // Check if Cerebellum dropped mid-stream
+          if (this.cerebellum && !this.cerebellum.isConnected() && abortController.signal.aborted) {
+            const err = new Error('Cerebellum disconnected during active response. Restart it with: docker compose up -d cerebellum');
+            log.error('Cerebellum disconnected mid-stream', { error: err.message });
+            this.emit({ type: 'error', error: err });
+            break;
+          }
 
-      const err = error instanceof Error ? error : new Error(String(error));
-      log.error('Send message failed', {
-        error: err.message,
-        attempt,
-        conversationId: convId,
-        phase: failureState.phase,
-        activeToolName: failureState.activeToolName,
-        activeToolCallId: failureState.activeToolCallId,
-        activeToolStartedAt: failureState.activeToolStartedAt,
-      });
-      this.emit({ type: 'error', error: err });
+          const err = error instanceof Error ? error : new Error(String(error));
+          if (attempt > 0) {
+            this.emitWatchdog(
+              'retry_failed',
+              `Retry attempt ${attemptNumber} failed: ${err.message}`,
+              { level: 'error' },
+            );
+          }
+          log.error('Send message failed', {
+            error: err.message,
+            turnId,
+            attempt: attemptNumber,
+            conversationId: convId,
+            phase: failureState.phase,
+            activeToolName: failureState.activeToolName,
+            activeToolCallId: failureState.activeToolCallId,
+            activeToolStartedAt: failureState.activeToolStartedAt,
+          });
+          this.emit({ type: 'error', error: err });
+        }
+
+        break; // success — exit retry loop
+      } // end retry for-loop
+    } finally {
+      this.currentStreamTurn = null;
     }
-
-    break; // success — exit retry loop
-    } // end retry for-loop
   }
 
   async start(): Promise<void> {
