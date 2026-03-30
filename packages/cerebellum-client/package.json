@@ -1,6 +1,6 @@
 {
   "name": "@cereworker/cerebellum-client",
-  "version": "26.329.24",
+  "version": "26.329.25",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
