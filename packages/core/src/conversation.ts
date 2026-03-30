@@ -147,7 +147,7 @@ export class ConversationStore {
     const rows = this.db
       .prepare(
         `SELECT id, role, content, timestamp, toolCalls, toolResult, metadata
-         FROM messages WHERE conversationId = ? ORDER BY timestamp`,
+         FROM messages WHERE conversationId = ? ORDER BY timestamp, rowid`,
       )
       .all(conversationId) as unknown as Array<{
         id: string;
@@ -170,18 +170,14 @@ export class ConversationStore {
     }));
   }
 
-  /** Delete messages in a conversation after a given index (0-based). */
-  deleteMessagesAfter(conversationId: string, keepCount: number): number {
-    const messages = this.getMessages(conversationId);
-    if (keepCount >= messages.length) return 0;
+  /** Delete specific messages by ID from a conversation. */
+  deleteMessages(conversationId: string, messageIds: string[]): number {
+    if (messageIds.length === 0) return 0;
 
-    const idsToDelete = messages.slice(keepCount).map((m) => m.id);
-    if (idsToDelete.length === 0) return 0;
-
-    const placeholders = idsToDelete.map(() => '?').join(',');
+    const placeholders = messageIds.map(() => '?').join(',');
     const result = this.db
       .prepare(`DELETE FROM messages WHERE conversationId = ? AND id IN (${placeholders})`)
-      .run(conversationId, ...idsToDelete);
+      .run(conversationId, ...messageIds);
 
     return Number(result.changes);
   }

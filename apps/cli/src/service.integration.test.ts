@@ -351,9 +351,10 @@ describe('createService integration', () => {
       'signal_recorded',
       'retry_recovered',
     ]);
-    // Failed attempt messages cleaned up on success — only user + final cerebrum remain
+    // Failed attempt messages cleaned up; successful retry's tool results preserved
     expect(service.orchestrator.getMessages().map((message) => [message.role, message.content])).toEqual([
       ['user', 'finish the task'],
+      ['tool', 'verified work result'],
       ['cerebrum', 'Completed with evidence.'],
     ]);
     expect(service.orchestrator.getMessages().some((message) => message.metadata?.source === 'completion-resume')).toBe(false);
@@ -464,9 +465,10 @@ describe('createService integration', () => {
       'signal_recorded',
       'retry_recovered',
     ]);
-    // Failed attempt messages cleaned up on success — only user + final cerebrum remain
+    // Failed attempt messages cleaned up; successful retry's tool results preserved
     expect(service.orchestrator.getMessages().map((message) => [message.role, message.content])).toEqual([
       ['user', 'finish the task'],
+      ['tool', 'verified work result'],
       ['cerebrum', 'Completed after mixed retries.'],
     ]);
 

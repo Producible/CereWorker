@@ -335,8 +335,10 @@ describe('Orchestrator', () => {
         expect.objectContaining({ content: 'Completed the task.' }),
       ]);
       expect(messages.some((message) => message.role === 'cerebrum' && message.content.trim().length === 0)).toBe(false);
-      // Failed attempt messages (including retry nudge) are cleaned up on success
-      expect(messages.filter((message) => message.role === 'tool')).toHaveLength(0);
+      // Failed attempt tool messages are cleaned up; successful retry's tool results are preserved
+      const toolMessages = messages.filter((message) => message.role === 'tool');
+      expect(toolMessages).toHaveLength(1); // Only the successful retry's tool result
+      expect(toolMessages[0].content).toBe('worked');
     });
 
     it('accepts task_blocked as a valid terminal signal', async () => {
@@ -423,11 +425,9 @@ describe('Orchestrator', () => {
         expect(watchdogStages).toEqual([]);
         expect(errors).toHaveLength(1);
         expect(errors[0]?.message).toBe('Turn ended without a valid completion signal or final answer.');
+        // Failed attempt messages are cleaned up — only user + diagnostic remain
         expect(localOrch.getMessages().map((message) => [message.role, message.content])).toEqual([
           ['user', 'finish the task'],
-          ['tool', 'worked'],
-          ['system', '[Cerebellum] Your last turn ended without a final answer. Continue from where you left off and end by calling task_complete or task_blocked before your final answer.'],
-          ['tool', 'worked'],
           ['system', '[Cerebellum] The turn ended repeatedly without a valid completion signal or final answer.'],
         ]);
       } finally {
