@@ -61,6 +61,19 @@ export interface VerificationResult {
   toolName: string;
 }
 
+export type StreamFinishReason = 'stop' | 'length' | 'content-filter' | 'tool-calls' | 'error' | 'other';
+
+export interface StreamFinishMetadata {
+  finishReason?: StreamFinishReason;
+  rawFinishReason?: string;
+  stepFinishReasons: StreamFinishReason[];
+  chunkCount: number;
+  textChars: number;
+  toolCallCount: number;
+  hadToolActivity: boolean;
+  stepCount: number;
+}
+
 export type SubAgentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'timeout';
 export type SubAgentCleanup = 'delete' | 'keep';
 

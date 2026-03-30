@@ -255,6 +255,87 @@ describe('createService integration', () => {
     await service.shutdown();
   });
 
+  it('retries a tool-driven turn that finishes without a completion signal', async () => {
+    const service = createService(makeConfig());
+    service.orchestrator.startConversation();
+    service.orchestrator.registerTool('workTool', {
+      description: 'perform work',
+      parameters: {},
+      execute: async () => 'verified work result',
+    });
+
+    let attempts = 0;
+    service.cerebrum.stream = vi.fn(async (_messages, _tools, callbacks) => {
+      attempts++;
+
+      if (attempts === 1) {
+        await callbacks.onToolCall({ id: 'tool-1', name: 'workTool', args: {} });
+        callbacks.onFinish(
+          '',
+          [{ id: 'tool-1', name: 'workTool', args: {} }],
+          {
+            finishReason: 'tool-calls',
+            rawFinishReason: 'tool_calls',
+            stepFinishReasons: ['tool-calls'],
+            chunkCount: 1,
+            textChars: 0,
+            toolCallCount: 1,
+            hadToolActivity: true,
+            stepCount: 1,
+          },
+        );
+        return;
+      }
+
+      await callbacks.onToolCall({ id: 'tool-2', name: 'workTool', args: {} });
+      await callbacks.onToolCall({
+        id: 'sig-1',
+        name: 'task_complete',
+        args: { summary: 'done', evidence: 'Observed verified work result.' },
+      });
+      callbacks.onChunk('Completed with evidence.');
+      callbacks.onFinish(
+        'Completed with evidence.',
+        [
+          { id: 'tool-2', name: 'workTool', args: {} },
+          { id: 'sig-1', name: 'task_complete', args: { summary: 'done', evidence: 'Observed verified work result.' } },
+        ],
+        {
+          finishReason: 'stop',
+          rawFinishReason: 'stop',
+          stepFinishReasons: ['tool-calls', 'stop'],
+          chunkCount: 3,
+          textChars: 'Completed with evidence.'.length,
+          toolCallCount: 2,
+          hadToolActivity: true,
+          stepCount: 2,
+        },
+      );
+    });
+
+    const completionStages: string[] = [];
+    service.orchestrator.on('cerebrum:completion', ({ stage }) => completionStages.push(stage));
+
+    await service.orchestrator.sendMessage('finish the task');
+
+    expect(attempts).toBe(2);
+    expect(completionStages).toEqual([
+      'guard_triggered',
+      'retry_started',
+      'signal_recorded',
+      'retry_recovered',
+    ]);
+    expect(service.orchestrator.getMessages().map((message) => [message.role, message.content])).toEqual([
+      ['user', 'finish the task'],
+      ['tool', 'verified work result'],
+      ['system', '[Cerebellum] Your last turn ended without a final answer. Continue from where you left off and end by calling task_complete or task_blocked before your final answer.'],
+      ['tool', 'verified work result'],
+      ['cerebrum', 'Completed with evidence.'],
+    ]);
+
+    await service.shutdown();
+  });
+
   it('keeps short-term channel conversations separate while persisting the session map', async () => {
     const service = createService(makeConfig());
     service.cerebrum.stream = vi.fn(async (messages, _tools, callbacks) => {

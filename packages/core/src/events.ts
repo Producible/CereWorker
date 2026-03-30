@@ -17,6 +17,13 @@ export type WatchdogStage =
   | 'retry_failed'
   | 'teardown_timeout';
 
+export type CompletionStage =
+  | 'signal_recorded'
+  | 'guard_triggered'
+  | 'retry_started'
+  | 'retry_recovered'
+  | 'retry_failed';
+
 export type OrchestratorEvent =
   | { type: 'message:user'; message: Message }
   | { type: 'message:system'; message: Message }
@@ -66,6 +73,15 @@ export type OrchestratorEvent =
       attempt: number;
       conversationId: string;
       message: string;
+    } & StreamDiagnosticEvent)
+  | ({
+      type: 'cerebrum:completion';
+      stage: CompletionStage;
+      turnId: string;
+      attempt: number;
+      conversationId: string;
+      message: string;
+      signal?: 'complete' | 'blocked' | 'none';
     } & StreamDiagnosticEvent)
   | { type: 'error'; error: Error };
 

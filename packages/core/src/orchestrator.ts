@@ -5,7 +5,15 @@ import { SubAgentManager } from './sub-agent-manager.js';
 import { createSubAgentTools } from './sub-agent-tools.js';
 import { createLogger } from './logger.js';
 import { buildSystemPrompt } from './system-prompt.js';
-import type { Message, ToolCall, ToolResult, VerificationResult, AgentHealthAction, StreamPhase } from './types.js';
+import type {
+  Message,
+  ToolCall,
+  ToolResult,
+  VerificationResult,
+  AgentHealthAction,
+  StreamPhase,
+  StreamFinishMetadata,
+} from './types.js';
 import { estimateMessageTokens, shouldCompact, buildCompactionMessages } from './context.js';
 import type { InstanceStore, FineTuneRecord } from './instance.js';
 import { createAbortError, throwIfAborted } from './abort.js';
@@ -17,6 +25,28 @@ import {
 } from './tool-runtime.js';
 
 const log = createLogger('orchestrator');
+const TASK_COMPLETE_TOOL = 'task_complete';
+const TASK_BLOCKED_TOOL = 'task_blocked';
+const INTERNAL_TASK_SIGNAL_TOOL_NAMES = new Set([TASK_COMPLETE_TOOL, TASK_BLOCKED_TOOL]);
+const COMPLETION_RETRY_PROMPT =
+  '[Cerebellum] Your last turn ended without a final answer. Continue from where you left off and end by calling task_complete or task_blocked before your final answer.';
+
+type CompletionSignal = 'none' | 'complete' | 'blocked';
+
+interface AttemptCompletionState {
+  signal: CompletionSignal;
+  evidence: string;
+  summary?: string;
+  blocker?: string;
+  successfulExternalToolCount: number;
+  externalToolCallCount: number;
+  internalToolCallCount: number;
+}
+
+interface CompletionGuardFailure {
+  message: string;
+  signal: CompletionSignal;
+}
 
 export interface CerebrumAdapter {
   stream(
@@ -40,7 +70,7 @@ export interface ToolDefinition {
 export interface StreamCallbacks {
   onChunk: (chunk: string) => void;
   onToolCall: (toolCall: ToolCall) => Promise<ToolResult>;
-  onFinish: (content: string, toolCalls?: ToolCall[]) => void;
+  onFinish: (content: string, toolCalls?: ToolCall[], finishMeta?: StreamFinishMetadata) => void;
   onError: (error: Error) => void;
 }
 
@@ -125,6 +155,7 @@ export class Orchestrator extends TypedEventEmitter {
   private cerebrum: CerebrumAdapter | null = null;
   private cerebellum: CerebellumAdapter | null = null;
   private subAgentManager: SubAgentManager | null = null;
+  private internalTools = new Map<string, ToolDefinition>();
   private tools = new Map<string, ToolDefinition>();
   private activeConversationId: string | null = null;
   private systemContext: string | null = null;
@@ -160,6 +191,7 @@ export class Orchestrator extends TypedEventEmitter {
   private streamPhase: StreamPhase = 'idle';
   private activeToolCall: { id: string; name: string; startedAt: number } | null = null;
   private currentStreamTurn: { turnId: string; attempt: number; conversationId: string } | null = null;
+  private currentAttemptCompletionState: AttemptCompletionState | null = null;
   private streamAbortGraceMs = 1_000;
   private taskConversations = new Map<string, string>();
   private taskRunning = new Set<string>();
@@ -176,6 +208,7 @@ export class Orchestrator extends TypedEventEmitter {
     super();
     this.conversations = options?.conversationStore ?? new ConversationStore();
     this.toolRuntime = new ToolRuntime(options?.toolRuntime);
+    this.registerInternalTools();
     if (options?.compaction) {
       this.compactionConfig = { ...this.compactionConfig, ...options.compaction };
     }
@@ -243,13 +276,125 @@ export class Orchestrator extends TypedEventEmitter {
     return this.conversations;
   }
 
+  private registerInternalTools(): void {
+    this.internalTools.set(TASK_COMPLETE_TOOL, {
+      description: 'Record that a tool-driven task is complete. Call this once right before your final answer with a concise summary and concrete evidence.',
+      parameters: {
+        type: 'object',
+        properties: {
+          summary: { type: 'string', description: 'Short summary of what was completed' },
+          evidence: { type: 'string', description: 'Concrete evidence proving completion' },
+        },
+        required: ['summary', 'evidence'],
+        additionalProperties: false,
+      },
+      execute: async (args) => this.recordCompletionSignal('complete', args),
+    });
+
+    this.internalTools.set(TASK_BLOCKED_TOOL, {
+      description: 'Record that you are blocked and cannot finish the task. Call this once right before your final answer with the blocker and evidence.',
+      parameters: {
+        type: 'object',
+        properties: {
+          blocker: { type: 'string', description: 'Specific blocker preventing completion' },
+          evidence: { type: 'string', description: 'Concrete evidence showing the blocker' },
+        },
+        required: ['blocker', 'evidence'],
+        additionalProperties: false,
+      },
+      execute: async (args) => this.recordCompletionSignal('blocked', args),
+    });
+  }
+
+  private getAllTools(): Map<string, ToolDefinition> {
+    return new Map([...this.tools, ...this.internalTools]);
+  }
+
+  private isInternalTaskSignalTool(name: string): boolean {
+    return INTERNAL_TASK_SIGNAL_TOOL_NAMES.has(name.trim() || name);
+  }
+
+  private async recordCompletionSignal(
+    signal: 'complete' | 'blocked',
+    args: Record<string, unknown>,
+  ): Promise<ToolExecutionValue> {
+    const state = this.currentAttemptCompletionState;
+    if (!state) {
+      return {
+        output: 'No active turn is available for task completion tracking.',
+        isError: true,
+      };
+    }
+
+    const evidence = String(args.evidence ?? '').trim();
+    if (!evidence) {
+      return {
+        output: 'A non-empty evidence field is required.',
+        isError: true,
+      };
+    }
+
+    if (signal === 'complete') {
+      const summary = String(args.summary ?? '').trim();
+      if (!summary) {
+        return {
+          output: 'A non-empty summary field is required.',
+          isError: true,
+        };
+      }
+      if (state.successfulExternalToolCount === 0) {
+        return {
+          output: 'task_complete requires at least one successful external tool result in this attempt.',
+          isError: true,
+        };
+      }
+      state.signal = 'complete';
+      state.summary = summary;
+      state.blocker = undefined;
+      state.evidence = evidence;
+    } else {
+      const blocker = String(args.blocker ?? '').trim();
+      if (!blocker) {
+        return {
+          output: 'A non-empty blocker field is required.',
+          isError: true,
+        };
+      }
+      state.signal = 'blocked';
+      state.blocker = blocker;
+      state.summary = undefined;
+      state.evidence = evidence;
+    }
+
+    this.emitCompletionTrace(
+      'signal_recorded',
+      signal === 'complete'
+        ? `Recorded task_complete signal with evidence: ${evidence}`
+        : `Recorded task_blocked signal with evidence: ${evidence}`,
+      signal,
+      'info',
+    );
+
+    return {
+      output: signal === 'complete' ? 'Task completion recorded.' : 'Task blocker recorded.',
+      isError: false,
+      metadata: {
+        internal: true,
+        signal,
+      },
+    };
+  }
+
   registerTool(name: string, tool: ToolDefinition): void {
+    if (this.internalTools.has(name)) {
+      throw new Error(`Tool name ${name} is reserved for internal task signaling`);
+    }
     this.tools.set(name, tool);
   }
 
   registerTools(tools: Record<string, ToolDefinition>): void {
     for (const [name, tool] of Object.entries(tools)) {
-      this.tools.set(name, tool);
+      this.registerTool(name, tool);
     }
   }
 
@@ -269,7 +414,7 @@ export class Orchestrator extends TypedEventEmitter {
         name,
         args,
       },
-      tools: this.tools,
+      tools: this.getAllTools(),
       conversationId: options?.conversationId,
       sessionKey: options?.sessionKey,
       scopeKey: options?.scopeKey,
@@ -277,6 +422,9 @@ export class Orchestrator extends TypedEventEmitter {
   }
 
   unregisterTool(name: string): boolean {
+    if (this.internalTools.has(name)) {
+      return false;
+    }
     return this.tools.delete(name);
   }
 
@@ -756,6 +904,87 @@ export class Orchestrator extends TypedEventEmitter {
     this.emit({ type: 'cerebrum:watchdog', ...payload });
   }
 
+  private emitCompletionTrace(
+    stage: 'signal_recorded' | 'guard_triggered' | 'retry_started' | 'retry_recovered' | 'retry_failed',
+    message: string,
+    signal: CompletionSignal,
+    level: 'debug' | 'info' | 'warn' | 'error' = 'info',
+  ): void {
+    if (!this.currentStreamTurn) return;
+
+    const payload = {
+      stage,
+      turnId: this.currentStreamTurn.turnId,
+      attempt: this.currentStreamTurn.attempt,
+      conversationId: this.currentStreamTurn.conversationId,
+      signal,
+      message,
+      ...this.getStreamDiagnostics(),
+    };
+
+    switch (level) {
+      case 'debug':
+        log.debug(`completion_${stage}`, payload);
+        break;
+      case 'warn':
+        log.warn(`completion_${stage}`, payload);
+        break;
+      case 'error':
+        log.error(`completion_${stage}`, payload);
+        break;
+      default:
+        log.info(`completion_${stage}`, payload);
+        break;
+    }
+
+    this.emit({ type: 'cerebrum:completion', ...payload });
+  }
+
+  private createAttemptCompletionState(): AttemptCompletionState {
+    return {
+      signal: 'none',
+      evidence: '',
+      successfulExternalToolCount: 0,
+      externalToolCallCount: 0,
+      internalToolCallCount: 0,
+    };
+  }
+
+  private evaluateCompletionGuard(
+    displayContent: string,
+    finishMeta: StreamFinishMetadata | undefined,
+    completionState: AttemptCompletionState,
+  ): CompletionGuardFailure | null {
+    const trimmedContent = displayContent.trim();
+    const hadExternalToolActivity = completionState.externalToolCallCount > 0
+      || completionState.successfulExternalToolCount > 0;
+    const endedOnToolCalls = finishMeta?.finishReason === 'tool-calls'
+      || finishMeta?.stepFinishReasons.at(-1) === 'tool-calls';
+
+    if (trimmedContent.length === 0 && (hadExternalToolActivity || finishMeta?.hadToolActivity)) {
+      return {
+        message: 'Turn ended after tool activity without a final answer.',
+        signal: completionState.signal,
+      };
+    }
+
+    if (endedOnToolCalls) {
+      return {
+        message: 'Turn ended on tool-calls without a final answer.',
+        signal: completionState.signal,
+      };
+    }
+
+    if (hadExternalToolActivity && completionState.signal === 'none') {
+      return {
+        message: 'Tool-driven turn ended without task_complete or task_blocked.',
+        signal: completionState.signal,
+      };
+    }
+
+    return null;
+  }
+
   private async awaitStreamAttempt(
     streamPromise: Promise<void>,
     abortController: AbortController,
@@ -918,8 +1147,11 @@ export class Orchestrator extends TypedEventEmitter {
       for (let attempt = 0; attempt <= this.maxNudgeRetries; attempt++) {
         const abortController = new AbortController();
         const attemptNumber = attempt + 1;
+        const completionState = this.createAttemptCompletionState();
+        let completionGuardFailure: CompletionGuardFailure | null = null;
         const isCurrentAttempt = () => this.abortController === abortController;
         this.abortController = abortController;
+        this.currentAttemptCompletionState = completionState;
         this.currentStreamTurn = {
           turnId,
           attempt: attemptNumber,
@@ -969,9 +1201,10 @@ export class Orchestrator extends TypedEventEmitter {
 
         // Build system prompt with runtime state + skills context
         const instance = this.instanceStore?.get();
+        const allTools = this.getAllTools();
         const basePrompt = buildSystemPrompt({
           cerebellumConnected: this.cerebellum?.isConnected() ?? false,
-          tools: this.tools,
+          tools: allTools,
           autoMode: this.autoMode,
           gatewayMode: this.gatewayMode,
           connectedNodes: this.connectedNodes,
@@ -999,7 +1232,7 @@ export class Orchestrator extends TypedEventEmitter {
           ...messages,
         ];
 
-        const toolDefs = Object.fromEntries(this.tools);
+        const toolDefs = Object.fromEntries(allTools);
         let fullContent = '';
         const throwIfToolAttemptAborted = () => {
           if (!isCurrentAttempt()) {
@@ -1026,12 +1259,18 @@ export class Orchestrator extends TypedEventEmitter {
               this.markStreamWaitingTool(toolCall);
               const requestedToolName = toolCall.name;
               const normalizedToolName = requestedToolName.trim() || requestedToolName;
-              this.emit({ type: 'message:cerebrum:toolcall', toolCall: { ...toolCall, name: normalizedToolName } });
-              this.emit({ type: 'tool:start', callId: toolCall.id, name: normalizedToolName });
+              const isInternalTaskSignal = this.isInternalTaskSignalTool(normalizedToolName);
+              if (isInternalTaskSignal) {
+                completionState.internalToolCallCount++;
+              } else {
+                completionState.externalToolCallCount++;
+                this.emit({ type: 'message:cerebrum:toolcall', toolCall: { ...toolCall, name: normalizedToolName } });
+                this.emit({ type: 'tool:start', callId: toolCall.id, name: normalizedToolName });
+              }
 
               const { toolName, result } = await this.toolRuntime.execute({
                 toolCall,
-                tools: this.tools,
+                tools: allTools,
                 conversationId: convId,
                 sessionKey: 'agent:main',
                 scopeKey: convId,
@@ -1046,10 +1285,16 @@ export class Orchestrator extends TypedEventEmitter {
               throwIfAborted(abortController.signal, 'Tool execution aborted');
 
               this.markStreamWaitingModel();
-              this.emit({ type: 'tool:end', result });
+              if (!isInternalTaskSignal) {
+                this.emit({ type: 'tool:end', result });
+              }
+
+              if (!isInternalTaskSignal && !result.isError) {
+                completionState.successfulExternalToolCount++;
+              }
 
               // Cerebellum verification (non-blocking)
-              if (this.cerebellum?.isConnected() && this.verificationEnabled) {
+              if (!isInternalTaskSignal && this.cerebellum?.isConnected() && this.verificationEnabled) {
                 try {
                   throwIfAborted(abortController.signal, 'Tool execution aborted');
 
@@ -1100,20 +1345,36 @@ export class Orchestrator extends TypedEventEmitter {
 
               throwIfToolAttemptAborted();
 
-              this.conversations.appendMessage(convId, 'tool', result.output, {
-                toolResult: result,
-                metadata: {
-                  toolName,
-                  ...(requestedToolName !== toolName ? { requestedToolName } : {}),
-                },
-              });
+              if (!isInternalTaskSignal) {
+                this.conversations.appendMessage(convId, 'tool', result.output, {
+                  toolResult: result,
+                  metadata: {
+                    toolName,
+                    ...(requestedToolName !== toolName ? { requestedToolName } : {}),
+                  },
+                });
+              }
 
               return result;
             },
-            onFinish: (content, toolCalls) => {
+            onFinish: (content, toolCalls, finishMeta) => {
               if (!isCurrentAttempt() || abortController.signal.aborted) return;
               this.stopStreamWatchdog();
               let displayContent = content;
+              const visibleToolCalls = toolCalls?.filter((toolCall) => !this.isInternalTaskSignalTool(toolCall.name));
+
+              log.info('stream_finish_observed', {
+                turnId,
+                attempt: attemptNumber,
+                conversationId: convId,
+                finishReason: finishMeta?.finishReason,
+                rawFinishReason: finishMeta?.rawFinishReason,
+                stepCount: finishMeta?.stepCount ?? 0,
+                chunkCount: finishMeta?.chunkCount ?? 0,
+                toolCallCount: finishMeta?.toolCallCount ?? 0,
+                textChars: finishMeta?.textChars ?? content.length,
+                completionSignal: completionState.signal,
+              });
 
               // Check for discovery completion — parse and strip the tag before storing
               if (this.discoveryMode && content.includes('<discovery_complete>')) {
@@ -1129,9 +1390,33 @@ export class Orchestrator extends TypedEventEmitter {
                 }
               }
 
+              const guardFailure = this.evaluateCompletionGuard(displayContent, finishMeta, completionState);
+              if (guardFailure) {
+                completionGuardFailure = guardFailure;
+                this.emitCompletionTrace(
+                  'guard_triggered',
+                  guardFailure.message,
+                  guardFailure.signal,
+                  'warn',
+                );
+                log.warn('completion_guard_triggered', {
+                  turnId,
+                  attempt: attemptNumber,
+                  conversationId: convId,
+                  finishReason: finishMeta?.finishReason,
+                  rawFinishReason: finishMeta?.rawFinishReason,
+                  stepCount: finishMeta?.stepCount ?? 0,
+                  chunkCount: finishMeta?.chunkCount ?? 0,
+                  toolCallCount: finishMeta?.toolCallCount ?? 0,
+                  textChars: finishMeta?.textChars ?? displayContent.length,
+                  completionSignal: completionState.signal,
+                });
+                return;
+              }
+
               const cerebrumMessage = this.conversations.appendMessage(
                 convId, 'cerebrum', displayContent,
-                toolCalls?.length ? { toolCalls } : undefined,
+                visibleToolCalls?.length ? { toolCalls: visibleToolCalls } : undefined,
               );
               this.emit({ type: 'message:cerebrum:end', message: cerebrumMessage });
               log.info('stream_finished', {
@@ -1140,11 +1425,20 @@ export class Orchestrator extends TypedEventEmitter {
                 conversationId: convId,
               });
               if (attempt > 0) {
-                this.emitWatchdog(
-                  'retry_recovered',
-                  `Retry attempt ${attemptNumber} recovered the stalled turn.`,
-                  { level: 'info' },
-                );
+                if (completionState.signal !== 'none') {
+                  this.emitCompletionTrace(
+                    'retry_recovered',
+                    `Retry attempt ${attemptNumber} produced a valid completion.`,
+                    completionState.signal,
+                    'info',
+                  );
+                } else {
+                  this.emitWatchdog(
+                    'retry_recovered',
+                    `Retry attempt ${attemptNumber} recovered the stalled turn.`,
+                    { level: 'info' },
+                  );
+                }
               }
             },
             onError: (error) => {
@@ -1157,6 +1451,44 @@ export class Orchestrator extends TypedEventEmitter {
             },
           }, { abortSignal: abortController.signal });
           await this.awaitStreamAttempt(streamPromise, abortController);
+
+          const completionFailure = completionGuardFailure as CompletionGuardFailure | null;
+          if (completionFailure !== null) {
+            const completionSignal = completionFailure.signal;
+            if (attempt < this.maxNudgeRetries) {
+              const systemMessage = this.conversations.appendMessage(
+                convId,
+                'system',
+                COMPLETION_RETRY_PROMPT,
+              );
+              this.emit({ type: 'message:system', message: systemMessage });
+              this.emitCompletionTrace(
+                'retry_started',
+                `Retrying attempt ${attemptNumber + 1} after incomplete completion.`,
+                completionSignal,
+                'info',
+              );
+              continue;
+            }
+
+            const diagnosticMessage = this.conversations.appendMessage(
+              convId,
+              'system',
+              '[Cerebellum] The turn ended repeatedly without a valid completion signal or final answer.',
+            );
+            this.emit({ type: 'message:system', message: diagnosticMessage });
+            this.emitCompletionTrace(
+              'retry_failed',
+              'The turn ended repeatedly without a valid completion signal or final answer.',
+              completionSignal,
+              'error',
+            );
+            this.emit({
+              type: 'error',
+              error: new Error('Turn ended without a valid completion signal or final answer.'),
+            });
+            break;
+          }
         } catch (error) {
           const failureState = this.getStreamState();
           this.stopStreamWatchdog();
@@ -1201,6 +1533,8 @@ export class Orchestrator extends TypedEventEmitter {
             activeToolStartedAt: failureState.activeToolStartedAt,
           });
           this.emit({ type: 'error', error: err });
+        } finally {
+          this.currentAttemptCompletionState = null;
         }
 
         break; // success — exit retry loop

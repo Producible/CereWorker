@@ -1,4 +1,4 @@
-import type { Message, ToolCall, ToolResult } from '@cereworker/core';
+import type { Message, ToolCall, ToolResult, StreamFinishMetadata } from '@cereworker/core';
 
 export interface CerebrumConfig {
   defaultProvider: string;
@@ -32,6 +32,6 @@ export interface CerebrumRequest {
 export interface StreamCallbacks {
   onChunk: (chunk: string) => void;
   onToolCall: (toolCall: ToolCall) => Promise<ToolResult>;
-  onFinish: (content: string, toolCalls?: ToolCall[]) => void;
+  onFinish: (content: string, toolCalls?: ToolCall[], meta?: StreamFinishMetadata) => void;
   onError: (error: Error) => void;
 }

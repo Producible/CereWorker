@@ -16,6 +16,8 @@ export type {
   AgentHealthAction,
   SystemStatus,
   StreamPhase,
+  StreamFinishReason,
+  StreamFinishMetadata,
 } from './types.js';
 
 export type { OrchestratorEvent } from './events.js';

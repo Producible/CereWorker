@@ -21,8 +21,18 @@ interface AppProps {
   resumeConversationId?: string;
 }
 
-type WatchdogTrace = {
-  stage: 'stalled' | 'nudge_requested' | 'abort_issued' | 'retry_started' | 'retry_recovered' | 'retry_failed' | 'teardown_timeout';
+type StreamTrace = {
+  label: 'Watchdog' | 'Completion';
+  stage:
+    | 'stalled'
+    | 'nudge_requested'
+    | 'abort_issued'
+    | 'retry_started'
+    | 'retry_recovered'
+    | 'retry_failed'
+    | 'teardown_timeout'
+    | 'signal_recorded'
+    | 'guard_triggered';
   message: string;
 };
 
@@ -39,7 +49,7 @@ export function App({ config, resumeConversationId }: AppProps) {
   const [gatewayServer, setGatewayServer] = useState<GatewayServer | null>(null);
   const [gatewayClient, setGatewayClient] = useState<GatewayNodeClient | null>(null);
   const [updateAvailable, setUpdateAvailable] = useState<string | null>(null);
-  const [watchdogTrace, setWatchdogTrace] = useState<WatchdogTrace | null>(null);
+  const [streamTrace, setStreamTrace] = useState<StreamTrace | null>(null);
 
   useEffect(() => {
     void checkForUpdate(APP_VERSION).then((v) => { if (v) setUpdateAvailable(v); });
@@ -132,29 +142,32 @@ export function App({ config, resumeConversationId }: AppProps) {
     const updateStreamState = () => {
       setStreamStall(orchestrator.getStreamState().stallDetected);
     };
-    const clearWatchdogTrace = () => setWatchdogTrace(null);
+    const clearStreamTrace = () => setStreamTrace(null);
 
     updateStreamState();
     const timer = setInterval(updateStreamState, 250);
     const unsubs = [
-      orchestrator.on('message:user', clearWatchdogTrace),
+      orchestrator.on('message:user', clearStreamTrace),
       orchestrator.on('message:cerebrum:start', updateStreamState),
       orchestrator.on('message:cerebrum:chunk', updateStreamState),
       orchestrator.on('message:cerebrum:end', () => {
         updateStreamState();
-        clearWatchdogTrace();
+        clearStreamTrace();
       }),
       orchestrator.on('message:cerebrum:toolcall', updateStreamState),
       orchestrator.on('message:system', updateStreamState),
       orchestrator.on('cerebrum:stall', updateStreamState),
       orchestrator.on('cerebrum:stall:nudge', updateStreamState),
       orchestrator.on('cerebrum:watchdog', ({ stage, message }) => {
-        setWatchdogTrace({ stage, message });
+        setStreamTrace({ label: 'Watchdog', stage, message });
       }),
-      orchestrator.on('conversation:resumed', clearWatchdogTrace),
+      orchestrator.on('cerebrum:completion', ({ stage, message }) => {
+        setStreamTrace({ label: 'Completion', stage, message });
+      }),
+      orchestrator.on('conversation:resumed', clearStreamTrace),
       orchestrator.on('error', () => {
         updateStreamState();
-        clearWatchdogTrace();
+        clearStreamTrace();
       }),
     ];
 
@@ -175,7 +188,7 @@ export function App({ config, resumeConversationId }: AppProps) {
     (text: string) => {
       setStickyMessage(false);
       setSystemMessage(null);
-      setWatchdogTrace(null);
+      setStreamTrace(null);
       orchestrator.sendMessage(text).catch((err) => {
         orchestrator.emit({ type: 'error', error: err instanceof Error ? err : new Error(String(err)) });
       });
@@ -324,16 +337,16 @@ export function App({ config, resumeConversationId }: AppProps) {
         extensionConnected={extensionConnected}
         streamStall={streamStall}
       />
-      {watchdogTrace && (
+      {streamTrace && (
         <Box paddingX={1}>
           <Text
             color={
-              watchdogTrace.stage === 'retry_failed' ? 'red'
-                : watchdogTrace.stage === 'stalled' || watchdogTrace.stage === 'abort_issued' || watchdogTrace.stage === 'teardown_timeout' ? 'yellow'
+              streamTrace.stage === 'retry_failed' ? 'red'
+                : streamTrace.stage === 'stalled' || streamTrace.stage === 'abort_issued' || streamTrace.stage === 'teardown_timeout' || streamTrace.stage === 'guard_triggered' ? 'yellow'
                   : 'cyan'
             }
           >
-            Watchdog: {watchdogTrace.message}
+            {streamTrace.label}: {streamTrace.message}
           </Text>
         </Box>
       )}

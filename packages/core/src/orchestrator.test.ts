@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Orchestrator } from './orchestrator.js';
 import type { CerebrumAdapter, CerebellumAdapter, ToolDefinition } from './orchestrator.js';
 import { ConversationStore } from './conversation.js';
+import type { StreamFinishMetadata } from './types.js';
 
 function createMockCerebrum(): CerebrumAdapter {
   return {
@@ -28,6 +29,20 @@ function createTestTool(output = 'ok'): ToolDefinition {
     description: 'test tool',
     parameters: {},
     execute: vi.fn(async () => output),
+  };
+}
+
+function makeFinishMeta(overrides: Partial<StreamFinishMetadata> = {}): StreamFinishMetadata {
+  return {
+    finishReason: 'stop',
+    rawFinishReason: 'stop',
+    stepFinishReasons: ['stop'],
+    chunkCount: 1,
+    textChars: 4,
+    toolCallCount: 0,
+    hadToolActivity: false,
+    stepCount: 1,
+    ...overrides,
   };
 }
 
@@ -257,6 +272,113 @@ describe('Orchestrator', () => {
       expect(messages).toHaveLength(2); // user + cerebrum
       expect(messages[0].role).toBe('user');
       expect(messages[1].role).toBe('cerebrum');
+    });
+
+    it('retries a tool-driven turn that ends without a completion signal', async () => {
+      orch.registerTool('workTool', createTestTool('worked'));
+      const cerebrum: CerebrumAdapter = {
+        stream: vi.fn(async (_messages, _tools, callbacks) => {
+          callbacks.onToolCall({ id: 'tool-1', name: 'workTool', args: {} });
+          callbacks.onFinish('', [{ id: 'tool-1', name: 'workTool', args: {} }], makeFinishMeta({
+            finishReason: 'tool-calls',
+            rawFinishReason: 'tool_calls',
+            stepFinishReasons: ['tool-calls'],
+            toolCallCount: 1,
+            hadToolActivity: true,
+            textChars: 0,
+          }));
+        })
+          .mockImplementationOnce(async (_messages, _tools, callbacks) => {
+            await callbacks.onToolCall({ id: 'tool-1', name: 'workTool', args: {} });
+            callbacks.onFinish('', [{ id: 'tool-1', name: 'workTool', args: {} }], makeFinishMeta({
+              finishReason: 'tool-calls',
+              rawFinishReason: 'tool_calls',
+              stepFinishReasons: ['tool-calls'],
+              toolCallCount: 1,
+              hadToolActivity: true,
+              textChars: 0,
+            }));
+          })
+          .mockImplementationOnce(async (_messages, _tools, callbacks) => {
+            await callbacks.onToolCall({ id: 'tool-2', name: 'workTool', args: {} });
+            await callbacks.onToolCall({
+              id: 'sig-1',
+              name: 'task_complete',
+              args: { summary: 'done', evidence: 'Observed the expected result.' },
+            });
+            callbacks.onFinish(
+              'Completed the task.',
+              [
+                { id: 'tool-2', name: 'workTool', args: {} },
+                { id: 'sig-1', name: 'task_complete', args: { summary: 'done', evidence: 'Observed the expected result.' } },
+              ],
+              makeFinishMeta({
+                finishReason: 'stop',
+                rawFinishReason: 'stop',
+                stepFinishReasons: ['tool-calls', 'stop'],
+                toolCallCount: 2,
+                hadToolActivity: true,
+                textChars: 'Completed the task.'.length,
+                stepCount: 2,
+              }),
+            );
+          }),
+        summarize: vi.fn(async () => 'summary'),
+      };
+      orch.setCerebrum(cerebrum);
+      orch.startConversation();
+
+      await orch.sendMessage('finish the task');
+
+      const messages = orch.getMessages();
+      expect(messages.filter((message) => message.role === 'cerebrum')).toEqual([
+        expect.objectContaining({ content: 'Completed the task.' }),
+      ]);
+      expect(messages.some((message) => message.role === 'cerebrum' && message.content.trim().length === 0)).toBe(false);
+      expect(messages.some((message) => message.role === 'system' && message.content.includes('task_complete or task_blocked'))).toBe(true);
+    });
+
+    it('accepts task_blocked as a valid terminal signal', async () => {
+      orch.registerTool('workTool', createTestTool('login required'));
+      const cerebrum: CerebrumAdapter = {
+        stream: vi.fn(async (_messages, _tools, callbacks) => {
+          await callbacks.onToolCall({ id: 'tool-1', name: 'workTool', args: {} });
+          await callbacks.onToolCall({
+            id: 'sig-1',
+            name: 'task_blocked',
+            args: { blocker: 'Login required', evidence: 'The site requires authentication.' },
+          });
+          callbacks.onFinish(
+            'Blocked: the site requires authentication before I can continue.',
+            [
+              { id: 'tool-1', name: 'workTool', args: {} },
+              { id: 'sig-1', name: 'task_blocked', args: { blocker: 'Login required', evidence: 'The site requires authentication.' } },
+            ],
+            makeFinishMeta({
+              finishReason: 'stop',
+              rawFinishReason: 'stop',
+              stepFinishReasons: ['tool-calls', 'stop'],
+              toolCallCount: 2,
+              hadToolActivity: true,
+              textChars: 'Blocked: the site requires authentication before I can continue.'.length,
+              stepCount: 2,
+            }),
+          );
+        }),
+        summarize: vi.fn(async () => 'summary'),
+      };
+      orch.setCerebrum(cerebrum);
+      orch.startConversation();
+
+      await orch.sendMessage('finish the task');
+
+      const messages = orch.getMessages();
+      expect(cerebrum.stream).toHaveBeenCalledOnce();
+      expect(messages.at(-1)).toMatchObject({
+        role: 'cerebrum',
+        content: 'Blocked: the site requires authentication before I can continue.',
+      });
+      expect(messages.some((message) => message.role === 'system' && message.content.includes('task_complete or task_blocked'))).toBe(false);
     });
 
     it('emits error event on stream failure', async () => {

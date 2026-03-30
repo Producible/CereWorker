@@ -14,6 +14,8 @@ import {
   raceWithAbort,
   throwIfAborted,
   type Message,
+  type StreamFinishMetadata,
+  type StreamFinishReason,
   type ToolCall as CWToolCall,
   type ToolDefinition,
 } from '@cereworker/core';
@@ -43,6 +45,20 @@ const TOOL_PARAMETER_SCHEMA_KEYS = new Set([
   'description',
 ]);
 const log = createLogger('provider');
+
+function asFinishReason(value: unknown): StreamFinishReason | undefined {
+  switch (value) {
+    case 'stop':
+    case 'length':
+    case 'content-filter':
+    case 'tool-calls':
+    case 'error':
+    case 'other':
+      return value;
+    default:
+      return undefined;
+  }
+}
 
 interface RuntimeProviderDefinition {
   runtimeFamily: ProviderRuntimeFamily;
@@ -496,6 +512,11 @@ export class CerebrumProvider {
 
         let fullContent = '';
         const collectedToolCalls: CWToolCall[] = [];
+        const stepFinishReasons: StreamFinishReason[] = [];
+        let finishReason: StreamFinishReason | undefined;
+        let rawFinishReason: string | undefined;
+        let chunkCount = 0;
+        let stepCount = 0;
 
         // Wrap the stream iteration with abort awareness — the AI SDK may not
         // break the async iterator when abortSignal fires during multi-step tool use
@@ -511,7 +532,17 @@ export class CerebrumProvider {
             : await iterator.next();
 
           if (nextResult.done) break;
-          const part = nextResult.value as { type: string; text?: string; toolCallId?: string; toolName?: string; input?: unknown; error?: unknown };
+          chunkCount++;
+          const part = nextResult.value as {
+            type: string;
+            text?: string;
+            toolCallId?: string;
+            toolName?: string;
+            input?: unknown;
+            error?: unknown;
+            finishReason?: unknown;
+            rawFinishReason?: unknown;
+          };
 
           switch (part.type) {
             case 'text-delta':
@@ -528,6 +559,28 @@ export class CerebrumProvider {
                 ),
               });
               break;
+            case 'finish-step': {
+              stepCount++;
+              const stepFinishReason = asFinishReason(part.finishReason);
+              if (stepFinishReason) {
+                stepFinishReasons.push(stepFinishReason);
+                finishReason = stepFinishReason;
+              }
+              if (typeof part.rawFinishReason === 'string') {
+                rawFinishReason = part.rawFinishReason;
+              }
+              break;
+            }
+            case 'finish': {
+              const streamFinishReason = asFinishReason(part.finishReason);
+              if (streamFinishReason) {
+                finishReason = streamFinishReason;
+              }
+              if (typeof part.rawFinishReason === 'string') {
+                rawFinishReason = part.rawFinishReason;
+              }
+              break;
+            }
             case 'error':
               callbacks.onError(
                 part.error instanceof Error ? part.error : new Error(String(part.error)),
@@ -542,7 +595,17 @@ export class CerebrumProvider {
           throw abortErr;
         }
 
-        callbacks.onFinish(fullContent, collectedToolCalls.length > 0 ? collectedToolCalls : undefined);
+        const finishMeta: StreamFinishMetadata = {
+          finishReason,
+          rawFinishReason,
+          stepFinishReasons,
+          chunkCount,
+          textChars: fullContent.length,
+          toolCallCount: collectedToolCalls.length,
+          hadToolActivity: collectedToolCalls.length > 0,
+          stepCount,
+        };
+        callbacks.onFinish(fullContent, collectedToolCalls.length > 0 ? collectedToolCalls : undefined, finishMeta);
       } catch (error) {
         const provider = options?.provider ?? this.config.defaultProvider;
         const modelName = options?.model ?? this.config.defaultModel;

@@ -606,13 +606,21 @@ describe('CerebrumProvider OpenAI Codex OAuth', () => {
       },
     );
 
-    expect(onFinish).toHaveBeenCalledWith('done', [
-      {
-        id: 'call-1',
-        name: 'spawn_agent',
-        args: { task: 'delegate' },
-      },
-    ]);
+    expect(onFinish).toHaveBeenCalledWith(
+      'done',
+      [
+        {
+          id: 'call-1',
+          name: 'spawn_agent',
+          args: { task: 'delegate' },
+        },
+      ],
+      expect.objectContaining({
+        hadToolActivity: true,
+        toolCallCount: 1,
+        textChars: 4,
+      }),
+    );
   });
 
   it('uses fallback OpenAI instructions for Codex single-shot generation', async () => {
@@ -834,13 +842,21 @@ describe('CerebrumProvider OpenAI Codex OAuth', () => {
       },
     );
 
-    expect(onFinish).toHaveBeenCalledWith('done', [
-      {
-        id: 'call-1',
-        name: 'search',
-        args: { query: 'Tom & Jerry "test"' },
-      },
-    ]);
+    expect(onFinish).toHaveBeenCalledWith(
+      'done',
+      [
+        {
+          id: 'call-1',
+          name: 'search',
+          args: { query: 'Tom & Jerry "test"' },
+        },
+      ],
+      expect.objectContaining({
+        hadToolActivity: true,
+        toolCallCount: 1,
+        textChars: 4,
+      }),
+    );
 
     const request = streamTextMock.mock.calls[0][0] as {
       tools: Record<string, { execute: (args: Record<string, unknown>, ctx: { toolCallId: string }) => Promise<string> }>;
@@ -963,6 +979,63 @@ describe('CerebrumProvider abortSignal', () => {
 
     const args = streamTextMock.mock.calls[0][0] as { abortSignal?: AbortSignal };
     expect(args.abortSignal).toBeUndefined();
+  });
+
+  it('forwards finish metadata from the streamed response', async () => {
+    streamTextMock.mockReturnValueOnce({
+      fullStream: (async function* () {
+        yield {
+          type: 'tool-call',
+          toolCallId: 'tool-1',
+          toolName: 'workTool',
+          input: {},
+        };
+        yield { type: 'text-delta', text: 'done' };
+        yield { type: 'finish-step', finishReason: 'tool-calls', rawFinishReason: 'tool_calls' };
+        yield { type: 'finish', finishReason: 'stop', rawFinishReason: 'stop' };
+      })(),
+    });
+
+    const provider = new CerebrumProvider({
+      defaultProvider: 'openai',
+      defaultModel: 'gpt-4o',
+      providers: { openai: { apiKey: 'test-key' } },
+      maxSteps: 10,
+      temperature: 0.7,
+    });
+
+    const onFinish = vi.fn();
+    await provider.stream(
+      [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }],
+      {
+        workTool: {
+          description: 'work',
+          parameters: {},
+          execute: async () => 'unused',
+        },
+      },
+      {
+        onChunk: vi.fn(),
+        onToolCall: async () => ({ callId: 'tool-1', output: 'ok', isError: false }),
+        onFinish,
+        onError: vi.fn(),
+      },
+    );
+
+    expect(onFinish).toHaveBeenCalledWith(
+      'done',
+      [{ id: 'tool-1', name: 'workTool', args: {} }],
+      {
+        finishReason: 'stop',
+        rawFinishReason: 'stop',
+        stepFinishReasons: ['tool-calls'],
+        chunkCount: 4,
+        textChars: 4,
+        toolCallCount: 1,
+        hadToolActivity: true,
+        stepCount: 1,
+      },
+    );
   });
 
   it('breaks out when a streamed tool call hangs and the abort signal fires', async () => {
