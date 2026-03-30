@@ -58,6 +58,13 @@ interface StallRetrySnapshot {
   recentExternalToolSummaries: Array<{ toolName: string; outputPreview: string; isError: boolean }>;
 }
 
+interface CompletionRetrySnapshot {
+  attempt: number;
+  finishReason?: string;
+  partialContent?: string;
+  recentExternalToolSummaries: Array<{ toolName: string; outputPreview: string; isError: boolean }>;
+}
+
 type RetryCause = 'stall' | 'completion';
 
 export interface CerebrumAdapter {
@@ -1043,6 +1050,65 @@ export class Orchestrator extends TypedEventEmitter {
     };
   }
 
+  private buildCompletionRetrySnapshot(params: {
+    attempt: number;
+    partialContent: string;
+    completionState: AttemptCompletionState;
+    finishMeta?: StreamFinishMetadata;
+  }): CompletionRetrySnapshot | null {
+    const partialContent = this.truncateResumeText(params.partialContent, 600);
+    const recentExternalToolSummaries = params.completionState.recentExternalToolSummaries.slice(-4);
+    const finishReason = params.finishMeta?.finishReason ?? params.finishMeta?.stepFinishReasons.at(-1);
+    if (!partialContent && recentExternalToolSummaries.length === 0 && !finishReason) {
+      return null;
+    }
+
+    return {
+      attempt: params.attempt,
+      finishReason,
+      partialContent: partialContent || undefined,
+      recentExternalToolSummaries,
+    };
+  }
+
+  private buildCompletionRetryContextMessage(snapshot: CompletionRetrySnapshot | null): Message | null {
+    if (!snapshot) return null;
+
+    const lines = [
+      '[Completion resume context]',
+      `The previous attempt (${snapshot.attempt}) ended without a valid completion${snapshot.finishReason ? ` (finish reason: ${snapshot.finishReason})` : ''}.`,
+      'Resume from the most advanced confirmed state below. Do not restart already completed actions unless the current page state contradicts them.',
+      'Continue from that state, then either finish the task or report a concrete blocker. End by calling task_complete or task_blocked before your final answer.',
+    ];
+
+    if (snapshot.recentExternalToolSummaries.length > 0) {
+      lines.push('', 'Confirmed external tool results from the previous attempt:');
+      for (const summary of snapshot.recentExternalToolSummaries) {
+        const prefix = summary.isError ? '[error]' : '[ok]';
+        lines.push(`- ${summary.toolName}: ${prefix} ${summary.outputPreview}`);
+      }
+    }
+
+    if (snapshot.partialContent) {
+      lines.push(
+        '',
+        'Partial assistant text emitted before the attempt ended:',
+        snapshot.partialContent,
+      );
+    }
+
+    return {
+      id: `system:completion-retry:${snapshot.attempt}`,
+      role: 'system',
+      content: lines.join('\n'),
+      timestamp: 0,
+      metadata: {
+        transient: true,
+        source: 'completion-resume',
+      },
+    };
+  }
+
   private formatToolOutputPreview(output: string): string {
     return this.truncateResumeText(output, 180)
       .replace(/\s+/g, ' ')
@@ -1261,7 +1327,7 @@ export class Orchestrator extends TypedEventEmitter {
 
     this.streamNudgeCount = 0;
     let completionRetryCount = 0;
-    let nextStallRetryContext: Message | null = null;
+    let nextRetryContext: Message | null = null;
     const turnId = nanoid(10);
     const maxTotalAttempts = 1 + this.maxNudgeRetries + this.maxCompletionRetries;
     let loopTerminated = false;
@@ -1350,8 +1416,8 @@ export class Orchestrator extends TypedEventEmitter {
         if (this.systemContext) systemParts.push(this.systemContext);
         const fullSystemPrompt = systemParts.join('\n\n---\n\n');
 
-        const transientRetryMessages = nextStallRetryContext ? [nextStallRetryContext] : [];
-        nextStallRetryContext = null;
+        const transientRetryMessages = nextRetryContext ? [nextRetryContext] : [];
+        nextRetryContext = null;
         const allMessages: Message[] = [
           { id: 'system', role: 'system' as const, content: fullSystemPrompt, timestamp: 0 },
           ...transientRetryMessages,
@@ -1520,6 +1586,23 @@ export class Orchestrator extends TypedEventEmitter {
               const guardFailure = this.evaluateCompletionGuard(displayContent, finishMeta, completionState);
               if (guardFailure) {
                 completionGuardFailure = guardFailure;
+                nextRetryContext = this.buildCompletionRetryContextMessage(this.buildCompletionRetrySnapshot({
+                  attempt: attemptNumber,
+                  partialContent: fullContent || displayContent,
+                  completionState,
+                  finishMeta,
+                }));
+                if (nextRetryContext) {
+                  log.info('completion_retry_context_prepared', {
+                    turnId,
+                    attempt: attemptNumber,
+                    conversationId: convId,
+                    finishReason: finishMeta?.finishReason,
+                    rawFinishReason: finishMeta?.rawFinishReason,
+                    hasPartialContent: (fullContent || displayContent).trim().length > 0,
+                    recentToolSummaries: completionState.recentExternalToolSummaries.length,
+                  });
+                }
                 this.emitCompletionTrace(
                   'guard_triggered',
                   guardFailure.message,
@@ -1633,7 +1716,7 @@ export class Orchestrator extends TypedEventEmitter {
             && this.streamNudgeCount <= this.maxNudgeRetries;
 
           if (isNudgeAbort) {
-            nextStallRetryContext = this.buildStallRetryContextMessage(this.buildStallRetrySnapshot({
+            nextRetryContext = this.buildStallRetryContextMessage(this.buildStallRetrySnapshot({
               attempt: attemptNumber,
               phase: failureState.phase,
               activeToolName: failureState.activeToolName,

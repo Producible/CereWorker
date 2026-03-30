@@ -37,6 +37,7 @@ describe('Logger', () => {
 
     const output = stderrSpy.mock.calls[0][0] as string;
     const parsed = JSON.parse(output.trim());
+    expect(parsed.tz).toBe('UTC');
     expect(parsed.code).toBe(42);
     expect(parsed.reason).toBe('timeout');
   });

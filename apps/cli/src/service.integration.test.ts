@@ -280,12 +280,19 @@ describe('createService integration', () => {
       execute: async () => 'verified work result',
     });
 
+    const attemptInputs: Array<Array<{ role: string; content: string; source?: unknown }>> = [];
     let attempts = 0;
-    service.cerebrum.stream = vi.fn(async (_messages, _tools, callbacks) => {
+    service.cerebrum.stream = vi.fn(async (messages, _tools, callbacks) => {
+      attemptInputs.push(messages.map((message: { role: string; content: string; metadata?: Record<string, unknown> }) => ({
+        role: message.role,
+        content: message.content,
+        source: message.metadata?.source,
+      })));
       attempts++;
 
       if (attempts === 1) {
         await callbacks.onToolCall({ id: 'tool-1', name: 'workTool', args: {} });
+        callbacks.onChunk('I already reviewed the profile and just need to finalize the response.');
         callbacks.onFinish(
           '',
           [{ id: 'tool-1', name: 'workTool', args: {} }],
@@ -335,6 +342,11 @@ describe('createService integration', () => {
     await service.orchestrator.sendMessage('finish the task');
 
     expect(attempts).toBe(2);
+    const completionResumeMessage = attemptInputs[1]?.find((message) =>
+      message.content.startsWith('[Completion resume context]'));
+    expect(completionResumeMessage).toBeDefined();
+    expect(completionResumeMessage?.content).toContain('verified work result');
+    expect(completionResumeMessage?.content).toContain('I already reviewed the profile and just need to finalize the response.');
     expect(completionStages).toEqual([
       'guard_triggered',
       'retry_started',
@@ -348,6 +360,7 @@ describe('createService integration', () => {
       ['tool', 'verified work result'],
       ['cerebrum', 'Completed with evidence.'],
     ]);
+    expect(service.orchestrator.getMessages().some((message) => message.metadata?.source === 'completion-resume')).toBe(false);
 
     await service.shutdown();
   });

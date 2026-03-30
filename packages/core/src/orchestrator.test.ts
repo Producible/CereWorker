@@ -497,6 +497,75 @@ describe('Orchestrator', () => {
       }
     });
 
+    it('injects transient resume context after a completion retry', async () => {
+      const localOrch = new Orchestrator({ maxNudgeRetries: 1 });
+      try {
+        localOrch.registerTool('workTool', createTestTool('Opened the profile page.'));
+
+        const attemptInputs: Message[][] = [];
+        let attempts = 0;
+        const cerebrum: CerebrumAdapter = {
+          stream: vi.fn(async (messages, _tools, callbacks) => {
+            attemptInputs.push(messages);
+            attempts++;
+
+            if (attempts === 1) {
+              await callbacks.onToolCall({ id: 'tool-1', name: 'workTool', args: {} });
+              callbacks.onChunk('I followed the account and am ready to publish the summary.');
+              callbacks.onFinish(
+                '',
+                [{ id: 'tool-1', name: 'workTool', args: {} }],
+                makeFinishMeta({
+                  finishReason: 'tool-calls',
+                  rawFinishReason: 'tool_calls',
+                  stepFinishReasons: ['tool-calls'],
+                  toolCallCount: 1,
+                  hadToolActivity: true,
+                  textChars: 0,
+                }),
+              );
+              return;
+            }
+
+            await callbacks.onToolCall({
+              id: 'sig-1',
+              name: 'task_complete',
+              args: { summary: 'done', evidence: 'Observed the profile update.' },
+            });
+            callbacks.onFinish(
+              'Completed after resuming the confirmed state.',
+              [{ id: 'sig-1', name: 'task_complete', args: { summary: 'done', evidence: 'Observed the profile update.' } }],
+              makeFinishMeta({
+                finishReason: 'stop',
+                rawFinishReason: 'stop',
+                stepFinishReasons: ['tool-calls', 'stop'],
+                toolCallCount: 1,
+                hadToolActivity: true,
+                textChars: 'Completed after resuming the confirmed state.'.length,
+                stepCount: 2,
+              }),
+            );
+          }),
+          summarize: vi.fn(async () => 'summary'),
+        };
+        localOrch.setCerebrum(cerebrum);
+        localOrch.startConversation();
+
+        await localOrch.sendMessage('finish the task');
+
+        expect(attempts).toBe(2);
+        const retryMessages = attemptInputs[1] ?? [];
+        const resumeMessage = retryMessages.find(
+          (message) => message.role === 'system' && message.metadata?.source === 'completion-resume',
+        );
+        expect(resumeMessage?.content).toContain('Opened the profile page.');
+        expect(resumeMessage?.content).toContain('I followed the account and am ready to publish the summary.');
+        expect(localOrch.getMessages().some((message) => message.metadata?.source === 'completion-resume')).toBe(false);
+      } finally {
+        await localOrch.stop();
+      }
+    });
+
     it('uses a longer waiting_model stall threshold with backoff across retries', async () => {
       vi.useFakeTimers();
 

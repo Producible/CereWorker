@@ -5,15 +5,17 @@ import { Banner } from './Banner.js';
 
 interface ChatViewProps {
   messages: Message[];
+  hasAnyMessages: boolean;
   streamingContent: string;
   isStreaming: boolean;
   activeToolCall: string | null;
   version: string;
   showActivity: boolean;
+  debugMode: boolean;
   updateAvailable?: string | null;
 }
 
-function MessageBlock({ message }: { message: Message }) {
+function MessageBlock({ message, debugMode }: { message: Message; debugMode: boolean }) {
   const roleColors: Record<string, string> = {
     user: 'blue',
     cerebrum: 'green',
@@ -32,6 +34,14 @@ function MessageBlock({ message }: { message: Message }) {
 
   const color = roleColors[message.role] ?? 'white';
   const label = roleLabels[message.role] ?? message.role;
+
+  if (!debugMode) {
+    return (
+      <Box flexDirection="column" marginBottom={1}>
+        <Text color={message.role === 'user' ? 'blue' : 'green'}>{message.content}</Text>
+      </Box>
+    );
+  }
 
   if (message.role === 'tool') {
     const output = message.content.length > 500
@@ -58,20 +68,22 @@ function MessageBlock({ message }: { message: Message }) {
 
 export function ChatView({
   messages,
+  hasAnyMessages,
   streamingContent,
   isStreaming,
   activeToolCall,
   version,
   showActivity,
+  debugMode,
   updateAvailable,
 }: ChatViewProps) {
-  const showBanner = messages.length === 0 && !isStreaming;
+  const showBanner = !hasAnyMessages && !isStreaming;
 
   return (
     <Box flexDirection="column" flexGrow={1} paddingX={1}>
       {showBanner && <Banner version={version} updateAvailable={updateAvailable} />}
       {messages.map((msg) => (
-        <MessageBlock key={msg.id} message={msg} />
+        <MessageBlock key={msg.id} message={msg} debugMode={debugMode} />
       ))}
       {showActivity && activeToolCall && (
         <Box marginLeft={2}>
@@ -80,7 +92,7 @@ export function ChatView({
       )}
       {isStreaming && streamingContent && (
         <Box flexDirection="column" marginBottom={1}>
-          <Text bold color="green">Cerebrum</Text>
+          {debugMode && <Text bold color="green">Cerebrum</Text>}
           <Text>{streamingContent}<Text color="green">|</Text></Text>
         </Box>
       )}

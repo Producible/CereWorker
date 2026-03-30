@@ -12,6 +12,7 @@ import { InputBar } from './components/InputBar.js';
 import { useChat } from './hooks/useChat.js';
 import { useCerebellum } from './hooks/useCerebellum.js';
 import { checkForUpdate } from './update-check.js';
+import { filterTranscriptMessages, formatLocalTimestamp } from './presentation.js';
 
 const require = createRequire(import.meta.url);
 const { version: APP_VERSION } = require('../package.json');
@@ -19,6 +20,7 @@ const { version: APP_VERSION } = require('../package.json');
 interface AppProps {
   config: CereWorkerConfig;
   resumeConversationId?: string;
+  debugMode?: boolean;
 }
 
 type StreamTrace = {
@@ -36,7 +38,7 @@ type StreamTrace = {
   message: string;
 };
 
-export function App({ config, resumeConversationId }: AppProps) {
+export function App({ config, resumeConversationId, debugMode = false }: AppProps) {
   const { exit } = useApp();
   const [channelCount, setChannelCount] = useState(0);
   const [systemMessage, setSystemMessage] = useState<string | null>(null);
@@ -57,12 +59,14 @@ export function App({ config, resumeConversationId }: AppProps) {
 
   const service = useMemo(() => {
     configureLogger({
-      level: config.logging.level as 'debug' | 'info' | 'warn' | 'error',
+      level: (debugMode ? 'debug' : config.logging.level) as 'debug' | 'info' | 'warn' | 'error',
       file: config.logging.file,
+      stderr: debugMode,
     });
     return createService(config);
-  }, [config]);
+  }, [config, debugMode]);
   const { orchestrator, channelManager, cerebrum, skillRegistry } = service;
+  const showVerboseActivity = debugMode;
 
   // Start channels in background
   useEffect(() => {
@@ -185,11 +189,9 @@ export function App({ config, resumeConversationId }: AppProps) {
   }, [orchestrator]);
 
   const visibleMessages = useMemo(() => {
-    const filtered = config.tui.showActivity
-      ? messages
-      : messages.filter((message) => message.role !== 'tool');
+    const filtered = filterTranscriptMessages(messages, showVerboseActivity);
     return filtered.slice(-config.tui.maxDisplayMessages);
-  }, [config.tui.maxDisplayMessages, config.tui.showActivity, messages]);
+  }, [config.tui.maxDisplayMessages, messages, showVerboseActivity]);
 
   const handleSubmit = useCallback(
     (text: string) => {
@@ -227,7 +229,7 @@ export function App({ config, resumeConversationId }: AppProps) {
             } else {
               const activeId = orchestrator.getActiveConversationId();
               const lines = convs.map((c) => {
-                const date = new Date(c.updatedAt).toLocaleString();
+                const date = formatLocalTimestamp(c.updatedAt);
                 const preview = store.getPreview(c.id)?.slice(0, 50) ?? '(empty)';
                 const marker = c.id === activeId ? ' *' : '';
                 return `  ${c.id.slice(0, 8)}${marker} | ${date} | ${preview}`;
@@ -329,7 +331,7 @@ export function App({ config, resumeConversationId }: AppProps) {
         cerebellumLoading={cerebellumLoadingInfo}
         cerebellumEnabled={config.cerebellum.enabled}
         isStreaming={isStreaming}
-        showActivity={config.tui.showActivity}
+        showActivity={showVerboseActivity}
         channelCount={channelCount}
         autoMode={autoMode}
         gatewayMode={config.gateway.mode}
@@ -344,7 +346,7 @@ export function App({ config, resumeConversationId }: AppProps) {
         extensionConnected={extensionConnected}
         streamStall={streamStall}
       />
-      {streamTrace && (
+      {showVerboseActivity && streamTrace && (
         <Box paddingX={1}>
           <Text
             color={
@@ -359,11 +361,13 @@ export function App({ config, resumeConversationId }: AppProps) {
       )}
       <ChatView
         messages={visibleMessages}
+        hasAnyMessages={messages.length > 0}
         streamingContent={streamingContent}
         isStreaming={isStreaming}
-        activeToolCall={config.tui.showActivity ? activeToolCall : null}
+        activeToolCall={showVerboseActivity ? activeToolCall : null}
         version={APP_VERSION}
-        showActivity={config.tui.showActivity}
+        showActivity={showVerboseActivity}
+        debugMode={debugMode}
         updateAvailable={updateAvailable}
       />
       {systemMessage && (

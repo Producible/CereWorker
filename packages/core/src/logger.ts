@@ -34,7 +34,7 @@ export function configureLogger(options: { level?: LogLevel; file?: string; stde
 
 function formatEntry(level: LogLevel, name: string, msg: string, data?: Record<string, unknown>): string {
   const ts = new Date().toISOString();
-  const base = { ts, level, name, msg, ...data };
+  const base = { ts, tz: 'UTC', level, name, msg, ...data };
   return JSON.stringify(base);
 }
 

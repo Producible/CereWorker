@@ -8,6 +8,7 @@ import type { SkillRegistry } from '@cereworker/skills';
 import type { CereWorkerConfig } from '@cereworker/config';
 import type { GatewayServer, GatewayNodeClient } from '@cereworker/gateway';
 import type { ServiceInstance } from './service.js';
+import { formatLocalTimestamp } from './presentation.js';
 
 export interface CommandContext {
   orchestrator: Orchestrator;
@@ -256,7 +257,7 @@ export function handleSlashCommand(command: string, args: string, ctx: CommandCo
       if (convs.length === 0) return { type: 'message', text: 'No conversations found.' };
       const activeId = orchestrator.getActiveConversationId();
       const lines = convs.map((c) => {
-        const date = new Date(c.updatedAt).toLocaleString();
+        const date = formatLocalTimestamp(c.updatedAt);
         const preview = store.getPreview(c.id)?.slice(0, 50) ?? '(empty)';
         const marker = c.id === activeId ? ' *' : '';
         return `  ${c.id.slice(0, 8)}${marker} | ${date} | ${preview}`;
@@ -337,7 +338,7 @@ export function handleSlashCommand(command: string, args: string, ctx: CommandCo
         const history = orchestrator.getFineTuneHistory();
         if (history.length === 0) return { type: 'message', text: 'No fine-tune history yet.' };
         const lines = history.slice(-10).map((h) => {
-          const date = new Date(h.completedAt).toLocaleString();
+          const date = formatLocalTimestamp(h.completedAt);
           return `  ${h.jobId} | ${h.status} | loss: ${h.loss.toFixed(4)} | ${date}`;
         });
         return { type: 'message', text: `Fine-Tune History (last ${lines.length}):\n${lines.join('\n')}`, sticky: true };
@@ -378,7 +379,7 @@ export function handleSlashCommand(command: string, args: string, ctx: CommandCo
         const lines = tasks.map((t) => {
           const s = state[t.id];
           const running = orchestrator.isTaskRunning(t.id) ? ' [RUNNING]' : '';
-          const lastRun = s?.lastRunAt ? ` (last: ${new Date(s.lastRunAt).toLocaleString()}, runs: ${s.runCount ?? 0})` : ' (never run)';
+          const lastRun = s?.lastRunAt ? ` (last: ${formatLocalTimestamp(s.lastRunAt)}, runs: ${s.runCount ?? 0})` : ' (never run)';
           return `  ${t.id} (${t.schedule})${running}${lastRun}\n    ${t.goal.split('\n')[0]}`;
         });
         return { type: 'message', text: `Recurring Tasks:\n${lines.join('\n')}`, sticky: true };
@@ -392,7 +393,7 @@ export function handleSlashCommand(command: string, args: string, ctx: CommandCo
         promise: service.listHeartbeatTasks().then((tasks) => {
           if (tasks.length === 0) return 'No heartbeat tasks registered with Cerebellum.';
           const lines = tasks.map((t) => {
-            const lastRun = t.lastRun ? new Date(t.lastRun * 1000).toLocaleString() : 'never';
+            const lastRun = t.lastRun ? formatLocalTimestamp(t.lastRun * 1000) : 'never';
             const meta = t.metadata?.type ? ` [${t.metadata.type}]` : '';
             return `  ${t.taskId.slice(0, 8)} | ${t.status.padEnd(9)} | ${t.scheduleHint}${meta}\n    ${t.description}\n    Last run: ${lastRun}`;
           });
