@@ -1012,7 +1012,8 @@ export class Orchestrator extends TypedEventEmitter {
     const lines = [
       '[Watchdog resume context]',
       `The previous attempt (${snapshot.attempt}) was interrupted after stalling while ${this.describeStreamLocation(snapshot.phase, snapshot.activeToolName)}.`,
-      'Resume from the most advanced confirmed state below. Do not restart already completed actions unless the current page state contradicts them.',
+      'IMPORTANT: The tool call history from the failed attempt has been removed from this conversation. The summary below is the authoritative record of what was already done.',
+      'Do NOT repeat these steps. Start from the NEXT action after the last confirmed result.',
     ];
 
     if (snapshot.recentExternalToolSummaries.length > 0) {
@@ -1077,7 +1078,8 @@ export class Orchestrator extends TypedEventEmitter {
     const lines = [
       '[Completion resume context]',
       `The previous attempt (${snapshot.attempt}) ended without a valid completion${snapshot.finishReason ? ` (finish reason: ${snapshot.finishReason})` : ''}.`,
-      'Resume from the most advanced confirmed state below. Do not restart already completed actions unless the current page state contradicts them.',
+      'IMPORTANT: The tool call history from the failed attempt has been removed from this conversation. The summary below is the authoritative record of what was already done.',
+      'Do NOT repeat these steps. Start from the NEXT action after the last confirmed result.',
       'Continue from that state, then either finish the task or report a concrete blocker. End by calling task_complete or task_blocked before your final answer.',
     ];
 
@@ -1328,6 +1330,9 @@ export class Orchestrator extends TypedEventEmitter {
     this.streamNudgeCount = 0;
     let completionRetryCount = 0;
     let nextRetryContext: Message | null = null;
+    // Track message count before this turn so retries can exclude the failed attempt's messages
+    const messagesBeforeTurn = this.conversations.getMessages(convId).length;
+    let retryMessageCutoff = messagesBeforeTurn;
     const turnId = nanoid(10);
     const maxTotalAttempts = 1 + this.maxNudgeRetries + this.maxCompletionRetries;
     let loopTerminated = false;
@@ -1362,6 +1367,13 @@ export class Orchestrator extends TypedEventEmitter {
         this.startStreamWatchdog();
 
         let messages = this.conversations.getMessages(convId);
+
+        // On retry: exclude the failed attempt's tool/cerebrum messages from history.
+        // The resume context already summarizes what happened — sending the raw tool calls
+        // causes the model to repeat the exact same steps instead of continuing.
+        if (retryCause) {
+          messages = messages.slice(0, retryMessageCutoff);
+        }
 
         // Context window compaction
         if (
@@ -1674,6 +1686,8 @@ export class Orchestrator extends TypedEventEmitter {
                 COMPLETION_RETRY_PROMPT,
               );
               this.emit({ type: 'message:system', message: systemMessage });
+              // Update cutoff so next retry includes the nudge but excludes tool calls
+              retryMessageCutoff = this.conversations.getMessages(convId).length;
               this.emitCompletionTrace(
                 'retry_started',
                 `Retrying attempt ${attemptNumber + 1} after incomplete completion (${completionRetryCount}/${this.maxCompletionRetries}).`,
@@ -1730,6 +1744,8 @@ export class Orchestrator extends TypedEventEmitter {
               '[Cerebellum] You stopped mid-response. Continue from where you left off.',
             );
             this.emit({ type: 'message:system', message: systemMessage });
+            // Update cutoff so next retry includes the nudge but excludes tool calls
+            retryMessageCutoff = this.conversations.getMessages(convId).length;
             this.emitWatchdog(
               'retry_started',
               `Retrying stalled turn with attempt ${attemptNumber + 1} (stall retry ${this.streamNudgeCount}/${this.maxNudgeRetries}).`,
