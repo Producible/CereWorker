@@ -1,5 +1,5 @@
 import puppeteer, { type Browser, type Page } from 'puppeteer';
-import type { BrowserBackend, TabInfo } from './backend.js';
+import type { BrowserBackend, BrowserCommandOptions, TabInfo } from './backend.js';
 
 export interface BrowserSession {
   browser: Browser;
@@ -34,27 +34,27 @@ export class PuppeteerBackend implements BrowserBackend {
     }
   }
 
-  async navigate(url: string): Promise<string> {
+  async navigate(url: string, _options?: BrowserCommandOptions): Promise<string> {
     const s = await this.getSession();
     await s.page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
     return `Navigated to ${s.page.url()} - Title: ${await s.page.title()}`;
   }
 
-  async getPageText(): Promise<string> {
+  async getPageText(_options?: BrowserCommandOptions): Promise<string> {
     const s = await this.getSession();
     const text = await s.page.evaluate(() => document.body.innerText);
     const maxLen = 10000;
     return text.length > maxLen ? text.slice(0, maxLen) + '\n... (truncated)' : text;
   }
 
-  async screenshot(path?: string): Promise<string> {
+  async screenshot(path?: string, _options?: BrowserCommandOptions): Promise<string> {
     const s = await this.getSession();
     const filePath = path ?? `/tmp/cereworker-screenshot-${Date.now()}.png`;
     await s.page.screenshot({ path: filePath, fullPage: false });
     return `Screenshot saved to ${filePath}`;
   }
 
-  async click(selector: string): Promise<string> {
+  async click(selector: string, _options?: BrowserCommandOptions): Promise<string> {
     const s = await this.getSession();
     try {
       await s.page.click(selector);
@@ -64,7 +64,7 @@ export class PuppeteerBackend implements BrowserBackend {
     }
   }
 
-  async clickByText(text: string, role?: string): Promise<string> {
+  async clickByText(text: string, role?: string, _options?: BrowserCommandOptions): Promise<string> {
     const s = await this.getSession();
     try {
       const selector = role ? `[role="${role}"]` : 'button, [role="button"], a';
@@ -81,7 +81,7 @@ export class PuppeteerBackend implements BrowserBackend {
     }
   }
 
-  async type(selector: string, text: string): Promise<string> {
+  async type(selector: string, text: string, _options?: BrowserCommandOptions): Promise<string> {
     const s = await this.getSession();
     try {
       await s.page.type(selector, text);
@@ -91,7 +91,7 @@ export class PuppeteerBackend implements BrowserBackend {
     }
   }
 
-  async evaluate(code: string): Promise<string> {
+  async evaluate(code: string, _options?: BrowserCommandOptions): Promise<string> {
     const s = await this.getSession();
     try {
       const result = await s.page.evaluate(code);
@@ -101,7 +101,7 @@ export class PuppeteerBackend implements BrowserBackend {
     }
   }
 
-  async waitForSelector(selector: string, timeoutMs = 5000): Promise<string> {
+  async waitForSelector(selector: string, timeoutMs = 5000, _options?: BrowserCommandOptions): Promise<string> {
     const s = await this.getSession();
     try {
       await s.page.waitForSelector(selector, { timeout: timeoutMs });
@@ -111,12 +111,12 @@ export class PuppeteerBackend implements BrowserBackend {
     }
   }
 
-  async getPageUrl(): Promise<string> {
+  async getPageUrl(_options?: BrowserCommandOptions): Promise<string> {
     const s = await this.getSession();
     return s.page.url();
   }
 
-  async listTabs(): Promise<TabInfo[]> {
+  async listTabs(_options?: BrowserCommandOptions): Promise<TabInfo[]> {
     const s = await this.getSession();
     const pages = await s.browser.pages();
     return pages.map((p, i) => ({
@@ -127,7 +127,7 @@ export class PuppeteerBackend implements BrowserBackend {
     }));
   }
 
-  async switchTab(tabId: string): Promise<string> {
+  async switchTab(tabId: string, _options?: BrowserCommandOptions): Promise<string> {
     const s = await this.getSession();
     const pages = await s.browser.pages();
     const idx = parseInt(tabId, 10);
@@ -140,7 +140,7 @@ export class PuppeteerBackend implements BrowserBackend {
     return `Switched to tab ${idx}: ${s.page.url()}`;
   }
 
-  async newTab(url?: string): Promise<string> {
+  async newTab(url?: string, _options?: BrowserCommandOptions): Promise<string> {
     const s = await this.getSession();
     const page = await s.browser.newPage();
     await page.setViewport({ width: 1280, height: 800 });
@@ -153,7 +153,7 @@ export class PuppeteerBackend implements BrowserBackend {
     return `Opened new tab (${pages.length} total)${url ? `: ${page.url()}` : ''}`;
   }
 
-  async closeTab(tabId?: string): Promise<string> {
+  async closeTab(tabId?: string, _options?: BrowserCommandOptions): Promise<string> {
     const s = await this.getSession();
     const pages = await s.browser.pages();
     if (pages.length <= 1) return 'Cannot close the last tab.';
@@ -181,7 +181,7 @@ export class PuppeteerBackend implements BrowserBackend {
     return `Closed current tab. Now on: ${s.page.url()}`;
   }
 
-  async connect(): Promise<string> {
+  async connect(_options?: BrowserCommandOptions): Promise<string> {
     const s = await this.getSession();
     return `Browser launched (headless: ${this.headless}). Page: ${s.page.url()}`;
   }

@@ -319,7 +319,14 @@ export class SubAgentManager {
                 conversationId: instance.conversationId,
                 sessionKey: instance.sessionKey,
                 scopeKey: instance.sessionKey,
+                abortSignal: instance.abortController.signal,
               });
+
+              if (instance.abortController.signal.aborted) {
+                const error = new Error('Agent aborted');
+                error.name = 'AbortError';
+                throw error;
+              }
 
               instance.conversation.appendMessage(instance.conversationId, 'tool', result.output, {
                 toolResult: result,
@@ -348,7 +355,7 @@ export class SubAgentManager {
               instance.abortController.signal.removeEventListener('abort', abortHandler);
               reject(error);
             },
-          })
+          }, { abortSignal: instance.abortController.signal })
           .catch(reject);
       });
 

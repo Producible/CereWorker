@@ -1,7 +1,16 @@
-import type { Message, ToolCall, ToolResult, TaskAction, CerebellumStatus, VerificationResult, AgentHealthAction } from './types.js';
+import type { Message, ToolCall, ToolResult, TaskAction, CerebellumStatus, VerificationResult, AgentHealthAction, StreamPhase } from './types.js';
+
+interface StreamDiagnosticEvent {
+  elapsedSeconds: number;
+  phase: StreamPhase;
+  activeToolName?: string;
+  activeToolCallId?: string;
+  activeToolStartedAt?: number;
+}
 
 export type OrchestratorEvent =
   | { type: 'message:user'; message: Message }
+  | { type: 'message:system'; message: Message }
   | { type: 'message:cerebrum:start'; conversationId: string }
   | { type: 'message:cerebrum:chunk'; chunk: string }
   | { type: 'message:cerebrum:end'; message: Message }
@@ -39,8 +48,8 @@ export type OrchestratorEvent =
   | { type: 'message:proactive'; content: string; source: string }
   | { type: 'proactive:resume'; taskId: string; goal: string }
   | { type: 'proactive:report'; report: string }
-  | { type: 'cerebrum:stall'; elapsedSeconds: number }
-  | { type: 'cerebrum:stall:nudge'; attempt: number }
+  | ({ type: 'cerebrum:stall' } & StreamDiagnosticEvent)
+  | ({ type: 'cerebrum:stall:nudge'; attempt: number } & StreamDiagnosticEvent)
   | { type: 'error'; error: Error };
 
 type EventHandler<T> = (event: T) => void;

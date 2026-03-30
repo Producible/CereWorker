@@ -5,7 +5,7 @@ import { SubAgentManager } from './sub-agent-manager.js';
 import { createSubAgentTools } from './sub-agent-tools.js';
 import { createLogger } from './logger.js';
 import { buildSystemPrompt } from './system-prompt.js';
-import type { Message, ToolCall, ToolResult, VerificationResult, AgentHealthAction } from './types.js';
+import type { Message, ToolCall, ToolResult, VerificationResult, AgentHealthAction, StreamPhase } from './types.js';
 import { estimateMessageTokens, shouldCompact, buildCompactionMessages } from './context.js';
 import type { InstanceStore, FineTuneRecord } from './instance.js';
 import {
@@ -105,6 +105,10 @@ export interface StreamState {
   lastActivityAt: number;
   stallDetected: boolean;
   nudgeCount: number;
+  phase: StreamPhase;
+  activeToolName?: string;
+  activeToolCallId?: string;
+  activeToolStartedAt?: number;
 }
 
 export interface OrchestratorOptions {
@@ -152,6 +156,8 @@ export class Orchestrator extends TypedEventEmitter {
   private streamNudgeCount = 0;
   private streamStallThreshold = 30_000;
   private maxNudgeRetries = 2;
+  private streamPhase: StreamPhase = 'idle';
+  private activeToolCall: { id: string; name: string; startedAt: number } | null = null;
   private taskConversations = new Map<string, string>();
   private taskRunning = new Set<string>();
   private recurringTasks: Array<{ id: string; goal: string; schedule: string }> = [];
@@ -628,12 +634,53 @@ export class Orchestrator extends TypedEventEmitter {
       lastActivityAt: this.lastStreamActivityAt,
       stallDetected: this.streamWatchdog !== null && (Date.now() - this.lastStreamActivityAt) > this.streamStallThreshold,
       nudgeCount: this.streamNudgeCount,
+      phase: this.streamPhase,
+      activeToolName: this.activeToolCall?.name,
+      activeToolCallId: this.activeToolCall?.id,
+      activeToolStartedAt: this.activeToolCall?.startedAt,
+    };
+  }
+
+  private markStreamWaitingModel(activityAt = Date.now()): void {
+    this.lastStreamActivityAt = activityAt;
+    this.streamPhase = 'waiting_model';
+    this.activeToolCall = null;
+  }
+
+  private markStreamWaitingTool(toolCall: ToolCall, activityAt = Date.now()): void {
+    this.lastStreamActivityAt = activityAt;
+    this.streamPhase = 'waiting_tool';
+    this.activeToolCall = {
+      id: toolCall.id,
+      name: toolCall.name.trim() || toolCall.name,
+      startedAt: activityAt,
+    };
+  }
+
+  private resetStreamState(): void {
+    this.streamPhase = 'idle';
+    this.activeToolCall = null;
+  }
+
+  private getStreamDiagnostics(elapsedSeconds: number): {
+    elapsedSeconds: number;
+    phase: StreamPhase;
+    activeToolName?: string;
+    activeToolCallId?: string;
+    activeToolStartedAt?: number;
+  } {
+    return {
+      elapsedSeconds,
+      phase: this.streamPhase,
+      activeToolName: this.activeToolCall?.name,
+      activeToolCallId: this.activeToolCall?.id,
+      activeToolStartedAt: this.activeToolCall?.startedAt,
     };
   }
 
   private startStreamWatchdog(): void {
     this.stopStreamWatchdog();
-    this.lastStreamActivityAt = Date.now();
+    this.markStreamWaitingModel();
 
     this.streamWatchdog = setInterval(() => {
       const elapsed = Date.now() - this.lastStreamActivityAt;
@@ -642,7 +689,9 @@ export class Orchestrator extends TypedEventEmitter {
       if (this._nudgeInFlight) return;
 
       const elapsedSeconds = Math.round(elapsed / 1000);
-      this.emit({ type: 'cerebrum:stall', elapsedSeconds });
+      const diagnostics = this.getStreamDiagnostics(elapsedSeconds);
+      log.warn('Cerebrum stream stalled', diagnostics);
+      this.emit({ type: 'cerebrum:stall', ...diagnostics });
 
       if (!this.cerebellum?.isConnected()) {
         // Cerebellum dropped mid-stream — abort the current turn
@@ -655,8 +704,8 @@ export class Orchestrator extends TypedEventEmitter {
 
       const doNudge = () => {
         this.streamNudgeCount++;
-        log.info('Cerebellum nudging stalled stream', { elapsed: elapsedSeconds, attempt: this.streamNudgeCount });
-        this.emit({ type: 'cerebrum:stall:nudge', attempt: this.streamNudgeCount });
+        log.info('Cerebellum nudging stalled stream', { attempt: this.streamNudgeCount, ...diagnostics });
+        this.emit({ type: 'cerebrum:stall:nudge', attempt: this.streamNudgeCount, ...diagnostics });
         this.abortController?.abort();
       };
 
@@ -690,6 +739,7 @@ export class Orchestrator extends TypedEventEmitter {
       clearInterval(this.streamWatchdog);
       this.streamWatchdog = null;
     }
+    this.resetStreamState();
   }
 
   async sendMessage(content: string, conversationId?: string): Promise<void> {
@@ -710,7 +760,15 @@ export class Orchestrator extends TypedEventEmitter {
 
     // Retry loop — nudge aborts land here for retry
     for (let attempt = 0; attempt <= this.maxNudgeRetries; attempt++) {
-    this.abortController = new AbortController();
+    const abortController = new AbortController();
+    const isCurrentAttempt = () => this.abortController === abortController;
+    this.abortController = abortController;
+    if (attempt > 0) {
+      log.info('Retrying Cerebrum stream after watchdog nudge', {
+        attempt,
+        conversationId: convId,
+      });
+    }
     this.emit({ type: 'message:cerebrum:start', conversationId: convId });
     this.startStreamWatchdog();
 
@@ -779,12 +837,19 @@ export class Orchestrator extends TypedEventEmitter {
     try {
       await this.cerebrum.stream(allMessages, toolDefs, {
         onChunk: (chunk) => {
+          if (!isCurrentAttempt() || abortController.signal.aborted) return;
           fullContent += chunk;
-          this.lastStreamActivityAt = Date.now();
+          this.markStreamWaitingModel();
           this.emit({ type: 'message:cerebrum:chunk', chunk });
         },
         onToolCall: async (toolCall) => {
-          this.lastStreamActivityAt = Date.now();
+          if (!isCurrentAttempt() || abortController.signal.aborted) {
+            const error = new Error('Tool execution aborted');
+            error.name = 'AbortError';
+            throw error;
+          }
+
+          this.markStreamWaitingTool(toolCall);
           const requestedToolName = toolCall.name;
           const normalizedToolName = requestedToolName.trim() || requestedToolName;
           this.emit({ type: 'message:cerebrum:toolcall', toolCall: { ...toolCall, name: normalizedToolName } });
@@ -796,14 +861,27 @@ export class Orchestrator extends TypedEventEmitter {
             conversationId: convId,
             sessionKey: 'agent:main',
             scopeKey: convId,
+            abortSignal: abortController.signal,
           });
 
-          this.lastStreamActivityAt = Date.now();
+          if (abortController.signal.aborted) {
+            const error = new Error('Tool execution aborted');
+            error.name = 'AbortError';
+            throw error;
+          }
+
+          this.markStreamWaitingModel();
           this.emit({ type: 'tool:end', result });
 
           // Cerebellum verification (non-blocking)
           if (this.cerebellum?.isConnected() && this.verificationEnabled) {
             try {
+              if (abortController.signal.aborted) {
+                const error = new Error('Tool execution aborted');
+                error.name = 'AbortError';
+                throw error;
+              }
+
               this.emit({ type: 'verification:start', callId: toolCall.id, toolName });
 
               const toolArgs: Record<string, string> = {};
@@ -823,6 +901,12 @@ export class Orchestrator extends TypedEventEmitter {
               );
 
               const verification = await Promise.race([verifyPromise, timeoutPromise]);
+
+              if (abortController.signal.aborted) {
+                const error = new Error('Tool execution aborted');
+                error.name = 'AbortError';
+                throw error;
+              }
 
               if (verification && !verification.passed) {
                 const failedChecks = verification.checks
@@ -847,6 +931,12 @@ export class Orchestrator extends TypedEventEmitter {
             }
           }
 
+          if (!isCurrentAttempt() || abortController.signal.aborted) {
+            const error = new Error('Tool execution aborted');
+            error.name = 'AbortError';
+            throw error;
+          }
+
           this.conversations.appendMessage(convId, 'tool', result.output, {
             toolResult: result,
             metadata: {
@@ -858,6 +948,7 @@ export class Orchestrator extends TypedEventEmitter {
           return result;
         },
         onFinish: (content, toolCalls) => {
+          if (!isCurrentAttempt() || abortController.signal.aborted) return;
           this.stopStreamWatchdog();
           let displayContent = content;
 
@@ -880,32 +971,41 @@ export class Orchestrator extends TypedEventEmitter {
             toolCalls?.length ? { toolCalls } : undefined,
           );
           this.emit({ type: 'message:cerebrum:end', message: cerebrumMessage });
+          if (attempt > 0) {
+            log.info('Cerebrum stream recovered after watchdog retry', {
+              attempt,
+              conversationId: convId,
+            });
+          }
         },
         onError: (error) => {
+          if (!isCurrentAttempt()) return;
           this.stopStreamWatchdog();
           // Don't log/emit if the abort was intentional (nudge or Cerebellum disconnect) — catch block handles it
-          if (this.abortController?.signal.aborted) return;
+          if (abortController.signal.aborted) return;
           log.error('Cerebrum stream error', { error: error.message });
           this.emit({ type: 'error', error });
         },
-      }, { abortSignal: this.abortController?.signal });
+      }, { abortSignal: abortController.signal });
     } catch (error) {
+      const failureState = this.getStreamState();
       this.stopStreamWatchdog();
 
       // Check if this was a nudge-abort (not emergency stop, not a real error)
-      const isNudgeAbort = this.abortController?.signal.aborted && this.streamNudgeCount > 0 && this.streamNudgeCount <= this.maxNudgeRetries;
+      const isNudgeAbort = abortController.signal.aborted && this.streamNudgeCount > 0 && this.streamNudgeCount <= this.maxNudgeRetries;
 
       if (isNudgeAbort) {
         // Inject nudge message and retry via the for-loop
-        this.conversations.appendMessage(
+        const systemMessage = this.conversations.appendMessage(
           convId, 'system',
           '[Cerebellum] You stopped mid-response. Continue from where you left off.',
         );
+        this.emit({ type: 'message:system', message: systemMessage });
         continue; // retry loop
       }
 
       // Check if Cerebellum dropped mid-stream
-      if (this.cerebellum && !this.cerebellum.isConnected() && this.abortController?.signal.aborted) {
+      if (this.cerebellum && !this.cerebellum.isConnected() && abortController.signal.aborted) {
         const err = new Error('Cerebellum disconnected during active response. Restart it with: docker compose up -d cerebellum');
         log.error('Cerebellum disconnected mid-stream', { error: err.message });
         this.emit({ type: 'error', error: err });
@@ -913,7 +1013,15 @@ export class Orchestrator extends TypedEventEmitter {
       }
 
       const err = error instanceof Error ? error : new Error(String(error));
-      log.error('Send message failed', { error: err.message });
+      log.error('Send message failed', {
+        error: err.message,
+        attempt,
+        conversationId: convId,
+        phase: failureState.phase,
+        activeToolName: failureState.activeToolName,
+        activeToolCallId: failureState.activeToolCallId,
+        activeToolStartedAt: failureState.activeToolStartedAt,
+      });
       this.emit({ type: 'error', error: err });
     }
 

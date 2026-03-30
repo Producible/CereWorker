@@ -35,6 +35,7 @@ export interface ToolExecutionContext {
   sessionKey?: string;
   scopeKey?: string;
   runtimeEngine: ToolRuntimeEngine;
+  abortSignal?: AbortSignal;
 }
 
 export interface ToolExecutionValue {
@@ -118,6 +119,7 @@ export class ToolRuntime {
     conversationId?: string;
     sessionKey?: string;
     scopeKey?: string;
+    abortSignal?: AbortSignal;
   }): Promise<ToolRuntimeExecution> {
     const normalizedToolName = normalizeToolName(params.toolCall.name);
     const tool = resolveTool(params.tools, normalizedToolName);
@@ -130,6 +132,7 @@ export class ToolRuntime {
       sessionKey: params.sessionKey,
       scopeKey: executionScope,
       runtimeEngine: this.config.engine,
+      abortSignal: params.abortSignal,
     };
 
     if (!tool) {
@@ -193,8 +196,18 @@ export class ToolRuntime {
 
     let rawResult: unknown;
     try {
-      rawResult = await tool.execute(args, context);
+      if (params.abortSignal?.aborted) {
+        throw createAbortError('Tool execution aborted');
+      }
+
+      const execution = Promise.resolve(tool.execute(args, context));
+      rawResult = params.abortSignal
+        ? await raceWithAbort(execution, params.abortSignal, 'Tool execution aborted')
+        : await execution;
     } catch (error) {
+      if (isAbortError(error)) {
+        throw error;
+      }
       rawResult = {
         output: error instanceof Error ? error.message : String(error),
         isError: true,
@@ -582,4 +595,44 @@ function normalizeToolName(name: string): string {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function raceWithAbort<T>(promise: Promise<T>, abortSignal: AbortSignal, message: string): Promise<T> {
+  if (abortSignal.aborted) {
+    return Promise.reject(createAbortError(message));
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      reject(createAbortError(message));
+    };
+
+    const cleanup = () => {
+      abortSignal.removeEventListener('abort', onAbort);
+    };
+
+    abortSignal.addEventListener('abort', onAbort, { once: true });
+
+    promise.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
+function createAbortError(message: string): Error {
+  const error = new Error(message);
+  error.name = 'AbortError';
+  return error;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
 }

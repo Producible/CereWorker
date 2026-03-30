@@ -122,6 +122,80 @@ describe('createService integration', () => {
     await service.shutdown();
   });
 
+  it('retries when a streamed tool call hangs until the watchdog aborts it', async () => {
+    vi.useFakeTimers();
+
+    const service = createService(makeConfig());
+    const cerebellum = createWatchdogCerebellum();
+    service.orchestrator.setCerebellum(cerebellum, { enabled: false });
+    service.orchestrator.registerTool('hangTool', {
+      description: 'hang forever',
+      parameters: {},
+      execute: async (_args, context) => {
+        const abortSignal = context?.abortSignal;
+        if (!abortSignal) {
+          throw new Error('missing abort signal');
+        }
+
+        return await new Promise<string>((_resolve, reject) => {
+          const onAbort = () => {
+            const error = new Error('Tool execution aborted');
+            error.name = 'AbortError';
+            reject(error);
+          };
+
+          if (abortSignal.aborted) {
+            onAbort();
+            return;
+          }
+
+          abortSignal.addEventListener('abort', onAbort, { once: true });
+        });
+      },
+    });
+
+    let attempts = 0;
+    service.cerebrum.stream = vi.fn(async (_messages, _tools, callbacks, options) => {
+      attempts++;
+      if (attempts === 1) {
+        await callbacks.onToolCall({ id: 'tool-1', name: 'hangTool', args: {} });
+        return;
+      }
+
+      callbacks.onChunk('Recovered reply');
+      callbacks.onFinish('Recovered reply');
+    });
+
+    const errors: Error[] = [];
+    const nudges: number[] = [];
+    const systemMessages: string[] = [];
+    service.orchestrator.on('error', ({ error }) => errors.push(error));
+    service.orchestrator.on('cerebrum:stall:nudge', ({ attempt }) => nudges.push(attempt));
+    service.orchestrator.on('message:system', ({ message }) => systemMessages.push(message.content));
+
+    const sendPromise = service.orchestrator.sendMessage('hello from hung tool');
+    await vi.advanceTimersByTimeAsync(15_000);
+    await sendPromise;
+
+    const messages = service.orchestrator.getMessages();
+    expect(attempts).toBe(2);
+    expect(errors).toEqual([]);
+    expect(nudges).toEqual([1]);
+    expect(systemMessages).toEqual([
+      '[Cerebellum] You stopped mid-response. Continue from where you left off.',
+    ]);
+    expect([...messages].reverse().find((message) => message.role === 'system')?.content).toBe(
+      '[Cerebellum] You stopped mid-response. Continue from where you left off.',
+    );
+    expect(messages.at(-1)).toMatchObject({
+      role: 'cerebrum',
+      content: 'Recovered reply',
+    });
+    expect(messages.some((message) => message.role === 'tool' && message.content.includes('Tool execution aborted'))).toBe(false);
+
+    await service.shutdown();
+  });
+
   it('keeps short-term channel conversations separate while persisting the session map', async () => {
     const service = createService(makeConfig());
     service.cerebrum.stream = vi.fn(async (messages, _tools, callbacks) => {

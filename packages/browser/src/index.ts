@@ -1,4 +1,4 @@
-export type { BrowserBackend, TabInfo } from './backend.js';
+export type { BrowserBackend, BrowserCommandOptions, TabInfo } from './backend.js';
 export { PuppeteerBackend, type BrowserSession } from './puppeteer.js';
 export { CdpBackend, type CdpConnectionOptions } from './cdp.js';
 export { createBrowserTools, type BrowserTools, type BrowserToolName } from './tools.js';

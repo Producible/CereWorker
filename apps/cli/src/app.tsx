@@ -120,6 +120,32 @@ export function App({ config, resumeConversationId }: AppProps) {
 
   const { messages, isStreaming, streamingContent, activeToolCall, error } = useChat(orchestrator);
   const { status: cerebellumStatus, loading: cerebellumLoadingInfo, finetune, taskRunningCount } = useCerebellum(orchestrator);
+  const [streamStall, setStreamStall] = useState(orchestrator.getStreamState().stallDetected);
+
+  useEffect(() => {
+    const updateStreamState = () => {
+      setStreamStall(orchestrator.getStreamState().stallDetected);
+    };
+
+    updateStreamState();
+    const timer = setInterval(updateStreamState, 250);
+    const unsubs = [
+      orchestrator.on('message:cerebrum:start', updateStreamState),
+      orchestrator.on('message:cerebrum:chunk', updateStreamState),
+      orchestrator.on('message:cerebrum:end', updateStreamState),
+      orchestrator.on('message:cerebrum:toolcall', updateStreamState),
+      orchestrator.on('message:system', updateStreamState),
+      orchestrator.on('cerebrum:stall', updateStreamState),
+      orchestrator.on('cerebrum:stall:nudge', updateStreamState),
+      orchestrator.on('error', updateStreamState),
+    ];
+
+    return () => {
+      clearInterval(timer);
+      unsubs.forEach((unsubscribe) => unsubscribe());
+    };
+  }, [orchestrator]);
+
   const visibleMessages = useMemo(() => {
     const filtered = config.tui.showActivity
       ? messages
@@ -277,6 +303,7 @@ export function App({ config, resumeConversationId }: AppProps) {
         taskCount={service.getEnabledTasks().length}
         taskRunning={taskRunningCount}
         extensionConnected={extensionConnected}
+        streamStall={streamStall}
       />
       <ChatView
         messages={visibleMessages}

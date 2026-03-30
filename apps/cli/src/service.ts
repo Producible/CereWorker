@@ -397,7 +397,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
       orchestrator.registerTool(name, {
         description: toolDef.description,
         parameters: toolDef.parameters as unknown as Record<string, unknown>,
-        execute: async (args) => toolDef.execute(args as never),
+        execute: async (args, context) => toolDef.execute(args as never, context),
       });
     }
   }

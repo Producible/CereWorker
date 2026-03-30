@@ -1,6 +1,6 @@
 {
   "name": "@cereworker/skills",
-  "version": "26.329.22",
+  "version": "26.329.23",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

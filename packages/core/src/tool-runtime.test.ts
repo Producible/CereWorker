@@ -121,4 +121,43 @@ describe('ToolRuntime', () => {
     expect(third.result.output).toContain('Critical tool loop detected for query_agents');
     expect(execute).toHaveBeenCalledTimes(2);
   });
+
+  it('rejects tool execution immediately when the abort signal fires', async () => {
+    const runtime = new ToolRuntime({
+      engine: 'enhanced',
+    });
+    const abortController = new AbortController();
+    const execute = vi.fn(async (_args, context) => {
+      expect(context?.abortSignal).toBe(abortController.signal);
+      await new Promise(() => {});
+      return 'never';
+    });
+
+    const tools = new Map<string, ToolDefinition>([
+      ['hangTool', {
+        description: 'Hang forever',
+        parameters: {},
+        execute,
+      }],
+    ]);
+
+    const execution = runtime.execute({
+      toolCall: {
+        id: 'call-abort',
+        name: 'hangTool',
+        args: {},
+      },
+      tools,
+      scopeKey: 'abort-scope',
+      abortSignal: abortController.signal,
+    });
+
+    abortController.abort();
+
+    await expect(execution).rejects.toMatchObject({
+      name: 'AbortError',
+      message: 'Tool execution aborted',
+    });
+    expect(execute).toHaveBeenCalledOnce();
+  });
 });

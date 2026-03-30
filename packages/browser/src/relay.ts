@@ -161,7 +161,12 @@ export class BrowserRelay extends EventEmitter {
     return this.extensionWs?.readyState === WebSocket.OPEN;
   }
 
-  async send(method: string, params?: Record<string, unknown>, timeoutMs = 30_000): Promise<string> {
+  async send(
+    method: string,
+    params?: Record<string, unknown>,
+    timeoutMs = 30_000,
+    abortSignal?: AbortSignal,
+  ): Promise<string> {
     if (!this.extensionWs || this.extensionWs.readyState !== WebSocket.OPEN) {
       throw new Error('Extension not connected. Load the CereWorker extension in Chrome and check the connection.');
     }
@@ -170,13 +175,50 @@ export class BrowserRelay extends EventEmitter {
     const command: RelayCommand = { type: 'command', id, method, params };
 
     return new Promise<string>((resolve, reject) => {
+      const onAbort = () => {
+        cleanup();
+        this.pending.delete(id);
+        reject(createAbortError(`Command ${method} aborted`));
+      };
+
+      const cleanup = () => {
+        clearTimeout(timer);
+        abortSignal?.removeEventListener('abort', onAbort);
+      };
+
       const timer = setTimeout(() => {
+        cleanup();
         this.pending.delete(id);
         reject(new Error(`Command ${method} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
 
-      this.pending.set(id, { resolve, reject, timer });
+      if (abortSignal?.aborted) {
+        onAbort();
+        return;
+      }
+
+      if (abortSignal) {
+        abortSignal.addEventListener('abort', onAbort, { once: true });
+      }
+
+      this.pending.set(id, {
+        resolve: (result) => {
+          cleanup();
+          resolve(result);
+        },
+        reject: (error) => {
+          cleanup();
+          reject(error);
+        },
+        timer,
+      });
       this.extensionWs!.send(JSON.stringify(command));
     });
   }
+}
+
+function createAbortError(message: string): Error {
+  const error = new Error(message);
+  error.name = 'AbortError';
+  return error;
 }

@@ -26,10 +26,17 @@ export function useChat(orchestrator: Orchestrator) {
     );
 
     unsubs.push(
+      orchestrator.on('message:system', ({ message }) => {
+        setMessages((prev) => [...prev, message]);
+      }),
+    );
+
+    unsubs.push(
       orchestrator.on('message:cerebrum:start', () => {
         setIsStreaming(true);
         setStreamingContent('');
         setError(null);
+        setActiveToolCall(null);
       }),
     );
 
@@ -44,6 +51,7 @@ export function useChat(orchestrator: Orchestrator) {
         setMessages((prev) => [...prev, message]);
         setStreamingContent('');
         setIsStreaming(false);
+        setActiveToolCall(null);
       }),
     );
 

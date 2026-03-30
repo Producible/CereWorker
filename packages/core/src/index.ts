@@ -15,6 +15,7 @@ export type {
   SubAgentSummary,
   AgentHealthAction,
   SystemStatus,
+  StreamPhase,
 } from './types.js';
 
 export type { OrchestratorEvent } from './events.js';

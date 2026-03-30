@@ -112,6 +112,8 @@ export interface SystemStatus {
   pendingActions: AgentHealthAction[];
 }
 
+export type StreamPhase = 'idle' | 'waiting_model' | 'waiting_tool';
+
 export interface OrchestratorConfig {
   cerebrum: {
     defaultProvider: string;

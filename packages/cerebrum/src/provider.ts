@@ -458,7 +458,7 @@ export class CerebrumProvider {
         description: def.description,
         inputSchema: schema,
         execute: async (args, { toolCallId }) => {
-          const result = await callbacks.onToolCall({
+          const toolResult = callbacks.onToolCall({
             id: toolCallId,
             name,
             args: normalizeToolArgumentsForProvider(
@@ -466,6 +466,9 @@ export class CerebrumProvider {
               (args as Record<string, unknown>) ?? {},
             ),
           });
+          const result = options?.abortSignal
+            ? await raceWithAbort(toolResult, options.abortSignal, 'Stream aborted')
+            : await toolResult;
           return result.output;
         },
       });
@@ -490,22 +493,12 @@ export class CerebrumProvider {
         const abortSignal = options?.abortSignal;
         const iterator = result.fullStream[Symbol.asyncIterator]();
 
-        // Single abort listener shared across all iterations (avoids leak)
-        let abortReject: ((err: Error) => void) | null = null;
-        const abortPromise = abortSignal
-          ? new Promise<never>((_, reject) => {
-              abortReject = reject;
-              if (abortSignal.aborted) reject(new Error('Stream aborted'));
-              else abortSignal.addEventListener('abort', () => reject(new Error('Stream aborted')), { once: true });
-            })
-          : null;
-
         try {
         while (true) {
-          if (abortSignal?.aborted) throw new Error('Stream aborted');
+          if (abortSignal?.aborted) throw createAbortError('Stream aborted');
 
-          const nextResult = abortPromise
-            ? await Promise.race([iterator.next(), abortPromise])
+          const nextResult = abortSignal
+            ? await raceWithAbort(iterator.next(), abortSignal, 'Stream aborted')
             : await iterator.next();
 
           if (nextResult.done) break;
@@ -1324,4 +1317,40 @@ function isLegacyParameterDescriptor(value: unknown): value is Record<string, un
   additionalProperties?: unknown;
 } {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function raceWithAbort<T>(promise: Promise<T>, abortSignal: AbortSignal, message: string): Promise<T> {
+  if (abortSignal.aborted) {
+    return Promise.reject(createAbortError(message));
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => {
+      cleanup();
+      reject(createAbortError(message));
+    };
+
+    const cleanup = () => {
+      abortSignal.removeEventListener('abort', onAbort);
+    };
+
+    abortSignal.addEventListener('abort', onAbort, { once: true });
+
+    promise.then(
+      (value) => {
+        cleanup();
+        resolve(value);
+      },
+      (error) => {
+        cleanup();
+        reject(error);
+      },
+    );
+  });
+}
+
+function createAbortError(message: string): Error {
+  const error = new Error(message);
+  error.name = 'AbortError';
+  return error;
 }

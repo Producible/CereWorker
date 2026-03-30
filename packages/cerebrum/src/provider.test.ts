@@ -964,4 +964,64 @@ describe('CerebrumProvider abortSignal', () => {
     const args = streamTextMock.mock.calls[0][0] as { abortSignal?: AbortSignal };
     expect(args.abortSignal).toBeUndefined();
   });
+
+  it('breaks out when a streamed tool call hangs and the abort signal fires', async () => {
+    streamTextMock.mockImplementationOnce((request: {
+      tools: Record<string, { execute: (args: Record<string, unknown>, context: { toolCallId: string }) => Promise<string> }>;
+    }) => ({
+      fullStream: (async function* () {
+        yield {
+          type: 'tool-call',
+          toolCallId: 'tool-1',
+          toolName: 'hangTool',
+          input: {},
+        };
+        await request.tools.hangTool.execute({}, { toolCallId: 'tool-1' });
+        yield { type: 'text-delta', text: 'done' };
+      })(),
+    }));
+
+    const provider = new CerebrumProvider({
+      defaultProvider: 'openai',
+      defaultModel: 'gpt-4o',
+      providers: { openai: { apiKey: 'test-key' } },
+      maxSteps: 10,
+      temperature: 0.7,
+    });
+
+    const abortController = new AbortController();
+    const onToolCall = vi.fn(() => new Promise<never>(() => {}));
+    const onError = vi.fn();
+    const streamPromise = provider.stream(
+      [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }],
+      {
+        hangTool: {
+          description: 'hang forever',
+          parameters: {},
+          execute: async () => 'unused',
+        },
+      },
+      {
+        onChunk: vi.fn(),
+        onToolCall,
+        onFinish: vi.fn(),
+        onError,
+      },
+      { abortSignal: abortController.signal },
+    );
+
+    await new Promise<void>((resolve) => {
+      setTimeout(() => {
+        abortController.abort();
+        resolve();
+      }, 0);
+    });
+
+    await expect(streamPromise).rejects.toMatchObject({
+      name: 'AbortError',
+      message: 'Stream aborted',
+    });
+    expect(onToolCall).toHaveBeenCalledOnce();
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'Stream aborted' }));
+  });
 });
