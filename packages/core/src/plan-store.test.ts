@@ -1,8 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { createRequire } from 'node:module';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PlanStore } from './plan-store.js';
+
+const require = createRequire(import.meta.url);
 
 function makeTmpDir(): string {
   const dir = join(tmpdir(), `cereworker-plan-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -114,5 +117,40 @@ describe('PlanStore', () => {
     const store2 = new PlanStore(dbPath);
     expect(store2.get(plan.id)).toBeDefined();
     expect(store2.get(plan.id)!.goal).toBe('Persist');
+  });
+
+  it('migrates legacy SQLite plan data into text files', () => {
+    const { DatabaseSync } = require('node:sqlite');
+    const db = new DatabaseSync(dbPath);
+    db.exec(`
+      CREATE TABLE plans (
+        id TEXT PRIMARY KEY,
+        taskId TEXT,
+        goal TEXT NOT NULL,
+        steps TEXT NOT NULL,
+        conversationId TEXT,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'in_progress'
+      );
+    `);
+    db.prepare(
+      `INSERT INTO plans (id, taskId, goal, steps, conversationId, createdAt, updatedAt, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'plan-1',
+      'task-1',
+      'Legacy plan',
+      JSON.stringify([{ description: 'step', status: 'pending' }]),
+      'conv-1',
+      '2026-03-30T00:00:00.000Z',
+      '2026-03-30T00:00:00.000Z',
+      'in_progress',
+    );
+    db.close();
+
+    const migrated = new PlanStore(dbPath);
+    expect(migrated.get('plan-1')?.goal).toBe('Legacy plan');
+    expect(migrated.getInProgress()).toHaveLength(1);
   });
 });

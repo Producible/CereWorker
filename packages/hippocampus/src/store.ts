@@ -7,7 +7,7 @@ import {
   readdirSync,
   unlinkSync,
 } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import type { MemoryEntry } from './types.js';
 
@@ -139,8 +139,12 @@ export class HippocampusStore {
 
   /** Get the finetune subdirectory path. */
   get finetuneDir(): string {
-    const dir = join(this.dir, 'finetune');
-    this.ensureSubdir('finetune');
+    const dir = basename(this.dir) === 'memory'
+      ? join(dirname(this.dir), 'finetune')
+      : join(this.dir, 'finetune');
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
     return dir;
   }
 

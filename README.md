@@ -119,13 +119,13 @@ The installer detects your OS, installs Node.js if missing, installs CereWorker 
 
 ### Manual Install
 
-**Prerequisites:** Node.js 22.5.1+, Docker (optional, for Cerebellum)
+**Prerequisites:** Node.js 22+, Docker (optional, for Cerebellum)
 
 ```bash
 npm install -g @cereworker/cli
 ```
 
-CereWorker uses Node.js built-in SQLite (`node:sqlite`) for conversation persistence. Node.js 22.5.1 or later is required.
+CereWorker persists conversations, pairing state, plans, and fine-tune material as plain JSON/JSONL files under `~/.cereworker/`, so runs can be inspected and diffed by hand.
 
 ### Setup
 
@@ -348,7 +348,7 @@ The Cerebrum can spawn independent sub-agents for parallel work:
    - **Past deadline + no progress**: timed out deterministically
 5. Corrective actions are applied automatically: `ping` (inject a prod message), `retry` (re-spawn), or `cancel`
 6. The Cerebrum can query agent status (including progress) via `query_agents` and cancel via `cancel_agent`. Users can monitor and stop agents via `/agents stop <id>` and `/agents info <id>`
-7. **Restart recovery**: if CereWorker restarts while agents are running, they are automatically resumed from their persisted `session.json` and `conversations.db`. A resume system message is injected so the agent can continue where it left off
+7. **Restart recovery**: if CereWorker restarts while agents are running, they are automatically resumed from their persisted `session.json` and text-backed conversation files. A resume system message is injected so the agent can continue where it left off
 8. Completed agents with `cleanup: "delete"` have their session directories removed; `cleanup: "keep"` agents (and all `longRunning` agents) persist for later reference
 
 ### Context Window Management
@@ -654,14 +654,35 @@ The Hippocampus is CereWorker's temporary memory layer that bridges conversation
   MEMORY.md              # Curated long-term notes (always loaded)
   2026-03-08.md           # Today's session log
   2026-03-07.md           # Yesterday's log
-  finetune/
-    pending.jsonl         # Training pairs awaiting fine-tune
-    consumed/             # Archived after fine-tuning
+~/.cereworker/conversations/
+  <conversation-id>/
+    meta.json
+    messages.jsonl
+~/.cereworker/pairing/
+  requests.jsonl
+  approved-users.jsonl
+~/.cereworker/plans/
+  <plan-id>.json
+~/.cereworker/finetune/
+  queue/
+    discovery.jsonl
+    conversations.jsonl
+    curated-memory.jsonl
+  rounds/
+    <job-id>/
+      manifest.json
+      training.jsonl
+      sources/
+        discovery.jsonl
+        conversations.jsonl
+        curated-memory.jsonl
 ```
 
 The Cerebrum reads and writes memory through four tools: `memory_read`, `memory_write`, `memory_log`, and `memory_search`. Periodically, a **curator** reviews the Hippocampus and asks the Cerebrum: "Which of these memories contain durable knowledge worth permanently learning?" The answer is extracted as instruction/response training pairs and queued for the Cerebellum's fine-tuning pipeline.
 
-This creates a natural flow: conversation --> Hippocampus (files) --> curation (Cerebrum) --> fine-tuning (Cerebellum) --> permanent knowledge (model weights).
+This creates a natural flow: conversation --> Hippocampus (files) --> curation (Cerebrum) --> fine-tuning queue --> per-round archive --> permanent knowledge (model weights).
+
+On first start after upgrading from the old SQLite-backed layout, CereWorker exports legacy `conversations.db` data into the text layout above and keeps the original file as `conversations.db.bak`.
 
 ## Configuration
 

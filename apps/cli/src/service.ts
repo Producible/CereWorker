@@ -1,5 +1,5 @@
 import { execFileSync, execSync, spawn, type SpawnOptions, type ChildProcess } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +15,7 @@ import {
   HippocampusStore,
   HippocampusCurator,
   ConversationExtractor,
+  FineTuneArchiveStore,
   createMemoryTools,
   memoryReadParameters,
   memoryWriteParameters,
@@ -286,6 +287,10 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
     });
   }
 
+  const fineTuneArchive = new FineTuneArchiveStore(
+    hippocampusStore?.finetuneDir ?? join(dataDir, 'finetune'),
+  );
+
   const builtinTools = createBuiltinTools({
     enabled: config.tools.shell.enabled,
     denyList: config.tools.shell.denyList,
@@ -317,9 +322,14 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
     weekly: 'every week',
   };
   let finetuneScheduleHint = scheduleMap[config.cerebellum.finetune?.schedule ?? 'auto'] ?? 'when idle';
+  let pendingFineTuneBatch: import('@cereworker/hippocampus').FineTuneQueuedBatch | null = null;
+  const fineTuneRoundsByJob = new Map<string, string>();
 
   if (config.cerebellum.finetune?.enabled) {
-    const conversationExtractor = new ConversationExtractor(conversationStore);
+    const conversationExtractor = new ConversationExtractor(
+      conversationStore,
+      fineTuneArchive.getConversationExtractorStatePath(),
+    );
 
     // Memory-based curator (requires hippocampus)
     const curator = config.hippocampus.enabled
@@ -330,25 +340,75 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
       : null;
 
     orchestrator.setFineTuneDataProvider(async () => {
-      // Source 1: Curated memories
-      let memoryPairs: import('@cereworker/hippocampus').TrainingPair[] = [];
       if (curator) {
         await curator.curate();
-        memoryPairs = curator.getPendingPairs();
-        if (memoryPairs.length > 0) {
-          curator.markConsumed();
-        }
       }
 
-      // Source 2: Conversation history
       const convPairs = conversationExtractor.extractPairs();
+      if (convPairs.length > 0) {
+        fineTuneArchive.enqueue('conversations', convPairs);
+      }
 
-      return [...memoryPairs, ...convPairs];
+      pendingFineTuneBatch = fineTuneArchive.getQueuedBatch();
+      return pendingFineTuneBatch.pairs;
     }, config.cerebellum.finetune.method);
 
     orchestrator.setFineTuneSchedule(config.cerebellum.finetune.schedule);
     log.info('Fine-tune data provider configured', { schedule: finetuneScheduleHint });
   }
+
+  orchestrator.on('finetune:start', ({ jobId }) => {
+    if (!pendingFineTuneBatch || pendingFineTuneBatch.pairs.length === 0) return;
+    try {
+      const manifest = fineTuneArchive.createRound(pendingFineTuneBatch, {
+        jobId,
+        requestedMethod: config.cerebellum.finetune?.method,
+      });
+      fineTuneArchive.clearBatch(pendingFineTuneBatch);
+      fineTuneRoundsByJob.set(jobId, manifest.roundId);
+      pendingFineTuneBatch = null;
+    } catch (err) {
+      log.error('Failed to archive fine-tune round', { jobId, error: (err as Error).message });
+    }
+  });
+
+  orchestrator.on('finetune:complete', ({ jobId, checkpointPath }) => {
+    const roundId = fineTuneRoundsByJob.get(jobId);
+    if (!roundId) return;
+    void orchestrator.getFineTuneStatus()
+      .then((status) => {
+        fineTuneArchive.updateRoundStatus(roundId, {
+          status: 'completed',
+          completedAt: new Date(status.completedAt || Date.now()).toISOString(),
+          checkpointPath,
+          loss: status.currentLoss,
+        });
+        fineTuneRoundsByJob.delete(jobId);
+      })
+      .catch((err) => {
+        fineTuneArchive.updateRoundStatus(roundId, {
+          status: 'completed',
+          completedAt: new Date().toISOString(),
+          checkpointPath,
+        });
+        fineTuneRoundsByJob.delete(jobId);
+        log.warn('Failed to update fine-tune round completion metadata', {
+          jobId,
+          error: (err as Error).message,
+        });
+      });
+  });
+
+  orchestrator.on('finetune:error', ({ jobId, error }) => {
+    const roundId = fineTuneRoundsByJob.get(jobId);
+    if (!roundId) return;
+    fineTuneArchive.updateRoundStatus(roundId, {
+      status: 'failed',
+      completedAt: new Date().toISOString(),
+      error,
+    });
+    fineTuneRoundsByJob.delete(jobId);
+  });
 
   // Setup sub-agents
   if (config.subAgents.enabled) {
@@ -488,21 +548,22 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
       );
       log.info('Discovery completed, instance profile updated', { name: result.name });
 
-      // Write training pairs from the discovery conversation to pending.jsonl
+      // Queue training pairs from the discovery conversation for a later fine-tune round
       try {
-        const pendingPath = join(homeDir(), '.cereworker', 'finetune', 'pending.jsonl');
-        mkdirSync(dirname(pendingPath), { recursive: true });
+        const discoveryPairs: import('@cereworker/hippocampus').TrainingPair[] = [];
         const messages = orchestrator.getMessages();
         for (let i = 0; i < messages.length - 1; i++) {
           if (messages[i].role === 'user' && messages[i + 1].role === 'cerebrum') {
-            const pair = JSON.stringify({
+            discoveryPairs.push({
               instruction: messages[i].content,
               response: messages[i + 1].content,
               source: 'discovery',
               createdAt: messages[i + 1].timestamp,
             });
-            appendFileSync(pendingPath, pair + '\n', 'utf-8');
           }
+        }
+        if (discoveryPairs.length > 0) {
+          fineTuneArchive.enqueue('discovery', discoveryPairs);
         }
       } catch {
         // Non-critical

@@ -1,16 +1,15 @@
-import { createRequire } from 'node:module';
 import { randomInt } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { createLogger } from './logger.js';
-
-const require = createRequire(import.meta.url);
-
-// Lazy-load node:sqlite to defer ExperimentalWarning until after CLI suppresses it
-function openDatabase(path: string) {
-  const { DatabaseSync } = require('node:sqlite');
-  return new DatabaseSync(path);
-}
+import {
+  ensureDir,
+  readJsonLines,
+  resolveStoreBasePath,
+  writeJsonLines,
+} from './text-store.js';
+import { markLegacySectionMigrated, readLegacySection } from './legacy-sqlite.js';
 
 const log = createLogger('pairing');
 
@@ -29,6 +28,13 @@ export interface PairingRequest {
   createdAt: number;
   expiresAt: number;
   status: 'pending' | 'approved' | 'expired';
+}
+
+interface ApprovedUser {
+  channelId: string;
+  senderId: string;
+  approvedAt: number;
+  approvedVia?: string;
 }
 
 export interface ApprovalResult {
@@ -56,66 +62,96 @@ export function normalizeCode(input: string): string {
 }
 
 export class PairingStore {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private db: any;
+  private readonly requestsPath: string | null;
+  private readonly approvedUsersPath: string | null;
+  private requests: PairingRequest[] = [];
+  private approvedUsers: ApprovedUser[] = [];
 
   constructor(dbPath?: string) {
-    const path = dbPath ?? DEFAULT_DB_PATH;
-    this.db = openDatabase(path);
-    this.db.exec('PRAGMA journal_mode = WAL');
-    this.ensureSchema();
-    log.info('Opened pairing database', { path });
+    const baseDir = resolveStoreBasePath(dbPath ?? DEFAULT_DB_PATH);
+    const pairingDir = join(baseDir, 'pairing');
+    ensureDir(pairingDir);
+
+    this.requestsPath = join(pairingDir, 'requests.jsonl');
+    this.approvedUsersPath = join(pairingDir, 'approved-users.jsonl');
+
+    this.migrateLegacyDatabase(dbPath ?? DEFAULT_DB_PATH);
+    this.requests = readJsonLines<PairingRequest>(this.requestsPath);
+    this.approvedUsers = readJsonLines<ApprovedUser>(this.approvedUsersPath);
+    log.info('Opened pairing store', { path: pairingDir });
   }
 
-  private ensureSchema(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS pairing_requests (
-        code TEXT PRIMARY KEY,
-        channelId TEXT NOT NULL,
-        senderId TEXT NOT NULL,
-        senderName TEXT,
-        createdAt INTEGER NOT NULL,
-        expiresAt INTEGER NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending'
-      );
-      CREATE INDEX IF NOT EXISTS idx_pairing_channel_sender
-        ON pairing_requests(channelId, senderId, status);
-      CREATE INDEX IF NOT EXISTS idx_pairing_status
-        ON pairing_requests(status, expiresAt);
+  private migrateLegacyDatabase(dbPath: string): void {
+    const migrated = readLegacySection(
+      dbPath,
+      'pairing',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (db: any) => {
+        const tableRows = db
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+          .all() as Array<{ name: string }>;
+        const tableNames = new Set(tableRows.map((row) => row.name));
 
-      CREATE TABLE IF NOT EXISTS approved_users (
-        channelId TEXT NOT NULL,
-        senderId TEXT NOT NULL,
-        approvedAt INTEGER NOT NULL,
-        approvedVia TEXT,
-        PRIMARY KEY (channelId, senderId)
-      );
-    `);
+        return {
+          requests: tableNames.has('pairing_requests')
+            ? (
+              db.prepare(
+                `SELECT code, channelId, senderId, senderName, createdAt, expiresAt, status
+                 FROM pairing_requests ORDER BY createdAt DESC`,
+              ).all() as PairingRequest[]
+            )
+            : [],
+          approvedUsers: tableNames.has('approved_users')
+            ? (
+              db.prepare(
+                `SELECT channelId, senderId, approvedAt, approvedVia
+                 FROM approved_users ORDER BY approvedAt ASC`,
+              ).all() as ApprovedUser[]
+            )
+            : [],
+        };
+      },
+    );
+
+    if (!migrated) return;
+
+    if (!existsSync(this.requestsPath!)) {
+      writeJsonLines(this.requestsPath!, migrated.requests);
+    }
+    if (!existsSync(this.approvedUsersPath!)) {
+      writeJsonLines(this.approvedUsersPath!, migrated.approvedUsers);
+    }
+
+    markLegacySectionMigrated(dbPath, 'pairing');
   }
 
   createPairingCode(channelId: string, senderId: string, senderName?: string): string | null {
     this.expireStale();
 
-    // Check for existing pending code for this sender+channel
-    const existing = this.db.prepare(
-      `SELECT code FROM pairing_requests WHERE channelId = ? AND senderId = ? AND status = 'pending' AND expiresAt > ?`,
-    ).get(channelId, senderId, Date.now()) as { code: string } | undefined;
+    const existing = this.requests.find(
+      (request) =>
+        request.channelId === channelId
+        && request.senderId === senderId
+        && request.status === 'pending'
+        && request.expiresAt > Date.now(),
+    );
 
     if (existing) {
       return formatCode(existing.code);
     }
 
-    // Check rate limit per channel
-    const pendingCount = this.db.prepare(
-      `SELECT COUNT(*) as cnt FROM pairing_requests WHERE channelId = ? AND status = 'pending' AND expiresAt > ?`,
-    ).get(channelId, Date.now()) as { cnt: number };
+    const pendingCount = this.requests.filter(
+      (request) =>
+        request.channelId === channelId
+        && request.status === 'pending'
+        && request.expiresAt > Date.now(),
+    ).length;
 
-    if (pendingCount.cnt >= MAX_PENDING_PER_CHANNEL) {
-      log.warn('Pairing rate limit reached', { channelId, pending: pendingCount.cnt });
+    if (pendingCount >= MAX_PENDING_PER_CHANNEL) {
+      log.warn('Pairing rate limit reached', { channelId, pending: pendingCount });
       return null;
     }
 
-    // Generate unique code
     let code: string;
     let attempts = 0;
     do {
@@ -125,15 +161,19 @@ export class PairingStore {
         log.warn('Failed to generate unique pairing code');
         return null;
       }
-    } while (
-      this.db.prepare(`SELECT 1 FROM pairing_requests WHERE code = ?`).get(code)
-    );
+    } while (this.requests.some((request) => request.code === code));
 
     const now = Date.now();
-    this.db.prepare(
-      `INSERT INTO pairing_requests (code, channelId, senderId, senderName, createdAt, expiresAt, status)
-       VALUES (?, ?, ?, ?, ?, ?, 'pending')`,
-    ).run(code, channelId, senderId, senderName ?? null, now, now + CODE_TTL_MS);
+    this.requests.unshift({
+      code,
+      channelId,
+      senderId,
+      senderName: senderName ?? null,
+      createdAt: now,
+      expiresAt: now + CODE_TTL_MS,
+      status: 'pending',
+    });
+    this.persistRequests();
 
     log.info('Pairing code created', { channelId, senderId, code: formatCode(code) });
     return formatCode(code);
@@ -141,40 +181,47 @@ export class PairingStore {
 
   getPendingByCode(code: string): PairingRequest | null {
     const normalized = normalizeCode(code);
-    const row = this.db.prepare(
-      `SELECT * FROM pairing_requests WHERE code = ? AND status = 'pending' AND expiresAt > ?`,
-    ).get(normalized, Date.now()) as PairingRequest | undefined;
-    return row ?? null;
+    return this.requests.find(
+      (request) =>
+        request.code === normalized
+        && request.status === 'pending'
+        && request.expiresAt > Date.now(),
+    ) ?? null;
   }
 
   listPending(): PairingRequest[] {
-    return this.db.prepare(
-      `SELECT * FROM pairing_requests WHERE status = 'pending' AND expiresAt > ? ORDER BY createdAt DESC`,
-    ).all(Date.now()) as unknown as PairingRequest[];
+    return this.requests
+      .filter((request) => request.status === 'pending' && request.expiresAt > Date.now())
+      .sort((a, b) => b.createdAt - a.createdAt);
   }
 
   approveCode(code: string): ApprovalResult {
     const normalized = normalizeCode(code);
     this.expireStale();
 
-    const request = this.db.prepare(
-      `SELECT * FROM pairing_requests WHERE code = ? AND status = 'pending' AND expiresAt > ?`,
-    ).get(normalized, Date.now()) as PairingRequest | undefined;
+    const request = this.requests.find(
+      (item) =>
+        item.code === normalized
+        && item.status === 'pending'
+        && item.expiresAt > Date.now(),
+    );
 
     if (!request) {
       return { ok: false, error: 'Code not found or expired' };
     }
 
-    // Mark as approved
-    this.db.prepare(
-      `UPDATE pairing_requests SET status = 'approved' WHERE code = ?`,
-    ).run(normalized);
+    request.status = 'approved';
+    this.persistRequests();
 
-    // Add to approved users
-    this.db.prepare(
-      `INSERT OR IGNORE INTO approved_users (channelId, senderId, approvedAt, approvedVia)
-       VALUES (?, ?, ?, 'pairing')`,
-    ).run(request.channelId, request.senderId, Date.now());
+    if (!this.approvedUsers.some((user) => user.channelId === request.channelId && user.senderId === request.senderId)) {
+      this.approvedUsers.push({
+        channelId: request.channelId,
+        senderId: request.senderId,
+        approvedAt: Date.now(),
+        approvedVia: 'pairing',
+      });
+      this.persistApprovedUsers();
+    }
 
     log.info('Pairing approved', {
       channelId: request.channelId,
@@ -191,27 +238,46 @@ export class PairingStore {
   }
 
   isApproved(channelId: string, senderId: string): boolean {
-    const row = this.db.prepare(
-      `SELECT 1 FROM approved_users WHERE channelId = ? AND senderId = ?`,
-    ).get(channelId, senderId);
-    return !!row;
+    return this.approvedUsers.some((user) => user.channelId === channelId && user.senderId === senderId);
   }
 
   expireStale(): number {
-    const result = this.db.prepare(
-      `UPDATE pairing_requests SET status = 'expired' WHERE status = 'pending' AND expiresAt <= ?`,
-    ).run(Date.now());
-    return Number(result.changes);
+    let changed = 0;
+    const now = Date.now();
+    for (const request of this.requests) {
+      if (request.status === 'pending' && request.expiresAt <= now) {
+        request.status = 'expired';
+        changed++;
+      }
+    }
+    if (changed > 0) {
+      this.persistRequests();
+    }
+    return changed;
   }
 
   addConfigUser(channelId: string, senderId: string): void {
-    this.db.prepare(
-      `INSERT OR IGNORE INTO approved_users (channelId, senderId, approvedAt, approvedVia)
-       VALUES (?, ?, ?, 'config')`,
-    ).run(channelId, senderId, Date.now());
+    if (this.approvedUsers.some((user) => user.channelId === channelId && user.senderId === senderId)) {
+      return;
+    }
+    this.approvedUsers.push({
+      channelId,
+      senderId,
+      approvedAt: Date.now(),
+      approvedVia: 'config',
+    });
+    this.persistApprovedUsers();
   }
 
   close(): void {
-    this.db.close();
+    // No-op for file-backed store.
+  }
+
+  private persistRequests(): void {
+    writeJsonLines(this.requestsPath!, this.requests);
+  }
+
+  private persistApprovedUsers(): void {
+    writeJsonLines(this.approvedUsersPath!, this.approvedUsers);
   }
 }

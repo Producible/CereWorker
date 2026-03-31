@@ -1,4 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { ConversationExtractor, type ConversationSource } from './conversation-extractor.js';
 
 function makeSource(convs: Record<string, Array<{ role: string; content: string }>>, updatedAt = Date.now()): ConversationSource {
@@ -9,6 +12,15 @@ function makeSource(convs: Record<string, Array<{ role: string; content: string 
 }
 
 describe('ConversationExtractor', () => {
+  let dir = '';
+
+  afterEach(() => {
+    if (dir) {
+      rmSync(dir, { recursive: true, force: true });
+      dir = '';
+    }
+  });
+
   it('extracts user/assistant pairs from conversations', () => {
     const source = makeSource({
       'conv-1': [
@@ -83,5 +95,21 @@ describe('ConversationExtractor', () => {
     const extractor = new ConversationExtractor(source);
     expect(extractor.extractPairs()).toHaveLength(1);
     expect(extractor.extractPairs()).toHaveLength(0);
+  });
+
+  it('persists extractor state when given a state file', () => {
+    dir = mkdtempSync(join(tmpdir(), 'conversation-extractor-state-'));
+    const statePath = join(dir, 'extractor.json');
+    const source = makeSource({
+      'conv-1': [
+        { role: 'user', content: 'What testing framework does this project use?' },
+        { role: 'assistant', content: 'The project uses Vitest as the testing framework with colocated test files and v8 coverage.' },
+      ],
+    });
+    const first = new ConversationExtractor(source, statePath);
+    expect(first.extractPairs()).toHaveLength(1);
+
+    const second = new ConversationExtractor(source, statePath);
+    expect(second.extractPairs()).toHaveLength(0);
   });
 });

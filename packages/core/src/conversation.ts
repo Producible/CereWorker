@@ -1,66 +1,99 @@
-import { createRequire } from 'node:module';
 import { nanoid } from 'nanoid';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import type { Conversation, Message, MessageRole } from './types.js';
 import { createLogger } from './logger.js';
-
-const require = createRequire(import.meta.url);
-
-// Lazy-load node:sqlite to defer ExperimentalWarning until after CLI suppresses it
-function openDatabase(path: string) {
-  const { DatabaseSync } = require('node:sqlite');
-  return new DatabaseSync(path);
-}
+import {
+  appendJsonLine,
+  ensureDir,
+  readJsonFile,
+  readJsonLines,
+  resolveStoreBasePath,
+  writeJsonFileAtomic,
+  writeJsonLines,
+} from './text-store.js';
+import { markLegacySectionMigrated, readLegacySection } from './legacy-sqlite.js';
 
 const log = createLogger('conversation');
 
 const DEFAULT_DB_PATH = join(homedir(), '.cereworker', 'conversations.db');
 
+interface ConversationMeta {
+  id: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export class ConversationStore {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private db: any;
+  private readonly inMemory: boolean;
+  private readonly baseDir: string | null;
+  private readonly conversationsDir: string | null;
+  private readonly memoryConversations = new Map<string, Conversation>();
 
   constructor(dbPath?: string) {
-    const path = dbPath ?? DEFAULT_DB_PATH;
+    this.inMemory = dbPath === ':memory:';
+    this.baseDir = this.inMemory ? null : resolveStoreBasePath(dbPath ?? DEFAULT_DB_PATH);
+    this.conversationsDir = this.baseDir ? join(this.baseDir, 'conversations') : null;
 
-    if (path !== ':memory:') {
-      const dir = dirname(path);
-      if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
-      }
+    if (this.conversationsDir) {
+      ensureDir(this.conversationsDir);
+      this.migrateLegacyDatabase(dbPath ?? DEFAULT_DB_PATH);
+      log.info('Opened conversation store', { path: this.conversationsDir });
     }
-
-    this.db = openDatabase(path);
-    this.db.exec('PRAGMA journal_mode = WAL');
-    this.ensureSchema();
-    log.info('Opened conversation database', { path });
   }
 
-  private ensureSchema(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS conversations (
-        id TEXT PRIMARY KEY,
-        createdAt INTEGER NOT NULL,
-        updatedAt INTEGER NOT NULL
-      );
+  private migrateLegacyDatabase(dbPath: string): void {
+    if (this.inMemory || !this.conversationsDir) return;
 
-      CREATE TABLE IF NOT EXISTS messages (
-        id TEXT PRIMARY KEY,
-        conversationId TEXT NOT NULL,
-        role TEXT NOT NULL,
-        content TEXT NOT NULL,
-        timestamp INTEGER NOT NULL,
-        toolCalls TEXT,
-        toolResult TEXT,
-        metadata TEXT,
-        FOREIGN KEY (conversationId) REFERENCES conversations(id) ON DELETE CASCADE
-      );
+    const rows = readLegacySection(
+      dbPath,
+      'conversations',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (db: any) => {
+        const conversations = db
+          .prepare('SELECT id, createdAt, updatedAt FROM conversations ORDER BY createdAt ASC')
+          .all() as Array<ConversationMeta>;
+        return conversations.map((conversation) => {
+          const messages = db
+            .prepare(
+              `SELECT id, role, content, timestamp, toolCalls, toolResult, metadata
+               FROM messages WHERE conversationId = ? ORDER BY timestamp, rowid`,
+            )
+            .all(conversation.id) as Array<{
+              id: string;
+              role: string;
+              content: string;
+              timestamp: number;
+              toolCalls: string | null;
+              toolResult: string | null;
+              metadata: string | null;
+            }>;
+          return {
+            conversation,
+            messages: messages.map((message) => ({
+              id: message.id,
+              role: message.role as MessageRole,
+              content: message.content,
+              timestamp: message.timestamp,
+              ...(message.toolCalls ? { toolCalls: JSON.parse(message.toolCalls) } : {}),
+              ...(message.toolResult ? { toolResult: JSON.parse(message.toolResult) } : {}),
+              ...(message.metadata ? { metadata: JSON.parse(message.metadata) } : {}),
+            })),
+          };
+        });
+      },
+    );
 
-      CREATE INDEX IF NOT EXISTS idx_messages_conversation
-        ON messages(conversationId, timestamp);
-    `);
+    if (!rows) return;
+
+    for (const row of rows) {
+      if (existsSync(this.getConversationDir(row.conversation.id))) continue;
+      this.writeConversationMeta(row.conversation.id, row.conversation);
+      this.writeConversationMessages(row.conversation.id, row.messages);
+    }
+
+    markLegacySectionMigrated(dbPath, 'conversations');
   }
 
   create(): Conversation {
@@ -72,46 +105,58 @@ export class ConversationStore {
       updatedAt: now,
     };
 
-    this.db
-      .prepare('INSERT INTO conversations (id, createdAt, updatedAt) VALUES (?, ?, ?)')
-      .run(conversation.id, now, now);
+    if (this.inMemory) {
+      this.memoryConversations.set(conversation.id, conversation);
+    } else {
+      this.writeConversationMeta(conversation.id, conversation);
+      this.writeConversationMessages(conversation.id, []);
+    }
+
     log.debug('Created conversation', { id: conversation.id });
     return conversation;
   }
 
   get(id: string): Conversation | undefined {
-    const row = this.db
-      .prepare('SELECT id, createdAt, updatedAt FROM conversations WHERE id = ?')
-      .get(id) as { id: string; createdAt: number; updatedAt: number } | undefined;
-    if (!row) return undefined;
+    if (this.inMemory) {
+      const conversation = this.memoryConversations.get(id);
+      return conversation ? { ...conversation, messages: [...conversation.messages] } : undefined;
+    }
 
+    const meta = this.readConversationMeta(id);
+    if (!meta) return undefined;
     return {
-      id: row.id,
-      messages: this.getMessages(id),
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
+      ...meta,
+      messages: this.readConversationMessages(id),
     };
   }
 
   list(): Conversation[] {
-    const rows = this.db
-      .prepare('SELECT id, createdAt, updatedAt FROM conversations ORDER BY updatedAt DESC')
-      .all() as unknown as Array<{ id: string; createdAt: number; updatedAt: number }>;
+    if (this.inMemory) {
+      return Array.from(this.memoryConversations.values())
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .map((conversation) => ({
+          id: conversation.id,
+          messages: [],
+          createdAt: conversation.createdAt,
+          updatedAt: conversation.updatedAt,
+        }));
+    }
 
-    return rows.map((row) => ({
-      id: row.id,
-      messages: [], // Don't load messages for list view
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-    }));
+    if (!this.conversationsDir || !existsSync(this.conversationsDir)) return [];
+    return readdirSync(this.conversationsDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => this.readConversationMeta(entry.name))
+      .filter((meta): meta is ConversationMeta => meta !== undefined)
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .map((meta) => ({
+        id: meta.id,
+        messages: [],
+        createdAt: meta.createdAt,
+        updatedAt: meta.updatedAt,
+      }));
   }
 
   appendMessage(conversationId: string, role: MessageRole, content: string, extra?: Partial<Message>): Message {
-    const row = this.db
-      .prepare('SELECT id FROM conversations WHERE id = ?')
-      .get(conversationId);
-    if (!row) throw new Error(`Conversation ${conversationId} not found`);
-
     const message: Message = {
       id: nanoid(),
       role,
@@ -120,90 +165,104 @@ export class ConversationStore {
       ...extra,
     };
 
-    this.db
-      .prepare(
-        `INSERT INTO messages (id, conversationId, role, content, timestamp, toolCalls, toolResult, metadata)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        message.id,
-        conversationId,
-        message.role,
-        message.content,
-        message.timestamp,
-        message.toolCalls ? JSON.stringify(message.toolCalls) : null,
-        message.toolResult ? JSON.stringify(message.toolResult) : null,
-        message.metadata ? JSON.stringify(message.metadata) : null,
-      );
+    if (this.inMemory) {
+      const conversation = this.memoryConversations.get(conversationId);
+      if (!conversation) throw new Error(`Conversation ${conversationId} not found`);
+      conversation.messages.push(message);
+      conversation.updatedAt = Date.now();
+      return message;
+    }
 
-    this.db
-      .prepare('UPDATE conversations SET updatedAt = ? WHERE id = ?')
-      .run(Date.now(), conversationId);
+    const meta = this.readConversationMeta(conversationId);
+    if (!meta) throw new Error(`Conversation ${conversationId} not found`);
+
+    appendJsonLine(this.getMessagesPath(conversationId), message);
+    this.writeConversationMeta(conversationId, {
+      ...meta,
+      updatedAt: Date.now(),
+    });
 
     return message;
   }
 
   getMessages(conversationId: string): Message[] {
-    const rows = this.db
-      .prepare(
-        `SELECT id, role, content, timestamp, toolCalls, toolResult, metadata
-         FROM messages WHERE conversationId = ? ORDER BY timestamp, rowid`,
-      )
-      .all(conversationId) as unknown as Array<{
-        id: string;
-        role: string;
-        content: string;
-        timestamp: number;
-        toolCalls: string | null;
-        toolResult: string | null;
-        metadata: string | null;
-      }>;
-
-    return rows.map((row) => ({
-      id: row.id,
-      role: row.role as MessageRole,
-      content: row.content,
-      timestamp: row.timestamp,
-      ...(row.toolCalls ? { toolCalls: JSON.parse(row.toolCalls) } : {}),
-      ...(row.toolResult ? { toolResult: JSON.parse(row.toolResult) } : {}),
-      ...(row.metadata ? { metadata: JSON.parse(row.metadata) } : {}),
-    }));
+    if (this.inMemory) {
+      return [...(this.memoryConversations.get(conversationId)?.messages ?? [])];
+    }
+    return this.readConversationMessages(conversationId);
   }
 
-  /** Delete specific messages by ID from a conversation. */
   deleteMessages(conversationId: string, messageIds: string[]): number {
     if (messageIds.length === 0) return 0;
 
-    const placeholders = messageIds.map(() => '?').join(',');
-    const result = this.db
-      .prepare(`DELETE FROM messages WHERE conversationId = ? AND id IN (${placeholders})`)
-      .run(conversationId, ...messageIds);
+    if (this.inMemory) {
+      const conversation = this.memoryConversations.get(conversationId);
+      if (!conversation) return 0;
+      const before = conversation.messages.length;
+      conversation.messages = conversation.messages.filter((message) => !messageIds.includes(message.id));
+      return before - conversation.messages.length;
+    }
 
-    return Number(result.changes);
-  }
-
-  delete(id: string): boolean {
-    const result = this.db
-      .prepare('DELETE FROM conversations WHERE id = ?')
-      .run(id);
-    const deleted = Number(result.changes) > 0;
-    log.debug('Deleted conversation', { id, deleted });
+    const messages = this.readConversationMessages(conversationId);
+    if (messages.length === 0) return 0;
+    const filtered = messages.filter((message) => !messageIds.includes(message.id));
+    const deleted = messages.length - filtered.length;
+    if (deleted > 0) {
+      this.writeConversationMessages(conversationId, filtered);
+    }
     return deleted;
   }
 
-  /** Get the most recent message content from a conversation (for list previews) */
+  delete(id: string): boolean {
+    if (this.inMemory) {
+      const deleted = this.memoryConversations.delete(id);
+      log.debug('Deleted conversation', { id, deleted });
+      return deleted;
+    }
+
+    const conversationDir = this.getConversationDir(id);
+    if (!existsSync(conversationDir)) return false;
+    rmSync(conversationDir, { recursive: true, force: true });
+    log.debug('Deleted conversation', { id, deleted: true });
+    return true;
+  }
+
   getPreview(conversationId: string): string | null {
-    const row = this.db
-      .prepare(
-        `SELECT content FROM messages
-         WHERE conversationId = ? AND role = 'user'
-         ORDER BY timestamp ASC LIMIT 1`,
-      )
-      .get(conversationId) as { content: string } | undefined;
-    return row?.content ?? null;
+    const messages = this.getMessages(conversationId);
+    return messages.find((message) => message.role === 'user')?.content ?? null;
   }
 
   close(): void {
-    this.db.close();
+    // No-op for file-backed stores.
+  }
+
+  private getConversationDir(id: string): string {
+    return join(this.conversationsDir ?? dirname(DEFAULT_DB_PATH), id);
+  }
+
+  private getMetaPath(id: string): string {
+    return join(this.getConversationDir(id), 'meta.json');
+  }
+
+  private getMessagesPath(id: string): string {
+    return join(this.getConversationDir(id), 'messages.jsonl');
+  }
+
+  private readConversationMeta(id: string): ConversationMeta | undefined {
+    return readJsonFile<ConversationMeta | null>(this.getMetaPath(id), null) ?? undefined;
+  }
+
+  private writeConversationMeta(id: string, meta: ConversationMeta): void {
+    ensureDir(this.getConversationDir(id));
+    writeJsonFileAtomic(this.getMetaPath(id), meta);
+  }
+
+  private readConversationMessages(id: string): Message[] {
+    return readJsonLines<Message>(this.getMessagesPath(id));
+  }
+
+  private writeConversationMessages(id: string, messages: Message[]): void {
+    ensureDir(this.getConversationDir(id));
+    writeJsonLines(this.getMessagesPath(id), messages);
   }
 }

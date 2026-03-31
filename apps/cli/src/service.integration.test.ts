@@ -146,6 +146,53 @@ describe('createService integration', () => {
     await secondService.shutdown();
   });
 
+  it('archives the exact training batch for each fine-tune round in human-readable files', async () => {
+    const service = createService(makeConfig({
+      cerebellum: {
+        enabled: false,
+        verification: { enabled: false },
+        finetune: { enabled: true, method: 'auto', schedule: 'daily' },
+      },
+      hippocampus: { enabled: false },
+    }));
+
+    service.orchestrator.setCerebellum({
+      isConnected: vi.fn(() => true),
+      assessTurnRecovery: vi.fn(),
+      verifyToolResult: vi.fn(),
+      ingestTrainingData: vi.fn(async () => 6),
+      startFineTune: vi.fn(async () => ({ jobId: 'ft-archive-1', started: true, error: '' })),
+      getFineTuneStatus: vi.fn(async () => ({
+        status: 'running' as const,
+        jobId: 'ft-archive-1',
+        progress: 0,
+        currentStep: 0,
+        totalSteps: 0,
+        currentLoss: 0,
+        error: '',
+        checkpointPath: '',
+        startedAt: Date.now(),
+        completedAt: 0,
+      })),
+    }, { enabled: false });
+
+    service.cerebrum.stream = vi.fn(async (_messages, _tools, callbacks) => {
+      const reply = 'The deployment pipeline runs tests, builds artifacts, and promotes the release after the verification checks pass successfully.';
+      callbacks.onChunk(reply);
+      callbacks.onFinish(reply);
+    });
+
+    await service.orchestrator.sendMessage('Can you explain how the deployment pipeline works from start to finish?');
+    await service.orchestrator.triggerFineTune();
+
+    const roundDir = join(homeDir, '.cereworker', 'finetune', 'rounds', 'ft-archive-1');
+    expect(readFileSync(join(roundDir, 'training.jsonl'), 'utf-8')).toContain('deployment pipeline works');
+    expect(readFileSync(join(roundDir, 'sources', 'conversations.jsonl'), 'utf-8')).toContain('deployment pipeline works');
+    expect(readFileSync(join(homeDir, '.cereworker', 'finetune', 'queue', 'conversations.jsonl'), 'utf-8')).toBe('');
+
+    await service.shutdown();
+  });
+
   it('retries when a streamed tool call hangs until the watchdog aborts it', async () => {
     vi.useFakeTimers();
 

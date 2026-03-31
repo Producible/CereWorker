@@ -1,8 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { PairingStore, formatCode, normalizeCode } from './pairing.js';
+import { ConversationStore } from './conversation.js';
+
+const require = createRequire(import.meta.url);
 
 describe('PairingStore', () => {
   let dir: string;
@@ -182,13 +186,108 @@ describe('PairingStore', () => {
     it('expires old codes', () => {
       // Create a code, then manually backdate it
       store.createPairingCode('telegram', '12345');
-      // Backdate via raw SQL
-      const db = (store as any).db;
-      db.prepare(`UPDATE pairing_requests SET expiresAt = 0`).run();
+      (store as any).requests[0].expiresAt = 0;
+      (store as any).persistRequests();
       const count = store.expireStale();
       expect(count).toBe(1);
       expect(store.listPending()).toHaveLength(0);
     });
+  });
+
+  it('migrates legacy SQLite pairing data into text files', () => {
+    const legacyDir = mkdtempSync(join(tmpdir(), 'pairing-migration-'));
+    const dbPath = join(legacyDir, 'conversations.db');
+    try {
+      const { DatabaseSync } = require('node:sqlite');
+      const db = new DatabaseSync(dbPath);
+      db.exec(`
+        CREATE TABLE pairing_requests (
+          code TEXT PRIMARY KEY,
+          channelId TEXT NOT NULL,
+          senderId TEXT NOT NULL,
+          senderName TEXT,
+          createdAt INTEGER NOT NULL,
+          expiresAt INTEGER NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending'
+        );
+        CREATE TABLE approved_users (
+          channelId TEXT NOT NULL,
+          senderId TEXT NOT NULL,
+          approvedAt INTEGER NOT NULL,
+          approvedVia TEXT,
+          PRIMARY KEY (channelId, senderId)
+        );
+      `);
+      db.prepare(
+        `INSERT INTO pairing_requests (code, channelId, senderId, senderName, createdAt, expiresAt, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run('ABCD1234', 'telegram', '123', 'alice', 1, Date.now() + 10_000, 'pending');
+      db.prepare(
+        'INSERT INTO approved_users (channelId, senderId, approvedAt, approvedVia) VALUES (?, ?, ?, ?)',
+      ).run('telegram', '456', 2, 'config');
+      db.close();
+
+      const migrated = new PairingStore(dbPath);
+      expect(migrated.getPendingByCode('ABCD-1234')?.senderName).toBe('alice');
+      expect(migrated.isApproved('telegram', '456')).toBe(true);
+      migrated.close();
+    } finally {
+      rmSync(legacyDir, { recursive: true, force: true });
+    }
+  });
+
+  it('waits to back up the shared legacy database until all present sections are migrated', () => {
+    const legacyDir = mkdtempSync(join(tmpdir(), 'pairing-conversation-shared-'));
+    const dbPath = join(legacyDir, 'conversations.db');
+    try {
+      const { DatabaseSync } = require('node:sqlite');
+      const db = new DatabaseSync(dbPath);
+      db.exec(`
+        CREATE TABLE conversations (id TEXT PRIMARY KEY, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL);
+        CREATE TABLE messages (
+          id TEXT PRIMARY KEY,
+          conversationId TEXT NOT NULL,
+          role TEXT NOT NULL,
+          content TEXT NOT NULL,
+          timestamp INTEGER NOT NULL,
+          toolCalls TEXT,
+          toolResult TEXT,
+          metadata TEXT
+        );
+        CREATE TABLE pairing_requests (
+          code TEXT PRIMARY KEY,
+          channelId TEXT NOT NULL,
+          senderId TEXT NOT NULL,
+          senderName TEXT,
+          createdAt INTEGER NOT NULL,
+          expiresAt INTEGER NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending'
+        );
+      `);
+      db.prepare('INSERT INTO conversations (id, createdAt, updatedAt) VALUES (?, ?, ?)')
+        .run('conv-1', 1, 2);
+      db.prepare(
+        `INSERT INTO messages (id, conversationId, role, content, timestamp, toolCalls, toolResult, metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run('msg-1', 'conv-1', 'user', 'hello', 10, null, null, null);
+      db.prepare(
+        `INSERT INTO pairing_requests (code, channelId, senderId, senderName, createdAt, expiresAt, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      ).run('ABCD1234', 'telegram', '123', 'alice', 1, Date.now() + 10_000, 'pending');
+      db.close();
+
+      const conversationStore = new ConversationStore(dbPath);
+      expect(existsSync(dbPath)).toBe(true);
+
+      const pairingStore = new PairingStore(dbPath);
+      expect(pairingStore.getPendingByCode('ABCD-1234')?.senderName).toBe('alice');
+      expect(existsSync(`${dbPath}.bak`)).toBe(true);
+
+      conversationStore.close();
+      pairingStore.close();
+    } finally {
+      rmSync(legacyDir, { recursive: true, force: true });
+    }
   });
 
 });

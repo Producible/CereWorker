@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import type { TrainingPair } from './types.js';
 
 export interface ConversationSource {
@@ -12,9 +14,12 @@ export class ConversationExtractor {
   private source: ConversationSource;
   private lastExtractedAt = 0;
   private processedIds = new Set<string>();
+  private readonly statePath?: string;
 
-  constructor(source: ConversationSource) {
+  constructor(source: ConversationSource, statePath?: string) {
     this.source = source;
+    this.statePath = statePath;
+    this.loadState();
   }
 
   extractPairs(): TrainingPair[] {
@@ -61,8 +66,33 @@ export class ConversationExtractor {
 
     if (conversations.length > 0) {
       this.lastExtractedAt = Math.max(...conversations.map((c) => c.updatedAt));
+      this.saveState();
     }
 
     return pairs;
+  }
+
+  private loadState(): void {
+    if (!this.statePath || !existsSync(this.statePath)) return;
+    try {
+      const parsed = JSON.parse(readFileSync(this.statePath, 'utf-8')) as {
+        lastExtractedAt?: number;
+        processedIds?: string[];
+      };
+      this.lastExtractedAt = parsed.lastExtractedAt ?? 0;
+      this.processedIds = new Set(parsed.processedIds ?? []);
+    } catch {
+      this.lastExtractedAt = 0;
+      this.processedIds = new Set<string>();
+    }
+  }
+
+  private saveState(): void {
+    if (!this.statePath) return;
+    mkdirSync(dirname(this.statePath), { recursive: true });
+    writeFileSync(this.statePath, JSON.stringify({
+      lastExtractedAt: this.lastExtractedAt,
+      processedIds: Array.from(this.processedIds),
+    }, null, 2) + '\n', 'utf-8');
   }
 }

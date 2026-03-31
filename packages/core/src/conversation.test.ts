@@ -1,5 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { createRequire } from 'node:module';
+import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { ConversationStore } from './conversation.js';
+
+const require = createRequire(import.meta.url);
 
 describe('ConversationStore', () => {
   let store: ConversationStore;
@@ -116,5 +122,47 @@ describe('ConversationStore', () => {
     store.appendMessage(conv.id, 'user', 'hello');
     const updated = store.get(conv.id);
     expect(updated!.updatedAt).toBeGreaterThanOrEqual(originalUpdatedAt);
+  });
+
+  it('migrates legacy SQLite conversation data into text files', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'conversation-migration-'));
+    const dbPath = join(dir, 'conversations.db');
+    try {
+      const { DatabaseSync } = require('node:sqlite');
+      const db = new DatabaseSync(dbPath);
+      db.exec(`
+        CREATE TABLE conversations (id TEXT PRIMARY KEY, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL);
+        CREATE TABLE messages (
+          id TEXT PRIMARY KEY,
+          conversationId TEXT NOT NULL,
+          role TEXT NOT NULL,
+          content TEXT NOT NULL,
+          timestamp INTEGER NOT NULL,
+          toolCalls TEXT,
+          toolResult TEXT,
+          metadata TEXT
+        );
+      `);
+      db.prepare('INSERT INTO conversations (id, createdAt, updatedAt) VALUES (?, ?, ?)')
+        .run('conv-1', 1, 2);
+      db.prepare(
+        `INSERT INTO messages (id, conversationId, role, content, timestamp, toolCalls, toolResult, metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run('msg-1', 'conv-1', 'user', 'hello', 10, null, null, null);
+      db.prepare(
+        `INSERT INTO messages (id, conversationId, role, content, timestamp, toolCalls, toolResult, metadata)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run('msg-2', 'conv-1', 'cerebrum', 'world', 11, null, null, null);
+      db.close();
+
+      const migrated = new ConversationStore(dbPath);
+      const conversation = migrated.get('conv-1');
+      expect(conversation?.messages.map((message) => message.content)).toEqual(['hello', 'world']);
+      expect(existsSync(join(dir, 'conversations', 'conv-1', 'messages.jsonl'))).toBe(true);
+      expect(existsSync(`${dbPath}.bak`)).toBe(true);
+      migrated.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

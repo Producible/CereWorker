@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { HippocampusStore } from './store.js';
@@ -11,6 +11,12 @@ function setup() {
   const generator: TextGenerator = { generate: vi.fn() };
   const curator = new HippocampusCurator(store, generator);
   return { dir, store, generator, curator };
+}
+
+function ensureQueueDir(ftDir: string): string {
+  const queueDir = join(ftDir, 'queue');
+  mkdirSync(queueDir, { recursive: true });
+  return queueDir;
 }
 
 describe('HippocampusCurator', () => {
@@ -119,7 +125,7 @@ describe('HippocampusCurator', () => {
       (ctx.generator.generate as ReturnType<typeof vi.fn>).mockResolvedValue(JSON.stringify(pairs));
 
       await ctx.curator.curate();
-      const pendingPath = join(ctx.store.finetuneDir, 'pending.jsonl');
+      const pendingPath = join(ctx.store.finetuneDir, 'queue', 'curated-memory.jsonl');
       expect(existsSync(pendingPath)).toBe(true);
       const content = readFileSync(pendingPath, 'utf-8');
       expect(content).toContain('What database engine is used in the project?');
@@ -148,11 +154,12 @@ describe('HippocampusCurator', () => {
       const ctx = setup();
       dir = ctx.dir;
       const ftDir = ctx.store.finetuneDir;
+      const queueDir = ensureQueueDir(ftDir);
       const lines = [
         JSON.stringify({ instruction: 'q1', response: 'a1', source: 's1', createdAt: 1 }),
         JSON.stringify({ instruction: 'q2', response: 'a2', source: 's2', createdAt: 2 }),
       ].join('\n');
-      writeFileSync(join(ftDir, 'pending.jsonl'), lines + '\n', 'utf-8');
+      writeFileSync(join(queueDir, 'curated-memory.jsonl'), lines + '\n', 'utf-8');
 
       const pairs = ctx.curator.getPendingPairs();
       expect(pairs).toHaveLength(2);
@@ -164,11 +171,12 @@ describe('HippocampusCurator', () => {
       const ctx = setup();
       dir = ctx.dir;
       const ftDir = ctx.store.finetuneDir;
+      const queueDir = ensureQueueDir(ftDir);
       const lines = [
         JSON.stringify({ instruction: 'q1', response: 'a1', source: 's1', createdAt: 1 }),
         'not valid json {{{',
       ].join('\n');
-      writeFileSync(join(ftDir, 'pending.jsonl'), lines + '\n', 'utf-8');
+      writeFileSync(join(queueDir, 'curated-memory.jsonl'), lines + '\n', 'utf-8');
 
       const pairs = ctx.curator.getPendingPairs();
       expect(pairs).toHaveLength(1);
@@ -180,15 +188,16 @@ describe('HippocampusCurator', () => {
       const ctx = setup();
       dir = ctx.dir;
       const ftDir = ctx.store.finetuneDir;
-      writeFileSync(join(ftDir, 'pending.jsonl'), '{"a":1}\n', 'utf-8');
+      const queueDir = ensureQueueDir(ftDir);
+      writeFileSync(join(queueDir, 'curated-memory.jsonl'), '{"a":1}\n', 'utf-8');
 
       ctx.curator.markConsumed();
 
       // Pending file should be empty
-      expect(readFileSync(join(ftDir, 'pending.jsonl'), 'utf-8')).toBe('');
+      expect(readFileSync(join(ftDir, 'queue', 'curated-memory.jsonl'), 'utf-8')).toBe('');
       // Consumed dir should exist with today's file
       const today = new Date().toISOString().slice(0, 10);
-      expect(existsSync(join(ftDir, 'consumed', `${today}.jsonl`))).toBe(true);
+      expect(existsSync(join(ftDir, 'consumed', `curated-memory-${today}.jsonl`))).toBe(true);
     });
 
     it('is a no-op when no pending file exists', () => {
@@ -204,6 +213,7 @@ describe('HippocampusCurator', () => {
       const ctx = setup();
       dir = ctx.dir;
       const ftDir = ctx.store.finetuneDir;
+      const queueDir = ensureQueueDir(ftDir);
 
       // Pre-seed pending with an existing pair
       const existing = JSON.stringify({
@@ -212,7 +222,7 @@ describe('HippocampusCurator', () => {
         source: 'MEMORY.md',
         createdAt: 1,
       });
-      writeFileSync(join(ftDir, 'pending.jsonl'), existing + '\n', 'utf-8');
+      writeFileSync(join(queueDir, 'curated-memory.jsonl'), existing + '\n', 'utf-8');
 
       // Curate returns same instruction + a new one
       writeFileSync(join(dir, 'MEMORY.md'), 'content', 'utf-8');

@@ -4,7 +4,7 @@ set -euo pipefail
 # CereWorker one-line installer for Linux and macOS
 # Usage: curl -fsSL https://raw.githubusercontent.com/Producible/CereWorker/main/install.sh | bash
 
-NODE_MIN=20
+NODE_MIN=22
 PKG="@cereworker/cli"
 
 # --- Colors ---

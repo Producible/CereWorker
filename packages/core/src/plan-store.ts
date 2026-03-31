@@ -1,16 +1,15 @@
-import { createRequire } from 'node:module';
 import { nanoid } from 'nanoid';
-import { existsSync, mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, readdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { createLogger } from './logger.js';
-
-const require = createRequire(import.meta.url);
-
-function openDatabase(path: string) {
-  const { DatabaseSync } = require('node:sqlite');
-  return new DatabaseSync(path);
-}
+import {
+  ensureDir,
+  readJsonFile,
+  resolveStoreBasePath,
+  writeJsonFileAtomic,
+} from './text-store.js';
+import { markLegacySectionMigrated, readLegacySection } from './legacy-sqlite.js';
 
 const log = createLogger('plan-store');
 
@@ -36,40 +35,55 @@ export interface Plan {
 }
 
 export class PlanStore {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private db: any;
+  private readonly plansDir: string;
 
   constructor(dbPath?: string) {
-    const path = dbPath ?? DEFAULT_DB_PATH;
-
-    if (path !== ':memory:') {
-      const dir = dirname(path);
-      if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
-      }
-    }
-
-    this.db = openDatabase(path);
-    this.db.exec('PRAGMA journal_mode = WAL');
-    this.ensureSchema();
+    const baseDir = resolveStoreBasePath(dbPath ?? DEFAULT_DB_PATH);
+    this.plansDir = join(baseDir, 'plans');
+    ensureDir(this.plansDir);
+    this.migrateLegacyDatabase(dbPath ?? DEFAULT_DB_PATH);
   }
 
-  private ensureSchema(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS plans (
-        id TEXT PRIMARY KEY,
-        taskId TEXT,
-        goal TEXT NOT NULL,
-        steps TEXT NOT NULL,
-        conversationId TEXT,
-        createdAt TEXT NOT NULL,
-        updatedAt TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'in_progress'
-      );
+  private migrateLegacyDatabase(dbPath: string): void {
+    const rows = readLegacySection(
+      dbPath,
+      'plans',
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (db: any) => (
+        db.prepare(
+          `SELECT id, taskId, goal, steps, conversationId, createdAt, updatedAt, status
+           FROM plans ORDER BY createdAt ASC`,
+        ).all() as Array<{
+          id: string;
+          taskId: string | null;
+          goal: string;
+          steps: string;
+          conversationId: string | null;
+          createdAt: string;
+          updatedAt: string;
+          status: string;
+        }>
+      ).map((row) => ({
+        id: row.id,
+        taskId: row.taskId ?? undefined,
+        goal: row.goal,
+        steps: JSON.parse(row.steps),
+        conversationId: row.conversationId ?? undefined,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
+        status: row.status as PlanStatus,
+      })),
+    );
 
-      CREATE INDEX IF NOT EXISTS idx_plans_status
-        ON plans(status);
-    `);
+    if (!rows) return;
+
+    for (const plan of rows) {
+      const path = this.getPlanPath(plan.id);
+      if (existsSync(path)) continue;
+      writeJsonFileAtomic(path, plan);
+    }
+
+    markLegacySectionMigrated(dbPath, 'plans');
   }
 
   save(plan: Omit<Plan, 'id' | 'createdAt' | 'updatedAt'> & { id?: string }): Plan {
@@ -85,50 +99,33 @@ export class PlanStore {
       status: plan.status,
     };
 
-    this.db
-      .prepare(`INSERT OR REPLACE INTO plans (id, taskId, goal, steps, conversationId, createdAt, updatedAt, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(
-        full.id,
-        full.taskId ?? null,
-        full.goal,
-        JSON.stringify(full.steps),
-        full.conversationId ?? null,
-        full.createdAt,
-        full.updatedAt,
-        full.status,
-      );
-
+    writeJsonFileAtomic(this.getPlanPath(full.id), full);
     log.debug('Saved plan', { id: full.id, status: full.status });
     return full;
   }
 
   get(id: string): Plan | undefined {
-    const row = this.db
-      .prepare('SELECT * FROM plans WHERE id = ?')
-      .get(id) as PlanRow | undefined;
-    return row ? this.rowToPlan(row) : undefined;
+    return readJsonFile<Plan | null>(this.getPlanPath(id), null) ?? undefined;
   }
 
   getInProgress(): Plan[] {
-    const rows = this.db
-      .prepare("SELECT * FROM plans WHERE status = 'in_progress' ORDER BY createdAt ASC")
-      .all() as unknown as PlanRow[];
-    return rows.map((r) => this.rowToPlan(r));
+    return this.readAllPlans()
+      .filter((plan) => plan.status === 'in_progress')
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
 
   getByTask(taskId: string): Plan | undefined {
-    const row = this.db
-      .prepare("SELECT * FROM plans WHERE taskId = ? AND status = 'in_progress' ORDER BY createdAt DESC LIMIT 1")
-      .get(taskId) as PlanRow | undefined;
-    return row ? this.rowToPlan(row) : undefined;
+    return this.readAllPlans()
+      .filter((plan) => plan.taskId === taskId && plan.status === 'in_progress')
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   }
 
   updateStatus(id: string, status: PlanStatus): void {
-    const now = new Date().toISOString();
-    this.db
-      .prepare('UPDATE plans SET status = ?, updatedAt = ? WHERE id = ?')
-      .run(status, now, id);
+    const plan = this.get(id);
+    if (!plan) return;
+    plan.status = status;
+    plan.updatedAt = new Date().toISOString();
+    writeJsonFileAtomic(this.getPlanPath(id), plan);
     log.debug('Updated plan status', { id, status });
   }
 
@@ -136,37 +133,23 @@ export class PlanStore {
     const plan = this.get(planId);
     if (!plan || stepIndex < 0 || stepIndex >= plan.steps.length) return;
     plan.steps[stepIndex].status = status;
-    const now = new Date().toISOString();
-    this.db
-      .prepare('UPDATE plans SET steps = ?, updatedAt = ? WHERE id = ?')
-      .run(JSON.stringify(plan.steps), now, planId);
+    plan.updatedAt = new Date().toISOString();
+    writeJsonFileAtomic(this.getPlanPath(planId), plan);
   }
 
   delete(id: string): void {
-    this.db.prepare('DELETE FROM plans WHERE id = ?').run(id);
+    rmSync(this.getPlanPath(id), { force: true });
   }
 
-  private rowToPlan(row: PlanRow): Plan {
-    return {
-      id: row.id,
-      taskId: row.taskId ?? undefined,
-      goal: row.goal,
-      steps: JSON.parse(row.steps),
-      conversationId: row.conversationId ?? undefined,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
-      status: row.status as PlanStatus,
-    };
+  private getPlanPath(id: string): string {
+    return join(this.plansDir, `${id}.json`);
   }
-}
 
-interface PlanRow {
-  id: string;
-  taskId: string | null;
-  goal: string;
-  steps: string;
-  conversationId: string | null;
-  createdAt: string;
-  updatedAt: string;
-  status: string;
+  private readAllPlans(): Plan[] {
+    if (!existsSync(this.plansDir)) return [];
+    return readdirSync(this.plansDir)
+      .filter((entry) => entry.endsWith('.json'))
+      .map((entry) => readJsonFile<Plan | null>(join(this.plansDir, entry), null))
+      .filter((plan): plan is Plan => plan !== null);
+  }
 }

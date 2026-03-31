@@ -1,10 +1,11 @@
-import { readFileSync, writeFileSync, existsSync, renameSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { HippocampusStore } from './store.js';
 import type { TrainingPair, CurationResult } from './types.js';
 
 const CURATED_MARKER = '.curated-marker';
-const PENDING_FILE = 'pending.jsonl';
+const QUEUE_DIR = 'queue';
+const PENDING_FILE = 'curated-memory.jsonl';
 const CONSUMED_DIR = 'consumed';
 
 const CURATION_PROMPT = `You are a memory curator for CereWorker, an AI agent. Your job is to review the agent's temporary memories and decide which contain **durable knowledge** worth permanently learning through fine-tuning.
@@ -66,7 +67,7 @@ export class HippocampusCurator {
   /**
    * Curate memories for fine-tuning.
    * Reads uncurated content, sends to Cerebrum for review,
-   * and saves approved training pairs to pending.jsonl.
+   * and saves approved training pairs to the curated-memory queue file.
    */
   async curate(): Promise<CurationResult> {
     const errors: string[] = [];
@@ -126,9 +127,9 @@ export class HippocampusCurator {
     };
   }
 
-  /** Read pending training pairs that haven't been consumed by fine-tuning yet. */
+  /** Read queued curated-memory pairs that haven't been consumed by fine-tuning yet. */
   getPendingPairs(): TrainingPair[] {
-    const path = join(this.store.finetuneDir, PENDING_FILE);
+    const path = this.pendingPath();
     if (!existsSync(path)) return [];
 
     const content = readFileSync(path, 'utf-8').trim();
@@ -146,9 +147,9 @@ export class HippocampusCurator {
       .filter((p): p is TrainingPair => p !== null);
   }
 
-  /** Mark pending pairs as consumed (move to consumed/YYYY-MM-DD.jsonl). */
+  /** Mark queued curated-memory pairs as consumed (move to consumed/curated-memory-YYYY-MM-DD.jsonl). */
   markConsumed(): void {
-    const pendingPath = join(this.store.finetuneDir, PENDING_FILE);
+    const pendingPath = this.pendingPath();
     if (!existsSync(pendingPath)) return;
 
     const consumedDir = join(this.store.finetuneDir, CONSUMED_DIR);
@@ -157,7 +158,7 @@ export class HippocampusCurator {
     }
 
     const date = new Date().toISOString().slice(0, 10);
-    const consumedPath = join(consumedDir, `${date}.jsonl`);
+    const consumedPath = join(consumedDir, `curated-memory-${date}.jsonl`);
 
     // Append to consumed file (in case multiple curations happen in one day)
     const content = readFileSync(pendingPath, 'utf-8');
@@ -217,9 +218,17 @@ export class HippocampusCurator {
     });
     if (unique.length === 0) return;
 
-    const path = join(this.store.finetuneDir, PENDING_FILE);
+    const path = this.pendingPath();
     const lines = unique.map((p) => JSON.stringify(p)).join('\n') + '\n';
     writeFileSync(path, lines, { flag: 'a' });
+  }
+
+  private pendingPath(): string {
+    const queueDir = join(this.store.finetuneDir, QUEUE_DIR);
+    if (!existsSync(queueDir)) {
+      mkdirSync(queueDir, { recursive: true });
+    }
+    return join(queueDir, PENDING_FILE);
   }
 
   private readMarker(): string | null {

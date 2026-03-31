@@ -3,7 +3,7 @@
 
 $ErrorActionPreference = 'Stop'
 
-$NodeMin = 20
+$NodeMin = 22
 $Pkg = "@cereworker/cli"
 
 function Write-Info($msg)  { Write-Host "[*] $msg" -ForegroundColor Cyan }
