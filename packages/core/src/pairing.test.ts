@@ -74,6 +74,19 @@ describe('PairingStore', () => {
       const code = store.createPairingCode('discord', '4');
       expect(code).not.toBeNull();
     });
+
+    it('reloads persisted state before mutating from another store instance', () => {
+      const first = new PairingStore(join(dir, 'test.db'));
+      const second = new PairingStore(join(dir, 'test.db'));
+      try {
+        const code = first.createPairingCode('telegram', '12345');
+        expect(second.createPairingCode('telegram', '12345')).toBe(code);
+        expect(second.getPendingByCode(code!)).not.toBeNull();
+      } finally {
+        first.close();
+        second.close();
+      }
+    });
   });
 
   describe('getPendingByCode', () => {

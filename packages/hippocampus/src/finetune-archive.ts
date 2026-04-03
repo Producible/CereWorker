@@ -1,14 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import {
-  existsSync,
-  mkdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { homedir } from 'node:os';
+import {
+  ensureDir,
+  readJsonFile,
+  withTextStoreLock,
+  writeJsonFileAtomic,
+  writeTextFileAtomic,
+} from '@cereworker/core';
 import type { TrainingPair } from './types.js';
 
 export type FineTuneQueueSource = 'discovery' | 'conversations' | 'curated-memory';
@@ -44,24 +44,6 @@ function expandHome(path: string): string {
   return path.replace(/^~(?=\/|$)/, homedir());
 }
 
-function ensureDir(path: string): void {
-  if (!existsSync(path)) {
-    mkdirSync(path, { recursive: true });
-  }
-}
-
-function writeTextFileAtomic(path: string, content: string): void {
-  ensureDir(dirname(path));
-  const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync(tempPath, content, 'utf-8');
-  rmSync(path, { force: true });
-  renameSync(tempPath, path);
-}
-
-function writeJsonFileAtomic(path: string, value: unknown): void {
-  writeTextFileAtomic(path, JSON.stringify(value, null, 2) + '\n');
-}
-
 function serializePair(pair: TrainingPair): string {
   return JSON.stringify({
     instruction: pair.instruction,
@@ -81,14 +63,14 @@ function readPairs(path: string): TrainingPair[] {
   if (!content) return [];
   return content
     .split('\n')
-    .map((line) => {
+    .map((line: string) => {
       try {
         return JSON.parse(line) as TrainingPair;
       } catch {
         return null;
       }
     })
-    .filter((pair): pair is TrainingPair => pair !== null);
+    .filter((pair: TrainingPair | null): pair is TrainingPair => pair !== null);
 }
 
 function writePairs(path: string, pairs: TrainingPair[]): void {
@@ -130,23 +112,32 @@ export class FineTuneArchiveStore {
     }
 
     const path = this.getQueuePath(source);
-    const existing = readPairs(path);
-    const seen = new Set(existing.map((pair) => pairIdentity(pair)));
-    const unique = pairs.filter((pair) => {
-      const key = pairIdentity(pair);
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
+    return withTextStoreLock(this.queueDir, () => {
+      const existing = readPairs(path);
+      const seen = new Set(existing.map((pair) => pairIdentity(pair)));
+      const unique = pairs.filter((pair) => {
+        const key = pairIdentity(pair);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+      const next = unique.length > 0 ? [...existing, ...unique] : existing;
+      if (unique.length > 0) {
+        writePairs(path, next);
+      }
+
+      const sourceCounts = {
+        discovery: source === 'discovery' ? next.length : readPairs(this.getQueuePath('discovery')).length,
+        conversations: source === 'conversations' ? next.length : readPairs(this.getQueuePath('conversations')).length,
+        'curated-memory': source === 'curated-memory' ? next.length : readPairs(this.getQueuePath('curated-memory')).length,
+      };
+
+      return {
+        added: unique.length,
+        total: SOURCE_ORDER.reduce((sum, key) => sum + sourceCounts[key], 0),
+      };
     });
-
-    if (unique.length > 0) {
-      writePairs(path, [...existing, ...unique]);
-    }
-
-    return {
-      added: unique.length,
-      total: this.getQueuedBatch().pairs.length,
-    };
   }
 
   getQueuedBatch(): FineTuneQueuedBatch {
@@ -163,59 +154,63 @@ export class FineTuneArchiveStore {
   }
 
   clearBatch(batch: FineTuneQueuedBatch): void {
-    for (const source of SOURCE_ORDER) {
-      const path = this.getQueuePath(source);
-      const existing = readPairs(path);
-      if (existing.length === 0) continue;
+    withTextStoreLock(this.queueDir, () => {
+      for (const source of SOURCE_ORDER) {
+        const path = this.getQueuePath(source);
+        const existing = readPairs(path);
+        if (existing.length === 0) continue;
 
-      const removals = new Map<string, number>();
-      for (const pair of batch.bySource[source]) {
-        const key = serializePair(pair);
-        removals.set(key, (removals.get(key) ?? 0) + 1);
-      }
-
-      const remaining: TrainingPair[] = [];
-      for (const pair of existing) {
-        const key = serializePair(pair);
-        const count = removals.get(key) ?? 0;
-        if (count > 0) {
-          removals.set(key, count - 1);
-          continue;
+        const removals = new Map<string, number>();
+        for (const pair of batch.bySource[source]) {
+          const key = serializePair(pair);
+          removals.set(key, (removals.get(key) ?? 0) + 1);
         }
-        remaining.push(pair);
-      }
 
-      writePairs(path, remaining);
-    }
+        const remaining: TrainingPair[] = [];
+        for (const pair of existing) {
+          const key = serializePair(pair);
+          const count = removals.get(key) ?? 0;
+          if (count > 0) {
+            removals.set(key, count - 1);
+            continue;
+          }
+          remaining.push(pair);
+        }
+
+        writePairs(path, remaining);
+      }
+    });
   }
 
   createRound(batch: FineTuneQueuedBatch, options: { jobId: string; requestedMethod?: string }): FineTuneRoundManifest {
     const roundId = options.jobId || `round-${randomUUID()}`;
     const roundDir = join(this.roundsDir, roundId);
-    const sourcesDir = join(roundDir, 'sources');
-    ensureDir(sourcesDir);
+    return withTextStoreLock(roundDir, () => {
+      const sourcesDir = join(roundDir, 'sources');
+      ensureDir(sourcesDir);
 
-    const manifest: FineTuneRoundManifest = {
-      roundId,
-      jobId: options.jobId,
-      status: 'running',
-      createdAt: new Date().toISOString(),
-      startedAt: new Date().toISOString(),
-      requestedMethod: options.requestedMethod,
-      totalPairs: batch.pairs.length,
-      sourceCounts: {
-        discovery: batch.bySource.discovery.length,
-        conversations: batch.bySource.conversations.length,
-        'curated-memory': batch.bySource['curated-memory'].length,
-      },
-    };
+      const manifest: FineTuneRoundManifest = {
+        roundId,
+        jobId: options.jobId,
+        status: 'running',
+        createdAt: new Date().toISOString(),
+        startedAt: new Date().toISOString(),
+        requestedMethod: options.requestedMethod,
+        totalPairs: batch.pairs.length,
+        sourceCounts: {
+          discovery: batch.bySource.discovery.length,
+          conversations: batch.bySource.conversations.length,
+          'curated-memory': batch.bySource['curated-memory'].length,
+        },
+      };
 
-    writePairs(join(roundDir, 'training.jsonl'), batch.pairs);
-    for (const source of SOURCE_ORDER) {
-      writePairs(join(sourcesDir, SOURCE_FILES[source]), batch.bySource[source]);
-    }
-    writeJsonFileAtomic(join(roundDir, 'manifest.json'), manifest);
-    return manifest;
+      writePairs(join(roundDir, 'training.jsonl'), batch.pairs);
+      for (const source of SOURCE_ORDER) {
+        writePairs(join(sourcesDir, SOURCE_FILES[source]), batch.bySource[source]);
+      }
+      writeJsonFileAtomic(join(roundDir, 'manifest.json'), manifest);
+      return manifest;
+    });
   }
 
   updateRoundStatus(
@@ -223,13 +218,18 @@ export class FineTuneArchiveStore {
     patch: Partial<Pick<FineTuneRoundManifest, 'status' | 'completedAt' | 'checkpointPath' | 'loss' | 'error'>>,
   ): FineTuneRoundManifest {
     const manifestPath = join(this.roundsDir, roundId, 'manifest.json');
-    const manifest = JSON.parse(readFileSync(manifestPath, 'utf-8')) as FineTuneRoundManifest;
-    const updated: FineTuneRoundManifest = {
-      ...manifest,
-      ...patch,
-    };
-    writeJsonFileAtomic(manifestPath, updated);
-    return updated;
+    return withTextStoreLock(join(this.roundsDir, roundId), () => {
+      const manifest = readJsonFile<FineTuneRoundManifest | null>(manifestPath, null);
+      if (!manifest) {
+        throw new Error(`Fine-tune round not found: ${roundId}`);
+      }
+      const updated: FineTuneRoundManifest = {
+        ...manifest,
+        ...patch,
+      };
+      writeJsonFileAtomic(manifestPath, updated);
+      return updated;
+    });
   }
 
   private getQueuePath(source: FineTuneQueueSource): string {

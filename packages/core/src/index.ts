@@ -32,6 +32,17 @@ export type {
 export type { OrchestratorEvent } from './events.js';
 export { TypedEventEmitter } from './events.js';
 export { createAbortError, isAbortError, raceWithAbort, throwIfAborted } from './abort.js';
+export {
+  ensureDir,
+  resolveStoreBasePath,
+  readJsonFile,
+  readJsonLines,
+  appendJsonLine,
+  writeTextFileAtomic,
+  writeJsonFileAtomic,
+  writeJsonLines,
+  withTextStoreLock,
+} from './text-store.js';
 export { ConversationStore } from './conversation.js';
 export { Orchestrator } from './orchestrator.js';
 export { ToolRuntime } from './tool-runtime.js';

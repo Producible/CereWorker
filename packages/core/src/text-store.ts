@@ -8,8 +8,29 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { hostname, homedir } from 'node:os';
 import { dirname, extname, join, resolve } from 'node:path';
-import { homedir } from 'node:os';
+import { createLogger } from './logger.js';
+
+const log = createLogger('text-store');
+
+const DEFAULT_LOCK_TIMEOUT_MS = 2_000;
+const DEFAULT_LOCK_POLL_MS = 100;
+const DEFAULT_LOCK_STALE_MS = 30_000;
+const LOCK_OWNER_FILE = 'owner.json';
+
+interface TextStoreLockOwner {
+  pid: number;
+  hostname: string;
+  acquiredAt: number;
+  targetPath: string;
+}
+
+export interface TextStoreLockOptions {
+  timeoutMs?: number;
+  pollMs?: number;
+  staleMs?: number;
+}
 
 function expandHome(path: string): string {
   return path.replace(/^~(?=\/|$)/, homedir());
@@ -29,12 +50,133 @@ export function ensureDir(path: string): void {
   }
 }
 
+function sleepMs(ms: number): void {
+  if (ms <= 0) return;
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function getLockDir(path: string): string {
+  return `${path}.lock`;
+}
+
+function getLockOwnerPath(lockDir: string): string {
+  return join(lockDir, LOCK_OWNER_FILE);
+}
+
+function readLockOwner(lockDir: string): TextStoreLockOwner | null {
+  return readJsonFile<TextStoreLockOwner | null>(getLockOwnerPath(lockDir), null);
+}
+
+function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ESRCH') return false;
+    return true;
+  }
+}
+
+function tryAcquireLock(lockDir: string, targetPath: string): boolean {
+  try {
+    mkdirSync(lockDir);
+    try {
+      writeFileSync(getLockOwnerPath(lockDir), JSON.stringify({
+        pid: process.pid,
+        hostname: hostname(),
+        acquiredAt: Date.now(),
+        targetPath,
+      } satisfies TextStoreLockOwner, null, 2) + '\n', 'utf-8');
+    } catch (error) {
+      rmSync(lockDir, { recursive: true, force: true });
+      throw error;
+    }
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'EEXIST') return false;
+    throw error;
+  }
+}
+
+function tryReleaseStaleLock(lockDir: string, staleMs: number): boolean {
+  if (!existsSync(lockDir)) return false;
+
+  const owner = readLockOwner(lockDir);
+  if (!owner) {
+    const ageMs = Date.now() - statSync(lockDir).mtimeMs;
+    if (ageMs < staleMs) return false;
+    rmSync(lockDir, { recursive: true, force: true });
+    log.warn('Removed stale text-store lock without owner metadata', { lockDir, ageMs: Math.round(ageMs) });
+    return true;
+  }
+
+  const ageMs = Date.now() - owner.acquiredAt;
+  if (ageMs < staleMs) return false;
+  if (owner.hostname !== hostname()) return false;
+  if (isProcessAlive(owner.pid)) return false;
+
+  rmSync(lockDir, { recursive: true, force: true });
+  log.warn('Removed stale text-store lock', {
+    lockDir,
+    targetPath: owner.targetPath,
+    pid: owner.pid,
+    ageMs: Math.round(ageMs),
+  });
+  return true;
+}
+
+export function withTextStoreLock<T>(targetPath: string, fn: () => T, options: TextStoreLockOptions = {}): T {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_LOCK_TIMEOUT_MS;
+  const pollMs = options.pollMs ?? DEFAULT_LOCK_POLL_MS;
+  const staleMs = options.staleMs ?? DEFAULT_LOCK_STALE_MS;
+  const startedAt = Date.now();
+  const lockDir = getLockDir(targetPath);
+  ensureDir(dirname(lockDir));
+
+  let waitLogged = false;
+  while (!tryAcquireLock(lockDir, targetPath)) {
+    if (tryReleaseStaleLock(lockDir, staleMs)) {
+      continue;
+    }
+
+    const elapsedMs = Date.now() - startedAt;
+    if (!waitLogged) {
+      log.debug('Waiting for text-store lock', { targetPath, lockDir });
+      waitLogged = true;
+    }
+    if (elapsedMs >= timeoutMs) {
+      log.warn('Text-store lock timed out', { targetPath, lockDir, timeoutMs });
+      throw new Error(`Text store busy: ${targetPath}`);
+    }
+    sleepMs(Math.min(pollMs, timeoutMs - elapsedMs));
+  }
+
+  try {
+    return fn();
+  } finally {
+    rmSync(lockDir, { recursive: true, force: true });
+  }
+}
+
 export function writeTextFileAtomic(path: string, content: string): void {
   ensureDir(dirname(path));
   const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(tempPath, content, 'utf-8');
-  rmSync(path, { force: true });
-  renameSync(tempPath, path);
+  try {
+    renameSync(tempPath, path);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if ((code === 'EEXIST' || code === 'EPERM' || code === 'ENOTEMPTY') && existsSync(path)) {
+      rmSync(path, { force: true });
+      renameSync(tempPath, path);
+      return;
+    }
+    rmSync(tempPath, { force: true });
+    throw error;
+  }
 }
 
 export function writeJsonFileAtomic(path: string, value: unknown): void {

@@ -7,6 +7,7 @@ import {
   ensureDir,
   readJsonLines,
   resolveStoreBasePath,
+  withTextStoreLock,
   writeJsonLines,
 } from './text-store.js';
 import { markLegacySectionMigrated, readLegacySection } from './legacy-sqlite.js';
@@ -62,6 +63,7 @@ export function normalizeCode(input: string): string {
 }
 
 export class PairingStore {
+  private readonly pairingDir: string;
   private readonly requestsPath: string | null;
   private readonly approvedUsersPath: string | null;
   private requests: PairingRequest[] = [];
@@ -69,16 +71,15 @@ export class PairingStore {
 
   constructor(dbPath?: string) {
     const baseDir = resolveStoreBasePath(dbPath ?? DEFAULT_DB_PATH);
-    const pairingDir = join(baseDir, 'pairing');
-    ensureDir(pairingDir);
+    this.pairingDir = join(baseDir, 'pairing');
+    ensureDir(this.pairingDir);
 
-    this.requestsPath = join(pairingDir, 'requests.jsonl');
-    this.approvedUsersPath = join(pairingDir, 'approved-users.jsonl');
+    this.requestsPath = join(this.pairingDir, 'requests.jsonl');
+    this.approvedUsersPath = join(this.pairingDir, 'approved-users.jsonl');
 
     this.migrateLegacyDatabase(dbPath ?? DEFAULT_DB_PATH);
-    this.requests = readJsonLines<PairingRequest>(this.requestsPath);
-    this.approvedUsers = readJsonLines<ApprovedUser>(this.approvedUsersPath);
-    log.info('Opened pairing store', { path: pairingDir });
+    this.refreshFromDisk();
+    log.info('Opened pairing store', { path: this.pairingDir });
   }
 
   private migrateLegacyDatabase(dbPath: string): void {
@@ -126,60 +127,63 @@ export class PairingStore {
   }
 
   createPairingCode(channelId: string, senderId: string, senderName?: string): string | null {
-    this.expireStale();
+    return this.withMutation(() => {
+      this.expireStaleInMemory();
 
-    const existing = this.requests.find(
-      (request) =>
-        request.channelId === channelId
-        && request.senderId === senderId
-        && request.status === 'pending'
-        && request.expiresAt > Date.now(),
-    );
+      const existing = this.requests.find(
+        (request) =>
+          request.channelId === channelId
+          && request.senderId === senderId
+          && request.status === 'pending'
+          && request.expiresAt > Date.now(),
+      );
 
-    if (existing) {
-      return formatCode(existing.code);
-    }
+      if (existing) {
+        return formatCode(existing.code);
+      }
 
-    const pendingCount = this.requests.filter(
-      (request) =>
-        request.channelId === channelId
-        && request.status === 'pending'
-        && request.expiresAt > Date.now(),
-    ).length;
+      const pendingCount = this.requests.filter(
+        (request) =>
+          request.channelId === channelId
+          && request.status === 'pending'
+          && request.expiresAt > Date.now(),
+      ).length;
 
-    if (pendingCount >= MAX_PENDING_PER_CHANNEL) {
-      log.warn('Pairing rate limit reached', { channelId, pending: pendingCount });
-      return null;
-    }
-
-    let code: string;
-    let attempts = 0;
-    do {
-      code = generateCode();
-      attempts++;
-      if (attempts > 100) {
-        log.warn('Failed to generate unique pairing code');
+      if (pendingCount >= MAX_PENDING_PER_CHANNEL) {
+        log.warn('Pairing rate limit reached', { channelId, pending: pendingCount });
         return null;
       }
-    } while (this.requests.some((request) => request.code === code));
 
-    const now = Date.now();
-    this.requests.unshift({
-      code,
-      channelId,
-      senderId,
-      senderName: senderName ?? null,
-      createdAt: now,
-      expiresAt: now + CODE_TTL_MS,
-      status: 'pending',
+      let code: string;
+      let attempts = 0;
+      do {
+        code = generateCode();
+        attempts++;
+        if (attempts > 100) {
+          log.warn('Failed to generate unique pairing code');
+          return null;
+        }
+      } while (this.requests.some((request) => request.code === code));
+
+      const now = Date.now();
+      this.requests.unshift({
+        code,
+        channelId,
+        senderId,
+        senderName: senderName ?? null,
+        createdAt: now,
+        expiresAt: now + CODE_TTL_MS,
+        status: 'pending',
+      });
+      this.persistRequests();
+
+      log.info('Pairing code created', { channelId, senderId, code: formatCode(code) });
+      return formatCode(code);
     });
-    this.persistRequests();
-
-    log.info('Pairing code created', { channelId, senderId, code: formatCode(code) });
-    return formatCode(code);
   }
 
   getPendingByCode(code: string): PairingRequest | null {
+    this.refreshFromDisk();
     const normalized = normalizeCode(code);
     return this.requests.find(
       (request) =>
@@ -190,83 +194,78 @@ export class PairingStore {
   }
 
   listPending(): PairingRequest[] {
+    this.refreshFromDisk();
     return this.requests
       .filter((request) => request.status === 'pending' && request.expiresAt > Date.now())
       .sort((a, b) => b.createdAt - a.createdAt);
   }
 
   approveCode(code: string): ApprovalResult {
-    const normalized = normalizeCode(code);
-    this.expireStale();
+    return this.withMutation(() => {
+      const normalized = normalizeCode(code);
+      this.expireStaleInMemory();
 
-    const request = this.requests.find(
-      (item) =>
-        item.code === normalized
-        && item.status === 'pending'
-        && item.expiresAt > Date.now(),
-    );
+      const request = this.requests.find(
+        (item) =>
+          item.code === normalized
+          && item.status === 'pending'
+          && item.expiresAt > Date.now(),
+      );
 
-    if (!request) {
-      return { ok: false, error: 'Code not found or expired' };
-    }
+      if (!request) {
+        return { ok: false, error: 'Code not found or expired' };
+      }
 
-    request.status = 'approved';
-    this.persistRequests();
+      request.status = 'approved';
+      this.persistRequests();
 
-    if (!this.approvedUsers.some((user) => user.channelId === request.channelId && user.senderId === request.senderId)) {
-      this.approvedUsers.push({
+      if (!this.approvedUsers.some((user) => user.channelId === request.channelId && user.senderId === request.senderId)) {
+        this.approvedUsers.push({
+          channelId: request.channelId,
+          senderId: request.senderId,
+          approvedAt: Date.now(),
+          approvedVia: 'pairing',
+        });
+        this.persistApprovedUsers();
+      }
+
+      log.info('Pairing approved', {
         channelId: request.channelId,
         senderId: request.senderId,
-        approvedAt: Date.now(),
-        approvedVia: 'pairing',
+        senderName: request.senderName,
       });
-      this.persistApprovedUsers();
-    }
 
-    log.info('Pairing approved', {
-      channelId: request.channelId,
-      senderId: request.senderId,
-      senderName: request.senderName,
+      return {
+        ok: true,
+        channelId: request.channelId,
+        senderId: request.senderId,
+        senderName: request.senderName,
+      };
     });
-
-    return {
-      ok: true,
-      channelId: request.channelId,
-      senderId: request.senderId,
-      senderName: request.senderName,
-    };
   }
 
   isApproved(channelId: string, senderId: string): boolean {
+    this.refreshFromDisk();
     return this.approvedUsers.some((user) => user.channelId === channelId && user.senderId === senderId);
   }
 
   expireStale(): number {
-    let changed = 0;
-    const now = Date.now();
-    for (const request of this.requests) {
-      if (request.status === 'pending' && request.expiresAt <= now) {
-        request.status = 'expired';
-        changed++;
-      }
-    }
-    if (changed > 0) {
-      this.persistRequests();
-    }
-    return changed;
+    return this.withMutation(() => this.expireStaleInMemory());
   }
 
   addConfigUser(channelId: string, senderId: string): void {
-    if (this.approvedUsers.some((user) => user.channelId === channelId && user.senderId === senderId)) {
-      return;
-    }
-    this.approvedUsers.push({
-      channelId,
-      senderId,
-      approvedAt: Date.now(),
-      approvedVia: 'config',
+    this.withMutation(() => {
+      if (this.approvedUsers.some((user) => user.channelId === channelId && user.senderId === senderId)) {
+        return;
+      }
+      this.approvedUsers.push({
+        channelId,
+        senderId,
+        approvedAt: Date.now(),
+        approvedVia: 'config',
+      });
+      this.persistApprovedUsers();
     });
-    this.persistApprovedUsers();
   }
 
   close(): void {
@@ -279,5 +278,31 @@ export class PairingStore {
 
   private persistApprovedUsers(): void {
     writeJsonLines(this.approvedUsersPath!, this.approvedUsers);
+  }
+
+  private refreshFromDisk(): void {
+    this.requests = readJsonLines<PairingRequest>(this.requestsPath!);
+    this.approvedUsers = readJsonLines<ApprovedUser>(this.approvedUsersPath!);
+  }
+
+  private withMutation<T>(fn: () => T): T {
+    return withTextStoreLock(this.pairingDir, () => {
+      this.refreshFromDisk();
+      return fn();
+    });
+  }
+
+  private expireStaleInMemory(now: number = Date.now()): number {
+    let changed = 0;
+    for (const request of this.requests) {
+      if (request.status === 'pending' && request.expiresAt <= now) {
+        request.status = 'expired';
+        changed++;
+      }
+    }
+    if (changed > 0) {
+      this.persistRequests();
+    }
+    return changed;
   }
 }

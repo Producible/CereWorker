@@ -10,6 +10,7 @@ import {
   readJsonFile,
   readJsonLines,
   resolveStoreBasePath,
+  withTextStoreLock,
   writeJsonFileAtomic,
   writeJsonLines,
 } from './text-store.js';
@@ -108,8 +109,10 @@ export class ConversationStore {
     if (this.inMemory) {
       this.memoryConversations.set(conversation.id, conversation);
     } else {
-      this.writeConversationMeta(conversation.id, conversation);
-      this.writeConversationMessages(conversation.id, []);
+      withTextStoreLock(this.conversationsDir!, () => {
+        this.writeConversationMeta(conversation.id, conversation);
+        this.writeConversationMessages(conversation.id, []);
+      });
     }
 
     log.debug('Created conversation', { id: conversation.id });
@@ -173,13 +176,15 @@ export class ConversationStore {
       return message;
     }
 
-    const meta = this.readConversationMeta(conversationId);
-    if (!meta) throw new Error(`Conversation ${conversationId} not found`);
+    withTextStoreLock(this.getConversationDir(conversationId), () => {
+      const meta = this.readConversationMeta(conversationId);
+      if (!meta) throw new Error(`Conversation ${conversationId} not found`);
 
-    appendJsonLine(this.getMessagesPath(conversationId), message);
-    this.writeConversationMeta(conversationId, {
-      ...meta,
-      updatedAt: Date.now(),
+      appendJsonLine(this.getMessagesPath(conversationId), message);
+      this.writeConversationMeta(conversationId, {
+        ...meta,
+        updatedAt: Date.now(),
+      });
     });
 
     return message;
@@ -203,14 +208,16 @@ export class ConversationStore {
       return before - conversation.messages.length;
     }
 
-    const messages = this.readConversationMessages(conversationId);
-    if (messages.length === 0) return 0;
-    const filtered = messages.filter((message) => !messageIds.includes(message.id));
-    const deleted = messages.length - filtered.length;
-    if (deleted > 0) {
-      this.writeConversationMessages(conversationId, filtered);
-    }
-    return deleted;
+    return withTextStoreLock(this.getConversationDir(conversationId), () => {
+      const messages = this.readConversationMessages(conversationId);
+      if (messages.length === 0) return 0;
+      const filtered = messages.filter((message) => !messageIds.includes(message.id));
+      const deleted = messages.length - filtered.length;
+      if (deleted > 0) {
+        this.writeConversationMessages(conversationId, filtered);
+      }
+      return deleted;
+    });
   }
 
   delete(id: string): boolean {
@@ -221,10 +228,12 @@ export class ConversationStore {
     }
 
     const conversationDir = this.getConversationDir(id);
-    if (!existsSync(conversationDir)) return false;
-    rmSync(conversationDir, { recursive: true, force: true });
-    log.debug('Deleted conversation', { id, deleted: true });
-    return true;
+    return withTextStoreLock(conversationDir, () => {
+      if (!existsSync(conversationDir)) return false;
+      rmSync(conversationDir, { recursive: true, force: true });
+      log.debug('Deleted conversation', { id, deleted: true });
+      return true;
+    });
   }
 
   getPreview(conversationId: string): string | null {

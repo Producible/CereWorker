@@ -7,6 +7,7 @@ import {
   ensureDir,
   readJsonFile,
   resolveStoreBasePath,
+  withTextStoreLock,
   writeJsonFileAtomic,
 } from './text-store.js';
 import { markLegacySectionMigrated, readLegacySection } from './legacy-sqlite.js';
@@ -80,7 +81,9 @@ export class PlanStore {
     for (const plan of rows) {
       const path = this.getPlanPath(plan.id);
       if (existsSync(path)) continue;
-      writeJsonFileAtomic(path, plan);
+      withTextStoreLock(path, () => {
+        writeJsonFileAtomic(path, plan);
+      });
     }
 
     markLegacySectionMigrated(dbPath, 'plans');
@@ -99,7 +102,9 @@ export class PlanStore {
       status: plan.status,
     };
 
-    writeJsonFileAtomic(this.getPlanPath(full.id), full);
+    withTextStoreLock(this.getPlanPath(full.id), () => {
+      writeJsonFileAtomic(this.getPlanPath(full.id), full);
+    });
     log.debug('Saved plan', { id: full.id, status: full.status });
     return full;
   }
@@ -125,7 +130,9 @@ export class PlanStore {
     if (!plan) return;
     plan.status = status;
     plan.updatedAt = new Date().toISOString();
-    writeJsonFileAtomic(this.getPlanPath(id), plan);
+    withTextStoreLock(this.getPlanPath(id), () => {
+      writeJsonFileAtomic(this.getPlanPath(id), plan);
+    });
     log.debug('Updated plan status', { id, status });
   }
 
@@ -134,11 +141,15 @@ export class PlanStore {
     if (!plan || stepIndex < 0 || stepIndex >= plan.steps.length) return;
     plan.steps[stepIndex].status = status;
     plan.updatedAt = new Date().toISOString();
-    writeJsonFileAtomic(this.getPlanPath(planId), plan);
+    withTextStoreLock(this.getPlanPath(planId), () => {
+      writeJsonFileAtomic(this.getPlanPath(planId), plan);
+    });
   }
 
   delete(id: string): void {
-    rmSync(this.getPlanPath(id), { force: true });
+    withTextStoreLock(this.getPlanPath(id), () => {
+      rmSync(this.getPlanPath(id), { force: true });
+    });
   }
 
   private getPlanPath(id: string): string {

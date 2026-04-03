@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { withTextStoreLock, writeJsonFileAtomic } from '@cereworker/core';
 import type { InboundMessage } from '@cereworker/channels';
 
 export type ChannelConversationState = Record<string, string>;
@@ -32,6 +32,7 @@ export function loadChannelConversationState(file: string): ChannelConversationS
 }
 
 export function saveChannelConversationState(file: string, state: ChannelConversationState): void {
-  mkdirSync(dirname(file), { recursive: true });
-  writeFileSync(file, JSON.stringify(state, null, 2));
+  withTextStoreLock(file, () => {
+    writeJsonFileAtomic(file, state);
+  });
 }

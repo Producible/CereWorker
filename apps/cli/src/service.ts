@@ -3,7 +3,18 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Orchestrator, ConversationStore, PairingStore, InstanceStore, PlanStore, ProactiveController, createLogger, createHttpTools } from '@cereworker/core';
+import {
+  Orchestrator,
+  ConversationStore,
+  PairingStore,
+  InstanceStore,
+  PlanStore,
+  ProactiveController,
+  createLogger,
+  createHttpTools,
+  withTextStoreLock,
+  writeJsonFileAtomic,
+} from '@cereworker/core';
 import { CerebellumClient } from '@cereworker/cerebellum-client';
 import { CerebrumProvider, createBuiltinTools } from '@cereworker/cerebrum';
 import type { CereWorkerConfig } from '@cereworker/config';
@@ -214,8 +225,9 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
 
   function saveTaskState(): void {
     try {
-      mkdirSync(dirname(taskStateFile), { recursive: true });
-      writeFileSync(taskStateFile, JSON.stringify(taskState, null, 2));
+      withTextStoreLock(taskStateFile, () => {
+        writeJsonFileAtomic(taskStateFile, taskState);
+      });
     } catch (err) {
       log.warn('Failed to save task state', { error: (err as Error).message });
     }
