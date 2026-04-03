@@ -48,7 +48,8 @@ function createWatchdogCerebellum(): CerebellumAdapter {
     assessTurnRecovery: vi.fn(async () => ({
       action: 'retry' as const,
       operatorMessage: '[Cerebellum] Retry from the last verified state.',
-      modelMessage: '[Cerebellum recovery guidance]\nRetry from the last verified state.\nEnd your final answer by calling task_complete or task_blocked.',
+      modelMessage:
+        '[Cerebellum recovery guidance]\nRetry from the last verified state.\nEnd your final answer by calling task_complete or task_blocked.',
       diagnosis: 'Retry from the last verified state.',
       nextStep: 'Continue from the next unfinished step.',
       completedSteps: [],
@@ -147,48 +148,65 @@ describe('createService integration', () => {
   });
 
   it('archives the exact training batch for each fine-tune round in human-readable files', async () => {
-    const service = createService(makeConfig({
-      cerebellum: {
-        enabled: false,
-        verification: { enabled: false },
-        finetune: { enabled: true, method: 'auto', schedule: 'daily' },
-      },
-      hippocampus: { enabled: false },
-    }));
+    const service = createService(
+      makeConfig({
+        cerebellum: {
+          enabled: false,
+          verification: { enabled: false },
+          finetune: { enabled: true, method: 'auto', schedule: 'daily' },
+        },
+        hippocampus: { enabled: false },
+      }),
+    );
 
-    service.orchestrator.setCerebellum({
-      isConnected: vi.fn(() => true),
-      assessTurnRecovery: vi.fn(),
-      verifyToolResult: vi.fn(),
-      ingestTrainingData: vi.fn(async () => 6),
-      startFineTune: vi.fn(async () => ({ jobId: 'ft-archive-1', started: true, error: '' })),
-      getFineTuneStatus: vi.fn(async () => ({
-        status: 'running' as const,
-        jobId: 'ft-archive-1',
-        progress: 0,
-        currentStep: 0,
-        totalSteps: 0,
-        currentLoss: 0,
-        error: '',
-        checkpointPath: '',
-        startedAt: Date.now(),
-        completedAt: 0,
-      })),
-    }, { enabled: false });
+    service.orchestrator.setCerebellum(
+      {
+        isConnected: vi.fn(() => true),
+        assessTurnRecovery: vi.fn(),
+        verifyToolResult: vi.fn(),
+        ingestTrainingData: vi.fn(async () => 6),
+        startFineTune: vi.fn(async () => ({ jobId: 'ft-archive-1', started: true, error: '' })),
+        getFineTuneStatus: vi.fn(async () => ({
+          status: 'running' as const,
+          jobId: 'ft-archive-1',
+          progress: 0,
+          currentStep: 0,
+          totalSteps: 0,
+          currentLoss: 0,
+          error: '',
+          checkpointPath: '',
+          startedAt: Date.now(),
+          completedAt: 0,
+        })),
+      },
+      { enabled: false },
+    );
 
     service.cerebrum.stream = vi.fn(async (_messages, _tools, callbacks) => {
-      const reply = 'The deployment pipeline runs tests, builds artifacts, and promotes the release after the verification checks pass successfully.';
+      const reply =
+        'The deployment pipeline runs tests, builds artifacts, and promotes the release after the verification checks pass successfully.';
       callbacks.onChunk(reply);
       callbacks.onFinish(reply);
     });
 
-    await service.orchestrator.sendMessage('Can you explain how the deployment pipeline works from start to finish?');
+    await service.orchestrator.sendMessage(
+      'Can you explain how the deployment pipeline works from start to finish?',
+    );
     await service.orchestrator.triggerFineTune();
 
     const roundDir = join(homeDir, '.cereworker', 'finetune', 'rounds', 'ft-archive-1');
-    expect(readFileSync(join(roundDir, 'training.jsonl'), 'utf-8')).toContain('deployment pipeline works');
-    expect(readFileSync(join(roundDir, 'sources', 'conversations.jsonl'), 'utf-8')).toContain('deployment pipeline works');
-    expect(readFileSync(join(homeDir, '.cereworker', 'finetune', 'queue', 'conversations.jsonl'), 'utf-8')).toBe('');
+    expect(readFileSync(join(roundDir, 'training.jsonl'), 'utf-8')).toContain(
+      'deployment pipeline works',
+    );
+    expect(readFileSync(join(roundDir, 'sources', 'conversations.jsonl'), 'utf-8')).toContain(
+      'deployment pipeline works',
+    );
+    expect(
+      readFileSync(
+        join(homeDir, '.cereworker', 'finetune', 'queue', 'conversations.jsonl'),
+        'utf-8',
+      ),
+    ).toBe('');
 
     await service.shutdown();
   });
@@ -242,7 +260,9 @@ describe('createService integration', () => {
     const systemMessages: string[] = [];
     service.orchestrator.on('error', ({ error }) => errors.push(error));
     service.orchestrator.on('cerebrum:stall:nudge', ({ attempt }) => nudges.push(attempt));
-    service.orchestrator.on('message:system', ({ message }) => systemMessages.push(message.content));
+    service.orchestrator.on('message:system', ({ message }) =>
+      systemMessages.push(message.content),
+    );
 
     const sendPromise = service.orchestrator.sendMessage('hello from hung tool');
     await vi.advanceTimersByTimeAsync(15_000);
@@ -252,9 +272,7 @@ describe('createService integration', () => {
     expect(attempts).toBe(2);
     expect(errors).toEqual([]);
     expect(nudges).toEqual([1]);
-    expect(systemMessages).toEqual([
-      '[Cerebellum] Retry from the last verified state.',
-    ]);
+    expect(systemMessages).toEqual(['[Cerebellum] Retry from the last verified state.']);
     // Failed attempt messages cleaned up on success
     expect(messages.at(-1)).toMatchObject({
       role: 'cerebrum',
@@ -282,9 +300,13 @@ describe('createService integration', () => {
             throw new Error('missing abort signal');
           }
 
-          signal.addEventListener('abort', () => {
-            // Intentionally never resolve or reject to simulate a provider teardown hang.
-          }, { once: true });
+          signal.addEventListener(
+            'abort',
+            () => {
+              // Intentionally never resolve or reject to simulate a provider teardown hang.
+            },
+            { once: true },
+          );
         });
         return;
       }
@@ -336,30 +358,33 @@ describe('createService integration', () => {
     const attemptInputs: Array<Array<{ role: string; content: string; source?: unknown }>> = [];
     let attempts = 0;
     service.cerebrum.stream = vi.fn(async (messages, _tools, callbacks) => {
-      attemptInputs.push(messages.map((message: { role: string; content: string; metadata?: Record<string, unknown> }) => ({
-        role: message.role,
-        content: message.content,
-        source: message.metadata?.source,
-      })));
+      attemptInputs.push(
+        messages.map(
+          (message: { role: string; content: string; metadata?: Record<string, unknown> }) => ({
+            role: message.role,
+            content: message.content,
+            source: message.metadata?.source,
+          }),
+        ),
+      );
       attempts++;
 
       if (attempts === 1) {
         await callbacks.onToolCall({ id: 'tool-1', name: 'workTool', args: {} });
         callbacks.onChunk('I already reviewed the profile and just need to finalize the response.');
-        callbacks.onFinish(
-          '',
-          [{ id: 'tool-1', name: 'workTool', args: {} }],
-          {
-            finishReason: 'tool-calls',
-            rawFinishReason: 'tool_calls',
-            stepFinishReasons: ['tool-calls'],
-            chunkCount: 1,
-            textChars: 0,
-            toolCallCount: 1,
-            hadToolActivity: true,
-            stepCount: 1,
-          },
-        );
+        callbacks.onFinish('', [{ id: 'tool-1', name: 'workTool', args: {} }], {
+          finishReason: 'tool-calls',
+          rawFinishReason: 'tool_calls',
+          stepFinishReasons: ['tool-calls'],
+          chunkCount: 1,
+          textChars: 0,
+          toolCallCount: 1,
+          hadToolActivity: true,
+          stepCount: 1,
+          lastContentKind: 'tool-call',
+          endedWithToolCall: true,
+          hadFinalText: false,
+        });
         return;
       }
 
@@ -374,7 +399,11 @@ describe('createService integration', () => {
         'Completed with evidence.',
         [
           { id: 'tool-2', name: 'workTool', args: {} },
-          { id: 'sig-1', name: 'task_complete', args: { summary: 'done', evidence: 'Observed verified work result.' } },
+          {
+            id: 'sig-1',
+            name: 'task_complete',
+            args: { summary: 'done', evidence: 'Observed verified work result.' },
+          },
         ],
         {
           finishReason: 'stop',
@@ -385,6 +414,9 @@ describe('createService integration', () => {
           toolCallCount: 2,
           hadToolActivity: true,
           stepCount: 2,
+          lastContentKind: 'text',
+          endedWithToolCall: false,
+          hadFinalText: true,
         },
       );
     });
@@ -396,10 +428,13 @@ describe('createService integration', () => {
 
     expect(attempts).toBe(2);
     const completionResumeMessage = attemptInputs[1]?.find((message) =>
-      message.content.startsWith('[System fallback recovery]'));
+      message.content.startsWith('[System fallback recovery]'),
+    );
     expect(completionResumeMessage).toBeDefined();
     expect(completionResumeMessage?.content).toContain('verified work result');
-    expect(completionResumeMessage?.content).toContain('I already reviewed the profile and just need to finalize the response.');
+    expect(completionResumeMessage?.content).toContain(
+      'I already reviewed the profile and just need to finalize the response.',
+    );
     expect(completionStages).toEqual([
       'guard_triggered',
       'retry_started',
@@ -407,12 +442,18 @@ describe('createService integration', () => {
       'retry_recovered',
     ]);
     // Failed attempt messages cleaned up; successful retry's tool results preserved
-    expect(service.orchestrator.getMessages().map((message) => [message.role, message.content])).toEqual([
+    expect(
+      service.orchestrator.getMessages().map((message) => [message.role, message.content]),
+    ).toEqual([
       ['user', 'finish the task'],
       ['tool', 'verified work result'],
       ['cerebrum', 'Completed with evidence.'],
     ]);
-    expect(service.orchestrator.getMessages().some((message) => message.metadata?.source === 'completion-resume')).toBe(false);
+    expect(
+      service.orchestrator
+        .getMessages()
+        .some((message) => message.metadata?.source === 'completion-resume'),
+    ).toBe(false);
 
     await service.shutdown();
   });
@@ -499,11 +540,15 @@ describe('createService integration', () => {
     const attemptInputs: Array<Array<{ role: string; content: string; source?: unknown }>> = [];
     let attempts = 0;
     service.cerebrum.stream = vi.fn(async (messages, _tools, callbacks) => {
-      attemptInputs.push(messages.map((message: { role: string; content: string; metadata?: Record<string, unknown> }) => ({
-        role: message.role,
-        content: message.content,
-        source: message.metadata?.source,
-      })));
+      attemptInputs.push(
+        messages.map(
+          (message: { role: string; content: string; metadata?: Record<string, unknown> }) => ({
+            role: message.role,
+            content: message.content,
+            source: message.metadata?.source,
+          }),
+        ),
+      );
       attempts++;
 
       if (attempts === 1) {
@@ -512,7 +557,11 @@ describe('createService integration', () => {
         await callbacks.onToolCall({
           id: 'cp-1',
           name: 'task_checkpoint',
-          args: { step: 'session verified', status: 'done', evidence: 'Connected to Chrome and opened the CereWorkerX profile.' },
+          args: {
+            step: 'session verified',
+            status: 'done',
+            evidence: 'Connected to Chrome and opened the CereWorkerX profile.',
+          },
         });
         await callbacks.onToolCall({ id: 'tool-3', name: 'browserReadTimeline', args: {} });
         await callbacks.onToolCall({ id: 'tool-4', name: 'browserNavigateHome', args: {} });
@@ -520,18 +569,38 @@ describe('createService integration', () => {
         await callbacks.onToolCall({
           id: 'cp-2',
           name: 'task_checkpoint',
-          args: { step: 'engagement pass', status: 'done', evidence: 'Liked one Science girl post on the home timeline.' },
+          args: {
+            step: 'engagement pass',
+            status: 'done',
+            evidence: 'Liked one Science girl post on the home timeline.',
+          },
         });
         callbacks.onFinish(
           '',
           [
             { id: 'tool-1', name: 'browserConnect', args: {} },
             { id: 'tool-2', name: 'browserNavigateProfile', args: {} },
-            { id: 'cp-1', name: 'task_checkpoint', args: { step: 'session verified', status: 'done', evidence: 'Connected to Chrome and opened the CereWorkerX profile.' } },
+            {
+              id: 'cp-1',
+              name: 'task_checkpoint',
+              args: {
+                step: 'session verified',
+                status: 'done',
+                evidence: 'Connected to Chrome and opened the CereWorkerX profile.',
+              },
+            },
             { id: 'tool-3', name: 'browserReadTimeline', args: {} },
             { id: 'tool-4', name: 'browserNavigateHome', args: {} },
             { id: 'tool-5', name: 'browserLikePost', args: {} },
-            { id: 'cp-2', name: 'task_checkpoint', args: { step: 'engagement pass', status: 'done', evidence: 'Liked one Science girl post on the home timeline.' } },
+            {
+              id: 'cp-2',
+              name: 'task_checkpoint',
+              args: {
+                step: 'engagement pass',
+                status: 'done',
+                evidence: 'Liked one Science girl post on the home timeline.',
+              },
+            },
           ],
           {
             finishReason: 'tool-calls',
@@ -542,6 +611,9 @@ describe('createService integration', () => {
             toolCallCount: 7,
             hadToolActivity: true,
             stepCount: 1,
+            lastContentKind: 'tool-call',
+            endedWithToolCall: true,
+            hadFinalText: false,
           },
         );
         return;
@@ -552,12 +624,23 @@ describe('createService integration', () => {
         name: 'task_complete',
         args: {
           summary: 'Finished the daily X run.',
-          evidence: 'The retry ledger already shows the session verification, profile continuity check, and confirmed like.',
+          evidence:
+            'The retry ledger already shows the session verification, profile continuity check, and confirmed like.',
         },
       });
       callbacks.onFinish(
         'Completed from preserved browser progress.',
-        [{ id: 'sig-1', name: 'task_complete', args: { summary: 'Finished the daily X run.', evidence: 'The retry ledger already shows the session verification, profile continuity check, and confirmed like.' } }],
+        [
+          {
+            id: 'sig-1',
+            name: 'task_complete',
+            args: {
+              summary: 'Finished the daily X run.',
+              evidence:
+                'The retry ledger already shows the session verification, profile continuity check, and confirmed like.',
+            },
+          },
+        ],
         {
           finishReason: 'stop',
           rawFinishReason: 'stop',
@@ -567,6 +650,9 @@ describe('createService integration', () => {
           toolCallCount: 1,
           hadToolActivity: true,
           stepCount: 1,
+          lastContentKind: 'text',
+          endedWithToolCall: false,
+          hadFinalText: true,
         },
       );
     });
@@ -574,14 +660,18 @@ describe('createService integration', () => {
     await service.orchestrator.sendMessage('run the X task');
 
     expect(attempts).toBe(2);
-    const resumeMessage = attemptInputs[1]?.find((message) => message.source === 'completion-resume');
+    const resumeMessage = attemptInputs[1]?.find(
+      (message) => message.source === 'completion-resume',
+    );
     expect(resumeMessage?.content).toContain('session verified');
     expect(resumeMessage?.content).toContain('engagement pass');
     expect(resumeMessage?.content).toContain('Opened the CereWorkerX profile on X.');
     expect(resumeMessage?.content).toContain('Liked one Science girl post on the home timeline.');
     expect(resumeMessage?.content).toContain('Current URL: https://x.com/home');
     expect(attemptInputs[1]?.filter((message) => message.role === 'tool')).toHaveLength(0);
-    expect(service.orchestrator.getMessages().map((message) => [message.role, message.content])).toEqual([
+    expect(
+      service.orchestrator.getMessages().map((message) => [message.role, message.content]),
+    ).toEqual([
       ['user', 'run the X task'],
       ['cerebrum', 'Completed from preserved browser progress.'],
     ]);
@@ -628,20 +718,19 @@ describe('createService integration', () => {
 
       if (attempts === 2) {
         await callbacks.onToolCall({ id: 'tool-1', name: 'workTool', args: {} });
-        callbacks.onFinish(
-          '',
-          [{ id: 'tool-1', name: 'workTool', args: {} }],
-          {
-            finishReason: 'tool-calls',
-            rawFinishReason: 'tool_calls',
-            stepFinishReasons: ['tool-calls'],
-            chunkCount: 1,
-            textChars: 0,
-            toolCallCount: 1,
-            hadToolActivity: true,
-            stepCount: 1,
-          },
-        );
+        callbacks.onFinish('', [{ id: 'tool-1', name: 'workTool', args: {} }], {
+          finishReason: 'tool-calls',
+          rawFinishReason: 'tool_calls',
+          stepFinishReasons: ['tool-calls'],
+          chunkCount: 1,
+          textChars: 0,
+          toolCallCount: 1,
+          hadToolActivity: true,
+          stepCount: 1,
+          lastContentKind: 'tool-call',
+          endedWithToolCall: true,
+          hadFinalText: false,
+        });
         return;
       }
 
@@ -655,7 +744,11 @@ describe('createService integration', () => {
         'Completed after mixed retries.',
         [
           { id: 'tool-2', name: 'workTool', args: {} },
-          { id: 'sig-1', name: 'task_complete', args: { summary: 'done', evidence: 'Observed verified work result.' } },
+          {
+            id: 'sig-1',
+            name: 'task_complete',
+            args: { summary: 'done', evidence: 'Observed verified work result.' },
+          },
         ],
         {
           finishReason: 'stop',
@@ -666,6 +759,9 @@ describe('createService integration', () => {
           toolCallCount: 2,
           hadToolActivity: true,
           stepCount: 2,
+          lastContentKind: 'text',
+          endedWithToolCall: false,
+          hadFinalText: true,
         },
       );
     });
@@ -680,12 +776,7 @@ describe('createService integration', () => {
     await sendPromise;
 
     expect(attempts).toBe(3);
-    expect(watchdogStages).toEqual([
-      'stalled',
-      'nudge_requested',
-      'abort_issued',
-      'retry_started',
-    ]);
+    expect(watchdogStages).toEqual(['stalled', 'nudge_requested', 'abort_issued', 'retry_started']);
     expect(completionStages).toEqual([
       'guard_triggered',
       'retry_started',
@@ -693,7 +784,9 @@ describe('createService integration', () => {
       'retry_recovered',
     ]);
     // Failed attempt messages cleaned up; successful retry's tool results preserved
-    expect(service.orchestrator.getMessages().map((message) => [message.role, message.content])).toEqual([
+    expect(
+      service.orchestrator.getMessages().map((message) => [message.role, message.content]),
+    ).toEqual([
       ['user', 'finish the task'],
       ['tool', 'verified work result'],
       ['cerebrum', 'Completed after mixed retries.'],

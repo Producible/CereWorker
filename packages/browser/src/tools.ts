@@ -14,6 +14,7 @@ interface BrowserResumeMetadata {
   targetText?: string;
   targetSelector?: string;
   stateChanging: boolean;
+  stateDelta?: Record<string, unknown>;
 }
 
 interface BrowserToolResultOptions {
@@ -24,7 +25,11 @@ interface BrowserToolResultOptions {
 
 function wrap<T>(
   fn: (args: T, context?: ToolContext) => Promise<string>,
-  build: (args: T, output: string, isError: boolean) => ToolExecutionValue | Promise<ToolExecutionValue>,
+  build: (
+    args: T,
+    output: string,
+    isError: boolean,
+  ) => ToolExecutionValue | Promise<ToolExecutionValue>,
 ): (args: T, context?: ToolContext) => Promise<ToolExecutionValue> {
   return async (args: T, context?: ToolContext) => {
     try {
@@ -105,7 +110,16 @@ function summarizeStructuredValue(value: unknown): string {
 function tryParseJson(output: string): unknown | null {
   const trimmed = output.trim();
   if (!trimmed) return null;
-  if (!(trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed === 'null' || trimmed === 'true' || trimmed === 'false' || /^-?\d/.test(trimmed))) {
+  if (
+    !(
+      trimmed.startsWith('{') ||
+      trimmed.startsWith('[') ||
+      trimmed === 'null' ||
+      trimmed === 'true' ||
+      trimmed === 'false' ||
+      /^-?\d/.test(trimmed)
+    )
+  ) {
     return null;
   }
   try {
@@ -124,9 +138,12 @@ function inferOpaqueEvalSummary(output: string): string {
 
 function formatTabsOutput(tabs: TabInfo[]): string {
   if (tabs.length === 0) return 'No tabs open.';
-  return tabs.map((tab) =>
-    `${tab.active ? '→ ' : '  '}[${tab.id}] ${tab.url}${tab.title ? ` - ${tab.title}` : ''}`,
-  ).join('\n');
+  return tabs
+    .map(
+      (tab) =>
+        `${tab.active ? '→ ' : '  '}[${tab.id}] ${tab.url}${tab.title ? ` - ${tab.title}` : ''}`,
+    )
+    .join('\n');
 }
 
 function summarizeTabs(tabs: TabInfo[]): string {
@@ -176,7 +193,8 @@ export function createBrowserTools(backend: BrowserBackend) {
         url: z.string().describe('The URL to navigate to'),
       }),
       execute: wrap(
-        (args: { url: string }, context) => backend.navigate(args.url, { abortSignal: context?.abortSignal }),
+        (args: { url: string }, context) =>
+          backend.navigate(args.url, { abortSignal: context?.abortSignal }),
         (args, output, isError) => {
           const parsed = parseNavigateOutput(output);
           return createBrowserToolResult(output, {
@@ -186,6 +204,9 @@ export function createBrowserTools(backend: BrowserBackend) {
               summary: compactWhitespace(output),
               url: parsed.url ?? args.url,
               stateChanging: true,
+              stateDelta: {
+                currentUrl: parsed.url ?? args.url,
+              },
             },
             details: {
               requestedUrl: args.url,
@@ -200,19 +221,21 @@ export function createBrowserTools(backend: BrowserBackend) {
       description: 'Get the visible text content of the current page',
       parameters: z.object({}),
       execute: wrap(
-        async (_args: Record<string, never>, context) => backend.getPageText({ abortSignal: context?.abortSignal }),
-        (_args, output, isError) => createBrowserToolResult(output, {
-          isError,
-          resume: {
-            action: 'read_page_text',
-            summary: summarizeReadText(output),
-            stateChanging: false,
-          },
-          details: {
-            textLength: output.length,
-            excerpt: truncate(output, 500),
-          },
-        }),
+        async (_args: Record<string, never>, context) =>
+          backend.getPageText({ abortSignal: context?.abortSignal }),
+        (_args, output, isError) =>
+          createBrowserToolResult(output, {
+            isError,
+            resume: {
+              action: 'read_page_text',
+              summary: summarizeReadText(output),
+              stateChanging: false,
+            },
+            details: {
+              textLength: output.length,
+              excerpt: truncate(output, 500),
+            },
+          }),
       ),
     },
     browserScreenshot: {
@@ -221,66 +244,87 @@ export function createBrowserTools(backend: BrowserBackend) {
         path: z.string().optional().describe('File path to save screenshot'),
       }),
       execute: wrap(
-        async (args: { path?: string }, context) => backend.screenshot(args.path, { abortSignal: context?.abortSignal }),
-        (args, output, isError) => createBrowserToolResult(output, {
-          isError,
-          resume: {
-            action: 'screenshot',
-            summary: compactWhitespace(output),
-            stateChanging: false,
-          },
-          details: {
-            requestedPath: args.path,
-          },
-        }),
+        async (args: { path?: string }, context) =>
+          backend.screenshot(args.path, { abortSignal: context?.abortSignal }),
+        (args, output, isError) =>
+          createBrowserToolResult(output, {
+            isError,
+            resume: {
+              action: 'screenshot',
+              summary: compactWhitespace(output),
+              stateChanging: false,
+            },
+            details: {
+              requestedPath: args.path,
+            },
+          }),
       ),
     },
     browserClick: {
-      description: 'Click an element on the page by CSS selector. Uses full mouse event sequence for React/SPA compatibility.',
+      description:
+        'Click an element on the page by CSS selector. Uses full mouse event sequence for React/SPA compatibility.',
       parameters: z.object({
         selector: z.string().describe('CSS selector of the element to click'),
       }),
       execute: wrap(
-        async (args: { selector: string }, context) => backend.click(args.selector, { abortSignal: context?.abortSignal }),
-        (args, output, isError) => createBrowserToolResult(output, {
-          isError,
-          resume: {
-            action: 'click',
-            summary: isError
-              ? `Failed to click selector ${args.selector}: ${compactWhitespace(output)}`
-              : `Clicked selector ${args.selector}: ${compactWhitespace(output)}`,
-            targetSelector: args.selector,
-            stateChanging: !isError,
-          },
-          details: {
-            selector: args.selector,
-          },
-        }),
+        async (args: { selector: string }, context) =>
+          backend.click(args.selector, { abortSignal: context?.abortSignal }),
+        (args, output, isError) =>
+          createBrowserToolResult(output, {
+            isError,
+            resume: {
+              action: 'click',
+              summary: isError
+                ? `Failed to click selector ${args.selector}: ${compactWhitespace(output)}`
+                : `Clicked selector ${args.selector}: ${compactWhitespace(output)}`,
+              targetSelector: args.selector,
+              stateChanging: !isError,
+              stateDelta: !isError
+                ? {
+                    targetSelector: args.selector,
+                  }
+                : undefined,
+            },
+            details: {
+              selector: args.selector,
+            },
+          }),
       ),
     },
     browserClickByText: {
-      description: 'Click a button or link by its visible text. More reliable than CSS selectors for dynamic SPAs like X/Twitter. Optionally filter by ARIA role.',
+      description:
+        'Click a button or link by its visible text. More reliable than CSS selectors for dynamic SPAs like X/Twitter. Optionally filter by ARIA role.',
       parameters: z.object({
-        text: z.string().describe('Exact visible text of the element to click (e.g. "Next", "Post", "Log in")'),
+        text: z
+          .string()
+          .describe('Exact visible text of the element to click (e.g. "Next", "Post", "Log in")'),
         role: z.string().optional().describe('Optional ARIA role filter (e.g. "button")'),
       }),
       execute: wrap(
-        async (args: { text: string; role?: string }, context) => backend.clickByText(args.text, args.role, { abortSignal: context?.abortSignal }),
-        (args, output, isError) => createBrowserToolResult(output, {
-          isError,
-          resume: {
-            action: 'click_text',
-            summary: isError
-              ? `Failed to click text "${args.text}"${args.role ? ` (${args.role})` : ''}: ${compactWhitespace(output)}`
-              : `Clicked text "${args.text}"${args.role ? ` (${args.role})` : ''}: ${compactWhitespace(output)}`,
-            targetText: args.text,
-            stateChanging: !isError,
-          },
-          details: {
-            text: args.text,
-            role: args.role,
-          },
-        }),
+        async (args: { text: string; role?: string }, context) =>
+          backend.clickByText(args.text, args.role, { abortSignal: context?.abortSignal }),
+        (args, output, isError) =>
+          createBrowserToolResult(output, {
+            isError,
+            resume: {
+              action: 'click_text',
+              summary: isError
+                ? `Failed to click text "${args.text}"${args.role ? ` (${args.role})` : ''}: ${compactWhitespace(output)}`
+                : `Clicked text "${args.text}"${args.role ? ` (${args.role})` : ''}: ${compactWhitespace(output)}`,
+              targetText: args.text,
+              stateChanging: !isError,
+              stateDelta: !isError
+                ? {
+                    targetText: args.text,
+                    targetRole: args.role,
+                  }
+                : undefined,
+            },
+            details: {
+              text: args.text,
+              role: args.role,
+            },
+          }),
       ),
     },
     browserType: {
@@ -290,22 +334,30 @@ export function createBrowserTools(backend: BrowserBackend) {
         text: z.string().describe('Text to type'),
       }),
       execute: wrap(
-        async (args: { selector: string; text: string }, context) => backend.type(args.selector, args.text, { abortSignal: context?.abortSignal }),
-        (args, output, isError) => createBrowserToolResult(output, {
-          isError,
-          resume: {
-            action: 'type',
-            summary: isError
-              ? `Failed to type into ${args.selector}: ${compactWhitespace(output)}`
-              : `${summarizeTypedText(args.text)} into ${args.selector}.`,
-            targetSelector: args.selector,
-            stateChanging: !isError,
-          },
-          details: {
-            selector: args.selector,
-            typedTextPreview: truncate(args.text, 500),
-          },
-        }),
+        async (args: { selector: string; text: string }, context) =>
+          backend.type(args.selector, args.text, { abortSignal: context?.abortSignal }),
+        (args, output, isError) =>
+          createBrowserToolResult(output, {
+            isError,
+            resume: {
+              action: 'type',
+              summary: isError
+                ? `Failed to type into ${args.selector}: ${compactWhitespace(output)}`
+                : `${summarizeTypedText(args.text)} into ${args.selector}.`,
+              targetSelector: args.selector,
+              stateChanging: !isError,
+              stateDelta: !isError
+                ? {
+                    targetSelector: args.selector,
+                    typedTextPreview: truncate(args.text, 120),
+                  }
+                : undefined,
+            },
+            details: {
+              selector: args.selector,
+              typedTextPreview: truncate(args.text, 500),
+            },
+          }),
       ),
     },
     browserEval: {
@@ -314,17 +366,23 @@ export function createBrowserTools(backend: BrowserBackend) {
         code: z.string().describe('JavaScript code to evaluate'),
       }),
       execute: wrap(
-        async (args: { code: string }, context) => backend.evaluate(args.code, { abortSignal: context?.abortSignal }),
+        async (args: { code: string }, context) =>
+          backend.evaluate(args.code, { abortSignal: context?.abortSignal }),
         (args, output, isError) => {
           const parsedValue = tryParseJson(output);
           return createBrowserToolResult(output, {
             isError,
             resume: {
               action: 'evaluate',
-              summary: parsedValue !== null
-                ? `Evaluated browser code -> ${summarizeStructuredValue(parsedValue)}`
-                : inferOpaqueEvalSummary(output),
+              summary:
+                parsedValue !== null
+                  ? `Evaluated browser code -> ${summarizeStructuredValue(parsedValue)}`
+                  : inferOpaqueEvalSummary(output),
               stateChanging: false,
+              stateDelta:
+                parsedValue !== null && typeof parsedValue === 'object'
+                  ? { parsedValue }
+                  : undefined,
             },
             details: {
               codePreview: truncate(args.code, 300),
@@ -342,36 +400,44 @@ export function createBrowserTools(backend: BrowserBackend) {
       }),
       execute: wrap(
         async (args: { selector: string; timeout?: number }, context) =>
-          backend.waitForSelector(args.selector, args.timeout, { abortSignal: context?.abortSignal }),
-        (args, output, isError) => createBrowserToolResult(output, {
-          isError,
-          resume: {
-            action: 'wait_for_selector',
-            summary: compactWhitespace(output),
-            targetSelector: args.selector,
-            stateChanging: false,
-          },
-          details: {
-            selector: args.selector,
-            timeoutMs: args.timeout ?? 5000,
-          },
-        }),
+          backend.waitForSelector(args.selector, args.timeout, {
+            abortSignal: context?.abortSignal,
+          }),
+        (args, output, isError) =>
+          createBrowserToolResult(output, {
+            isError,
+            resume: {
+              action: 'wait_for_selector',
+              summary: compactWhitespace(output),
+              targetSelector: args.selector,
+              stateChanging: false,
+            },
+            details: {
+              selector: args.selector,
+              timeoutMs: args.timeout ?? 5000,
+            },
+          }),
       ),
     },
     browserGetUrl: {
       description: 'Get the current URL of the browser page',
       parameters: z.object({}),
       execute: wrap(
-        async (_args: Record<string, never>, context) => backend.getPageUrl({ abortSignal: context?.abortSignal }),
-        (_args, output, isError) => createBrowserToolResult(output, {
-          isError,
-          resume: {
-            action: 'get_url',
-            summary: `Current URL: ${compactWhitespace(output)}`,
-            url: output.trim(),
-            stateChanging: false,
-          },
-        }),
+        async (_args: Record<string, never>, context) =>
+          backend.getPageUrl({ abortSignal: context?.abortSignal }),
+        (_args, output, isError) =>
+          createBrowserToolResult(output, {
+            isError,
+            resume: {
+              action: 'get_url',
+              summary: `Current URL: ${compactWhitespace(output)}`,
+              url: output.trim(),
+              stateChanging: false,
+              stateDelta: {
+                currentUrl: output.trim(),
+              },
+            },
+          }),
       ),
     },
     browserListTabs: {
@@ -390,6 +456,11 @@ export function createBrowserTools(backend: BrowserBackend) {
               activeTabId: active?.id,
               tabs,
               stateChanging: false,
+              stateDelta: {
+                currentUrl: active?.url,
+                activeTabId: active?.id,
+                tabs,
+              },
             },
             details: {
               tabs,
@@ -417,7 +488,8 @@ export function createBrowserTools(backend: BrowserBackend) {
         tabId: z.string().describe('Tab ID from browserListTabs'),
       }),
       execute: wrap(
-        async (args: { tabId: string }, context) => backend.switchTab(args.tabId, { abortSignal: context?.abortSignal }),
+        async (args: { tabId: string }, context) =>
+          backend.switchTab(args.tabId, { abortSignal: context?.abortSignal }),
         (args, output, isError) => {
           const parsed = parseSwitchTabOutput(output);
           return createBrowserToolResult(output, {
@@ -429,6 +501,12 @@ export function createBrowserTools(backend: BrowserBackend) {
               tabId: parsed.tabId ?? args.tabId,
               activeTabId: parsed.tabId ?? args.tabId,
               stateChanging: !isError,
+              stateDelta: !isError
+                ? {
+                    currentUrl: parsed.url,
+                    activeTabId: parsed.tabId ?? args.tabId,
+                  }
+                : undefined,
             },
             details: {
               requestedTabId: args.tabId,
@@ -443,7 +521,8 @@ export function createBrowserTools(backend: BrowserBackend) {
         url: z.string().optional().describe('URL to navigate to in the new tab'),
       }),
       execute: wrap(
-        async (args: { url?: string }, context) => backend.newTab(args.url, { abortSignal: context?.abortSignal }),
+        async (args: { url?: string }, context) =>
+          backend.newTab(args.url, { abortSignal: context?.abortSignal }),
         (args, output, isError) => {
           const parsed = parseNewTabOutput(output);
           return createBrowserToolResult(output, {
@@ -453,6 +532,11 @@ export function createBrowserTools(backend: BrowserBackend) {
               summary: compactWhitespace(output),
               url: parsed.url ?? args.url,
               stateChanging: !isError,
+              stateDelta: !isError
+                ? {
+                    currentUrl: parsed.url ?? args.url,
+                  }
+                : undefined,
             },
             details: {
               requestedUrl: args.url,
@@ -468,7 +552,8 @@ export function createBrowserTools(backend: BrowserBackend) {
         tabId: z.string().optional().describe('Tab ID to close (current tab if omitted)'),
       }),
       execute: wrap(
-        async (args: { tabId?: string }, context) => backend.closeTab(args.tabId, { abortSignal: context?.abortSignal }),
+        async (args: { tabId?: string }, context) =>
+          backend.closeTab(args.tabId, { abortSignal: context?.abortSignal }),
         (args, output, isError) => {
           const parsed = parseCloseTabOutput(output);
           return createBrowserToolResult(output, {
@@ -479,6 +564,11 @@ export function createBrowserTools(backend: BrowserBackend) {
               url: parsed.url,
               tabId: args.tabId,
               stateChanging: !isError,
+              stateDelta: !isError
+                ? {
+                    currentUrl: parsed.url,
+                  }
+                : undefined,
             },
             details: {
               requestedTabId: args.tabId,
@@ -488,18 +578,26 @@ export function createBrowserTools(backend: BrowserBackend) {
       ),
     },
     browserConnect: {
-      description: 'Connect to the browser backend. In extension mode, waits for the Chrome extension.',
+      description:
+        'Connect to the browser backend. In extension mode, waits for the Chrome extension.',
       parameters: z.object({}),
       execute: wrap(
-        async (_args: Record<string, never>, context) => backend.connect({ abortSignal: context?.abortSignal }),
-        (_args, output, isError) => createBrowserToolResult(output, {
-          isError,
-          resume: {
-            action: 'connect_browser',
-            summary: compactWhitespace(output),
-            stateChanging: !isError,
-          },
-        }),
+        async (_args: Record<string, never>, context) =>
+          backend.connect({ abortSignal: context?.abortSignal }),
+        (_args, output, isError) =>
+          createBrowserToolResult(output, {
+            isError,
+            resume: {
+              action: 'connect_browser',
+              summary: compactWhitespace(output),
+              stateChanging: !isError,
+              stateDelta: !isError
+                ? {
+                    connected: true,
+                  }
+                : undefined,
+            },
+          }),
       ),
     },
     browserDisconnect: {
@@ -510,14 +608,20 @@ export function createBrowserTools(backend: BrowserBackend) {
           await backend.disconnect();
           return 'Disconnected from browser';
         },
-        (_args, output, isError) => createBrowserToolResult(output, {
-          isError,
-          resume: {
-            action: 'disconnect_browser',
-            summary: compactWhitespace(output),
-            stateChanging: !isError,
-          },
-        }),
+        (_args, output, isError) =>
+          createBrowserToolResult(output, {
+            isError,
+            resume: {
+              action: 'disconnect_browser',
+              summary: compactWhitespace(output),
+              stateChanging: !isError,
+              stateDelta: !isError
+                ? {
+                    connected: false,
+                  }
+                : undefined,
+            },
+          }),
       ),
     },
   };

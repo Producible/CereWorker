@@ -1,8 +1,8 @@
 import { nanoid } from 'nanoid';
-import { existsSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
-import type { Conversation, Message, MessageRole } from './types.js';
+import type { Conversation, Message, MessageRole, TurnJournalEntry } from './types.js';
 import { createLogger } from './logger.js';
 import {
   appendJsonLine,
@@ -36,10 +36,13 @@ export class ConversationStore {
     this.inMemory = dbPath === ':memory:';
     this.baseDir = this.inMemory ? null : resolveStoreBasePath(dbPath ?? DEFAULT_DB_PATH);
     this.conversationsDir = this.baseDir ? join(this.baseDir, 'conversations') : null;
+    const legacyDbPath = dbPath ?? DEFAULT_DB_PATH;
 
     if (this.conversationsDir) {
       ensureDir(this.conversationsDir);
-      this.migrateLegacyDatabase(dbPath ?? DEFAULT_DB_PATH);
+      if (!existsSync(legacyDbPath) || !statSync(legacyDbPath).isDirectory()) {
+        this.migrateLegacyDatabase(legacyDbPath);
+      }
       log.info('Opened conversation store', { path: this.conversationsDir });
     }
   }
@@ -62,14 +65,14 @@ export class ConversationStore {
                FROM messages WHERE conversationId = ? ORDER BY timestamp, rowid`,
             )
             .all(conversation.id) as Array<{
-              id: string;
-              role: string;
-              content: string;
-              timestamp: number;
-              toolCalls: string | null;
-              toolResult: string | null;
-              metadata: string | null;
-            }>;
+            id: string;
+            role: string;
+            content: string;
+            timestamp: number;
+            toolCalls: string | null;
+            toolResult: string | null;
+            metadata: string | null;
+          }>;
           return {
             conversation,
             messages: messages.map((message) => ({
@@ -159,7 +162,12 @@ export class ConversationStore {
       }));
   }
 
-  appendMessage(conversationId: string, role: MessageRole, content: string, extra?: Partial<Message>): Message {
+  appendMessage(
+    conversationId: string,
+    role: MessageRole,
+    content: string,
+    extra?: Partial<Message>,
+  ): Message {
     const message: Message = {
       id: nanoid(),
       role,
@@ -197,6 +205,23 @@ export class ConversationStore {
     return this.readConversationMessages(conversationId);
   }
 
+  appendTurnJournalEntry(conversationId: string, turnId: string, entry: TurnJournalEntry): void {
+    if (this.inMemory) return;
+
+    withTextStoreLock(this.getConversationDir(conversationId), () => {
+      const meta = this.readConversationMeta(conversationId);
+      if (!meta) throw new Error(`Conversation ${conversationId} not found`);
+
+      ensureDir(this.getTurnsDir(conversationId));
+      appendJsonLine(this.getTurnJournalPath(conversationId, turnId), entry);
+    });
+  }
+
+  getTurnJournal(conversationId: string, turnId: string): TurnJournalEntry[] {
+    if (this.inMemory) return [];
+    return readJsonLines<TurnJournalEntry>(this.getTurnJournalPath(conversationId, turnId));
+  }
+
   deleteMessages(conversationId: string, messageIds: string[]): number {
     if (messageIds.length === 0) return 0;
 
@@ -204,7 +229,9 @@ export class ConversationStore {
       const conversation = this.memoryConversations.get(conversationId);
       if (!conversation) return 0;
       const before = conversation.messages.length;
-      conversation.messages = conversation.messages.filter((message) => !messageIds.includes(message.id));
+      conversation.messages = conversation.messages.filter(
+        (message) => !messageIds.includes(message.id),
+      );
       return before - conversation.messages.length;
     }
 
@@ -255,6 +282,14 @@ export class ConversationStore {
 
   private getMessagesPath(id: string): string {
     return join(this.getConversationDir(id), 'messages.jsonl');
+  }
+
+  private getTurnsDir(id: string): string {
+    return join(this.getConversationDir(id), 'turns');
+  }
+
+  private getTurnJournalPath(id: string, turnId: string): string {
+    return join(this.getTurnsDir(id), `${turnId}.jsonl`);
   }
 
   private readConversationMeta(id: string): ConversationMeta | undefined {

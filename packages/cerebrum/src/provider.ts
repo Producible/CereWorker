@@ -1,5 +1,13 @@
 import { createHash } from 'node:crypto';
-import { streamText, generateText, jsonSchema, tool, stepCountIs, type ModelMessage, type LanguageModel } from 'ai';
+import {
+  streamText,
+  generateText,
+  jsonSchema,
+  tool,
+  stepCountIs,
+  type ModelMessage,
+  type LanguageModel,
+} from 'ai';
 import { z } from 'zod';
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAI } from '@ai-sdk/openai';
@@ -14,6 +22,7 @@ import {
   raceWithAbort,
   throwIfAborted,
   type Message,
+  type StreamContentKind,
   type StreamFinishMetadata,
   type StreamFinishReason,
   type ToolCall as CWToolCall,
@@ -22,11 +31,17 @@ import {
 import type { CerebrumConfig, ProviderConfig, StreamCallbacks } from './types.js';
 import { withRetry, type RetryOptions } from './retry.js';
 import { buildCompactionPrompt } from './context.js';
-import { TokenStore, refreshAccessToken, OAUTH_PROVIDERS, refreshMiniMaxPortalToken } from './oauth/index.js';
+import {
+  TokenStore,
+  refreshAccessToken,
+  OAUTH_PROVIDERS,
+  refreshMiniMaxPortalToken,
+} from './oauth/index.js';
 import { getOpenAICodexApiKey, refreshGoogleToken } from './oauth/pi-auth.js';
 
 const OPENAI_CODEX_PROVIDER = 'openai-codex';
-const DEFAULT_OPENAI_CODEX_INSTRUCTIONS = 'You are the Cerebrum of CereWorker, a dual-LLM autonomous agent.';
+const DEFAULT_OPENAI_CODEX_INSTRUCTIONS =
+  'You are the Cerebrum of CereWorker, a dual-LLM autonomous agent.';
 const MAX_REPLAY_TOOL_RESULT_CHARS = 20000;
 const ITERATOR_CLOSE_TIMEOUT_MS = 1_000;
 const GOOGLE_API_HOST = 'generativelanguage.googleapis.com';
@@ -102,7 +117,11 @@ function friendlyApiError(error: unknown, provider: string, model: string): stri
   }
 
   // Context length
-  if (msg.includes('context length') || msg.includes('too many tokens') || msg.includes('maximum')) {
+  if (
+    msg.includes('context length') ||
+    msg.includes('too many tokens') ||
+    msg.includes('maximum')
+  ) {
     return `Message too long for ${model}. Try shortening your message or start a new conversation.`;
   }
 
@@ -182,7 +201,7 @@ export class CerebrumProvider {
     const tokens = this.tokenStore.load(providerName);
     if (!tokens) {
       throw new Error(
-          `No OAuth tokens found for ${providerName}. Run: cereworker auth ${providerName}`,
+        `No OAuth tokens found for ${providerName}. Run: cereworker auth ${providerName}`,
       );
     }
 
@@ -232,9 +251,10 @@ export class CerebrumProvider {
   } {
     const requestedProviderName = provider ?? this.config.defaultProvider;
     const requestedProviderConfig = this.config.providers[requestedProviderName];
-    const providerName = requestedProviderName === 'openai' && requestedProviderConfig?.auth === 'oauth'
-      ? OPENAI_CODEX_PROVIDER
-      : requestedProviderName;
+    const providerName =
+      requestedProviderName === 'openai' && requestedProviderConfig?.auth === 'oauth'
+        ? OPENAI_CODEX_PROVIDER
+        : requestedProviderName;
     const providerConfig = this.config.providers[providerName] ?? requestedProviderConfig;
 
     return { requestedProviderName, providerName, providerConfig };
@@ -286,10 +306,10 @@ export class CerebrumProvider {
     const apiKey = auth.apiKey;
 
     const resolvedBaseUrl =
-      providerConfig?.baseUrl
-      ?? auth.oauthTokens?.resourceUrl
-      ?? auth.oauthTokens?.baseUrl
-      ?? providerDefinition.defaultBaseUrl;
+      providerConfig?.baseUrl ??
+      auth.oauthTokens?.resourceUrl ??
+      auth.oauthTokens?.baseUrl ??
+      providerDefinition.defaultBaseUrl;
 
     switch (providerDefinition.runtimeFamily) {
       case 'anthropic': {
@@ -448,7 +468,13 @@ export class CerebrumProvider {
     messages: Message[],
     externalTools: Record<string, ToolDefinition>,
     callbacks: StreamCallbacks,
-    options?: { provider?: string; model?: string; systemPrompt?: string; maxSteps?: number; abortSignal?: AbortSignal },
+    options?: {
+      provider?: string;
+      model?: string;
+      systemPrompt?: string;
+      maxSteps?: number;
+      abortSignal?: AbortSignal;
+    },
   ): Promise<void> {
     const systemMessages = messages.filter((m) => m.role === 'system');
     const nonSystemMessages = messages.filter((m) => m.role !== 'system');
@@ -517,6 +543,8 @@ export class CerebrumProvider {
         let rawFinishReason: string | undefined;
         let chunkCount = 0;
         let stepCount = 0;
+        let lastContentKind: StreamContentKind = 'empty';
+        let hadFinalText = false;
 
         // Wrap the stream iteration with abort awareness — the AI SDK may not
         // break the async iterator when abortSignal fires during multi-step tool use
@@ -524,70 +552,81 @@ export class CerebrumProvider {
         const iterator = result.fullStream[Symbol.asyncIterator]();
 
         try {
-        while (true) {
-          throwIfAborted(abortSignal, 'Stream aborted');
+          while (true) {
+            throwIfAborted(abortSignal, 'Stream aborted');
 
-          const nextResult = abortSignal
-            ? await raceWithAbort(iterator.next(), abortSignal, 'Stream aborted')
-            : await iterator.next();
+            const nextResult = abortSignal
+              ? await raceWithAbort(iterator.next(), abortSignal, 'Stream aborted')
+              : await iterator.next();
 
-          if (nextResult.done) break;
-          chunkCount++;
-          const part = nextResult.value as {
-            type: string;
-            text?: string;
-            toolCallId?: string;
-            toolName?: string;
-            input?: unknown;
-            error?: unknown;
-            finishReason?: unknown;
-            rawFinishReason?: unknown;
-          };
+            if (nextResult.done) break;
+            chunkCount++;
+            const part = nextResult.value as {
+              type: string;
+              text?: string;
+              toolCallId?: string;
+              toolName?: string;
+              input?: unknown;
+              error?: unknown;
+              finishReason?: unknown;
+              rawFinishReason?: unknown;
+            };
 
-          switch (part.type) {
-            case 'text-delta':
-              fullContent += part.text ?? '';
-              callbacks.onChunk(part.text ?? '');
-              break;
-            case 'tool-call':
-              collectedToolCalls.push({
-                id: part.toolCallId!,
-                name: normalizeToolName(part.toolName!) || part.toolName!,
-                args: normalizeToolArgumentsForProvider(
-                  providerName,
-                  (part.input as Record<string, unknown>) ?? {},
-                ),
-              });
-              break;
-            case 'finish-step': {
-              stepCount++;
-              const stepFinishReason = asFinishReason(part.finishReason);
-              if (stepFinishReason) {
-                stepFinishReasons.push(stepFinishReason);
-                finishReason = stepFinishReason;
+            switch (part.type) {
+              case 'text-delta':
+                fullContent += part.text ?? '';
+                if ((part.text ?? '').length > 0) {
+                  lastContentKind = 'text';
+                  hadFinalText = true;
+                }
+                callbacks.onChunk(part.text ?? '');
+                break;
+              case 'tool-call':
+                lastContentKind = 'tool-call';
+                collectedToolCalls.push({
+                  id: part.toolCallId!,
+                  name: normalizeToolName(part.toolName!) || part.toolName!,
+                  args: normalizeToolArgumentsForProvider(
+                    providerName,
+                    (part.input as Record<string, unknown>) ?? {},
+                  ),
+                });
+                break;
+              case 'finish-step': {
+                stepCount++;
+                const stepFinishReason = asFinishReason(part.finishReason);
+                if (stepFinishReason) {
+                  stepFinishReasons.push(stepFinishReason);
+                  finishReason = stepFinishReason;
+                }
+                if (typeof part.rawFinishReason === 'string') {
+                  rawFinishReason = part.rawFinishReason;
+                }
+                break;
               }
-              if (typeof part.rawFinishReason === 'string') {
-                rawFinishReason = part.rawFinishReason;
+              case 'finish': {
+                const streamFinishReason = asFinishReason(part.finishReason);
+                if (streamFinishReason) {
+                  finishReason = streamFinishReason;
+                }
+                if (typeof part.rawFinishReason === 'string') {
+                  rawFinishReason = part.rawFinishReason;
+                }
+                break;
               }
-              break;
+              case 'error':
+                lastContentKind = 'error';
+                callbacks.onError(
+                  part.error instanceof Error ? part.error : new Error(String(part.error)),
+                );
+                break;
+              default:
+                if (lastContentKind === 'empty') {
+                  lastContentKind = 'other';
+                }
+                break;
             }
-            case 'finish': {
-              const streamFinishReason = asFinishReason(part.finishReason);
-              if (streamFinishReason) {
-                finishReason = streamFinishReason;
-              }
-              if (typeof part.rawFinishReason === 'string') {
-                rawFinishReason = part.rawFinishReason;
-              }
-              break;
-            }
-            case 'error':
-              callbacks.onError(
-                part.error instanceof Error ? part.error : new Error(String(part.error)),
-              );
-              break;
           }
-        }
         } catch (abortErr) {
           // Tear down the underlying stream so tool execution doesn't continue in background
           log.debug('provider_abort_observed', { hasAbortSignal: !!abortSignal });
@@ -604,8 +643,15 @@ export class CerebrumProvider {
           toolCallCount: collectedToolCalls.length,
           hadToolActivity: collectedToolCalls.length > 0,
           stepCount,
+          lastContentKind,
+          endedWithToolCall: lastContentKind === 'tool-call',
+          hadFinalText,
         };
-        callbacks.onFinish(fullContent, collectedToolCalls.length > 0 ? collectedToolCalls : undefined, finishMeta);
+        callbacks.onFinish(
+          fullContent,
+          collectedToolCalls.length > 0 ? collectedToolCalls : undefined,
+          finishMeta,
+        );
       } catch (error) {
         const provider = options?.provider ?? this.config.defaultProvider;
         const modelName = options?.model ?? this.config.defaultModel;
@@ -691,15 +737,16 @@ function normalizeToolParameterSchema(
   parameters: unknown,
   providerName: string,
 ): Record<string, unknown> {
-  const baseSchema = !parameters || typeof parameters !== 'object' || Array.isArray(parameters)
-    ? {
-        type: 'object',
-        properties: {},
-        additionalProperties: false,
-      }
-    : looksLikeJsonSchema(parameters as Record<string, unknown>)
-      ? normalizeJsonSchemaObject(parameters as Record<string, unknown>)
-      : legacyParameterMapToJsonSchema(parameters as Record<string, unknown>);
+  const baseSchema =
+    !parameters || typeof parameters !== 'object' || Array.isArray(parameters)
+      ? {
+          type: 'object',
+          properties: {},
+          additionalProperties: false,
+        }
+      : looksLikeJsonSchema(parameters as Record<string, unknown>)
+        ? normalizeJsonSchemaObject(parameters as Record<string, unknown>)
+        : legacyParameterMapToJsonSchema(parameters as Record<string, unknown>);
 
   const flattened = flattenTopLevelObjectUnion(baseSchema);
   const objectSchema = ensureTopLevelObjectSchema(flattened);
@@ -723,7 +770,7 @@ function ensureTopLevelObjectSchema(schema: Record<string, unknown>): Record<str
   if (
     normalized.type === 'object' ||
     (!('type' in normalized) && hasObjectFields) ||
-    (Object.keys(normalized).length === 0)
+    Object.keys(normalized).length === 0
   ) {
     normalized.type = 'object';
     if (
@@ -792,9 +839,12 @@ function flattenTopLevelObjectUnion(schema: Record<string, unknown>): Record<str
     type: 'object',
     ...(typeof schema.title === 'string' ? { title: schema.title } : {}),
     ...(typeof schema.description === 'string' ? { description: schema.description } : {}),
-    properties: Object.keys(mergedProperties).length > 0
-      ? mergedProperties
-      : (isPlainObject(schema.properties) ? schema.properties : {}),
+    properties:
+      Object.keys(mergedProperties).length > 0
+        ? mergedProperties
+        : isPlainObject(schema.properties)
+          ? schema.properties
+          : {},
     ...(mergedRequired && mergedRequired.length > 0 ? { required: mergedRequired } : {}),
     additionalProperties: 'additionalProperties' in schema ? schema.additionalProperties : false,
   };
@@ -997,12 +1047,14 @@ function sanitizeTranscriptMessages(messages: Message[], providerName: string): 
         if (!toolName) {
           return [];
         }
-        return [{
-          ...toolCall,
-          id: resolver.resolveAssistantId(toolCall.id),
-          name: toolName,
-          args: isPlainObject(toolCall.args) ? toolCall.args : {},
-        }];
+        return [
+          {
+            ...toolCall,
+            id: resolver.resolveAssistantId(toolCall.id),
+            name: toolName,
+            args: isPlainObject(toolCall.args) ? toolCall.args : {},
+          },
+        ];
       });
 
       if (toolCalls.length === 0 && message.content.trim().length === 0) {
@@ -1132,8 +1184,8 @@ function decodeHtmlEntitiesInValue(value: unknown): unknown {
     return value
       .replaceAll('&quot;', '"')
       .replaceAll('&#34;', '"')
-      .replaceAll('&apos;', '\'')
-      .replaceAll('&#39;', '\'')
+      .replaceAll('&apos;', "'")
+      .replaceAll('&#39;', "'")
       .replaceAll('&lt;', '<')
       .replaceAll('&#60;', '<')
       .replaceAll('&gt;', '>')
@@ -1158,7 +1210,11 @@ function decodeHtmlEntitiesInValue(value: unknown): unknown {
 type ToolCallIdMode = 'identity' | 'strict' | 'strict9';
 
 function getToolCallIdMode(providerName: string): ToolCallIdMode {
-  if (providerName === 'anthropic' || providerName === 'minimax' || providerName === 'minimax-portal') {
+  if (
+    providerName === 'anthropic' ||
+    providerName === 'minimax' ||
+    providerName === 'minimax-portal'
+  ) {
     return 'identity';
   }
 
@@ -1305,7 +1361,9 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function legacyParameterMapToJsonSchema(parameterMap: Record<string, unknown>): Record<string, unknown> {
+function legacyParameterMapToJsonSchema(
+  parameterMap: Record<string, unknown>,
+): Record<string, unknown> {
   const properties = Object.fromEntries(
     Object.entries(parameterMap).map(([name, descriptor]) => [
       name,
@@ -1314,7 +1372,9 @@ function legacyParameterMapToJsonSchema(parameterMap: Record<string, unknown>): 
   );
 
   const required = Object.entries(parameterMap)
-    .filter(([, descriptor]) => isLegacyParameterDescriptor(descriptor) && descriptor.required === true)
+    .filter(
+      ([, descriptor]) => isLegacyParameterDescriptor(descriptor) && descriptor.required === true,
+    )
     .map(([name]) => name);
 
   return {
@@ -1358,7 +1418,11 @@ function legacyParameterDescriptorToJsonSchema(descriptor: unknown): Record<stri
       break;
     case 'object':
       schema.type = 'object';
-      if (descriptor.properties && typeof descriptor.properties === 'object' && !Array.isArray(descriptor.properties)) {
+      if (
+        descriptor.properties &&
+        typeof descriptor.properties === 'object' &&
+        !Array.isArray(descriptor.properties)
+      ) {
         schema.properties = Object.fromEntries(
           Object.entries(descriptor.properties).map(([name, value]) => [
             name,

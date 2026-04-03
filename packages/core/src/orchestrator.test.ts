@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { Orchestrator } from './orchestrator.js';
 import type { CerebrumAdapter, CerebellumAdapter, ToolDefinition } from './orchestrator.js';
 import { ConversationStore } from './conversation.js';
@@ -20,7 +23,8 @@ function createMockCerebellum(): CerebellumAdapter {
     assessTurnRecovery: vi.fn(async () => ({
       action: 'retry',
       operatorMessage: '[Cerebellum] Retry from the last verified state.',
-      modelMessage: '[Cerebellum recovery guidance]\nRetry from the last verified state.\nEnd your final answer by calling task_complete or task_blocked.',
+      modelMessage:
+        '[Cerebellum recovery guidance]\nRetry from the last verified state.\nEnd your final answer by calling task_complete or task_blocked.',
       diagnosis: 'The turn should retry from the last verified state.',
       nextStep: 'Continue from the next unfinished step.',
       completedSteps: [],
@@ -40,10 +44,7 @@ function createTestTool(output = 'ok'): ToolDefinition {
   };
 }
 
-function createStructuredTool(
-  output: string,
-  resume: Record<string, unknown>,
-): ToolDefinition {
+function createStructuredTool(output: string, resume: Record<string, unknown>): ToolDefinition {
   return {
     description: 'structured test tool',
     parameters: {},
@@ -66,6 +67,9 @@ function makeFinishMeta(overrides: Partial<StreamFinishMetadata> = {}): StreamFi
     toolCallCount: 0,
     hadToolActivity: false,
     stepCount: 1,
+    lastContentKind: 'text',
+    endedWithToolCall: false,
+    hadFinalText: true,
     ...overrides,
   };
 }
@@ -266,9 +270,7 @@ describe('Orchestrator', () => {
       orch.on('message:user', handler);
       await orch.sendMessage('hello');
 
-      expect(handler).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'message:user' }),
-      );
+      expect(handler).toHaveBeenCalledWith(expect.objectContaining({ type: 'message:user' }));
       expect(handler.mock.calls[0][0].message.content).toBe('hello');
     });
 
@@ -301,27 +303,36 @@ describe('Orchestrator', () => {
     it('retries a tool-driven turn that ends without a completion signal', async () => {
       orch.registerTool('workTool', createTestTool('worked'));
       const cerebrum: CerebrumAdapter = {
-        stream: vi.fn(async (_messages, _tools, callbacks) => {
-          callbacks.onToolCall({ id: 'tool-1', name: 'workTool', args: {} });
-          callbacks.onFinish('', [{ id: 'tool-1', name: 'workTool', args: {} }], makeFinishMeta({
-            finishReason: 'tool-calls',
-            rawFinishReason: 'tool_calls',
-            stepFinishReasons: ['tool-calls'],
-            toolCallCount: 1,
-            hadToolActivity: true,
-            textChars: 0,
-          }));
-        })
+        stream: vi
+          .fn(async (_messages, _tools, callbacks) => {
+            callbacks.onToolCall({ id: 'tool-1', name: 'workTool', args: {} });
+            callbacks.onFinish(
+              '',
+              [{ id: 'tool-1', name: 'workTool', args: {} }],
+              makeFinishMeta({
+                finishReason: 'tool-calls',
+                rawFinishReason: 'tool_calls',
+                stepFinishReasons: ['tool-calls'],
+                toolCallCount: 1,
+                hadToolActivity: true,
+                textChars: 0,
+              }),
+            );
+          })
           .mockImplementationOnce(async (_messages, _tools, callbacks) => {
             await callbacks.onToolCall({ id: 'tool-1', name: 'workTool', args: {} });
-            callbacks.onFinish('', [{ id: 'tool-1', name: 'workTool', args: {} }], makeFinishMeta({
-              finishReason: 'tool-calls',
-              rawFinishReason: 'tool_calls',
-              stepFinishReasons: ['tool-calls'],
-              toolCallCount: 1,
-              hadToolActivity: true,
-              textChars: 0,
-            }));
+            callbacks.onFinish(
+              '',
+              [{ id: 'tool-1', name: 'workTool', args: {} }],
+              makeFinishMeta({
+                finishReason: 'tool-calls',
+                rawFinishReason: 'tool_calls',
+                stepFinishReasons: ['tool-calls'],
+                toolCallCount: 1,
+                hadToolActivity: true,
+                textChars: 0,
+              }),
+            );
           })
           .mockImplementationOnce(async (_messages, _tools, callbacks) => {
             await callbacks.onToolCall({ id: 'tool-2', name: 'workTool', args: {} });
@@ -334,7 +345,11 @@ describe('Orchestrator', () => {
               'Completed the task.',
               [
                 { id: 'tool-2', name: 'workTool', args: {} },
-                { id: 'sig-1', name: 'task_complete', args: { summary: 'done', evidence: 'Observed the expected result.' } },
+                {
+                  id: 'sig-1',
+                  name: 'task_complete',
+                  args: { summary: 'done', evidence: 'Observed the expected result.' },
+                },
               ],
               makeFinishMeta({
                 finishReason: 'stop',
@@ -358,7 +373,11 @@ describe('Orchestrator', () => {
       expect(messages.filter((message) => message.role === 'cerebrum')).toEqual([
         expect.objectContaining({ content: 'Completed the task.' }),
       ]);
-      expect(messages.some((message) => message.role === 'cerebrum' && message.content.trim().length === 0)).toBe(false);
+      expect(
+        messages.some(
+          (message) => message.role === 'cerebrum' && message.content.trim().length === 0,
+        ),
+      ).toBe(false);
       // Failed attempt tool messages are cleaned up; successful retry's tool results are preserved
       const toolMessages = messages.filter((message) => message.role === 'tool');
       expect(toolMessages).toHaveLength(1); // Only the successful retry's tool result
@@ -379,7 +398,11 @@ describe('Orchestrator', () => {
             'Blocked: the site requires authentication before I can continue.',
             [
               { id: 'tool-1', name: 'workTool', args: {} },
-              { id: 'sig-1', name: 'task_blocked', args: { blocker: 'Login required', evidence: 'The site requires authentication.' } },
+              {
+                id: 'sig-1',
+                name: 'task_blocked',
+                args: { blocker: 'Login required', evidence: 'The site requires authentication.' },
+              },
             ],
             makeFinishMeta({
               finishReason: 'stop',
@@ -405,7 +428,12 @@ describe('Orchestrator', () => {
         role: 'cerebrum',
         content: 'Blocked: the site requires authentication before I can continue.',
       });
-      expect(messages.some((message) => message.role === 'system' && message.content.includes('task_complete or task_blocked'))).toBe(false);
+      expect(
+        messages.some(
+          (message) =>
+            message.role === 'system' && message.content.includes('task_complete or task_blocked'),
+        ),
+      ).toBe(false);
     });
 
     it('exhausts completion retries without consuming watchdog retries', async () => {
@@ -416,14 +444,18 @@ describe('Orchestrator', () => {
           stream: vi.fn(async (_messages, _tools, callbacks) => {
             const callId = `tool-${Math.random().toString(36).slice(2, 8)}`;
             await callbacks.onToolCall({ id: callId, name: 'workTool', args: {} });
-            callbacks.onFinish('', [{ id: callId, name: 'workTool', args: {} }], makeFinishMeta({
-              finishReason: 'tool-calls',
-              rawFinishReason: 'tool_calls',
-              stepFinishReasons: ['tool-calls'],
-              toolCallCount: 1,
-              hadToolActivity: true,
-              textChars: 0,
-            }));
+            callbacks.onFinish(
+              '',
+              [{ id: callId, name: 'workTool', args: {} }],
+              makeFinishMeta({
+                finishReason: 'tool-calls',
+                rawFinishReason: 'tool_calls',
+                stepFinishReasons: ['tool-calls'],
+                toolCallCount: 1,
+                hadToolActivity: true,
+                textChars: 0,
+              }),
+            );
           }),
           summarize: vi.fn(async () => 'summary'),
         };
@@ -448,11 +480,16 @@ describe('Orchestrator', () => {
         ]);
         expect(watchdogStages).toEqual([]);
         expect(errors).toHaveLength(1);
-        expect(errors[0]?.message).toBe('Recovery guidance is unavailable after the turn ended with tool-calls.');
+        expect(errors[0]?.message).toBe(
+          'Recovery guidance is unavailable after the turn ended with ended_on_tool_calls (tool-calls).',
+        );
         // Failed attempt messages are cleaned up — only user + diagnostic remain
         expect(localOrch.getMessages().map((message) => [message.role, message.content])).toEqual([
           ['user', 'finish the task'],
-          ['system', '[System fallback] The turn ended repeatedly without a valid completion signal or final answer.'],
+          [
+            'system',
+            '[System fallback] The turn ended repeatedly without a valid completion signal or final answer.',
+          ],
         ]);
       } finally {
         await localOrch.stop();
@@ -526,8 +563,12 @@ describe('Orchestrator', () => {
           (message) => message.role === 'system' && message.metadata?.source === 'watchdog-resume',
         );
         expect(resumeMessage?.content).toContain('Opened the profile page.');
-        expect(resumeMessage?.content).toContain('Drafting the final report after opening the profile page.');
-        expect(localOrch.getMessages().some((message) => message.metadata?.source === 'watchdog-resume')).toBe(false);
+        expect(resumeMessage?.content).toContain(
+          'Drafting the final report after opening the profile page.',
+        );
+        expect(
+          localOrch.getMessages().some((message) => message.metadata?.source === 'watchdog-resume'),
+        ).toBe(false);
       } finally {
         vi.useRealTimers();
         await localOrch.stop();
@@ -571,7 +612,13 @@ describe('Orchestrator', () => {
             });
             callbacks.onFinish(
               'Completed after resuming the confirmed state.',
-              [{ id: 'sig-1', name: 'task_complete', args: { summary: 'done', evidence: 'Observed the profile update.' } }],
+              [
+                {
+                  id: 'sig-1',
+                  name: 'task_complete',
+                  args: { summary: 'done', evidence: 'Observed the profile update.' },
+                },
+              ],
               makeFinishMeta({
                 finishReason: 'stop',
                 rawFinishReason: 'stop',
@@ -593,11 +640,18 @@ describe('Orchestrator', () => {
         expect(attempts).toBe(2);
         const retryMessages = attemptInputs[1] ?? [];
         const resumeMessage = retryMessages.find(
-          (message) => message.role === 'system' && message.metadata?.source === 'completion-resume',
+          (message) =>
+            message.role === 'system' && message.metadata?.source === 'completion-resume',
         );
         expect(resumeMessage?.content).toContain('Opened the profile page.');
-        expect(resumeMessage?.content).toContain('I followed the account and am ready to publish the summary.');
-        expect(localOrch.getMessages().some((message) => message.metadata?.source === 'completion-resume')).toBe(false);
+        expect(resumeMessage?.content).toContain(
+          'I followed the account and am ready to publish the summary.',
+        );
+        expect(
+          localOrch
+            .getMessages()
+            .some((message) => message.metadata?.source === 'completion-resume'),
+        ).toBe(false);
 
         // The retry input must NOT contain the failed attempt's tool messages
         const retryToolMessages = retryMessages.filter((m) => m.role === 'tool');
@@ -605,46 +659,190 @@ describe('Orchestrator', () => {
 
         // After success, the conversation store should NOT contain the failed attempt's tool output
         const storedMessages = localOrch.getMessages();
-        const storedToolMessages = storedMessages.filter((m) => m.role === 'tool' && m.content === 'Opened the profile page.');
+        const storedToolMessages = storedMessages.filter(
+          (m) => m.role === 'tool' && m.content === 'Opened the profile page.',
+        );
         expect(storedToolMessages).toHaveLength(0);
       } finally {
         await localOrch.stop();
       }
     });
 
+    it('captures protocol-aware recovery state and journals it during completion retries', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'orchestrator-journal-'));
+      const localOrch = new Orchestrator({
+        maxNudgeRetries: 1,
+        conversationStore: new ConversationStore(dir),
+      });
+      try {
+        localOrch.registerTool(
+          'browserNavigateProfile',
+          createStructuredTool('Navigated to https://x.com/CereWorkerX - Title: Profile / X', {
+            action: 'navigate',
+            summary: 'Opened the CereWorkerX profile on X.',
+            url: 'https://x.com/CereWorkerX',
+            stateChanging: true,
+            stateDelta: { currentUrl: 'https://x.com/CereWorkerX' },
+          }),
+        );
+
+        const recoveryRequests: TurnRecoveryRequest[] = [];
+        localOrch.setCerebellum({
+          ...createMockCerebellum(),
+          assessTurnRecovery: vi.fn(async (request: TurnRecoveryRequest) => {
+            recoveryRequests.push(request);
+            return {
+              action: 'retry',
+              operatorMessage: '[Cerebellum] Retry from the last verified state.',
+              modelMessage:
+                '[Cerebellum recovery guidance]\nContinue from the verified profile state.\nEnd your final answer by calling task_complete or task_blocked.',
+              diagnosis: 'Resume from the latest verified boundary.',
+              nextStep: 'Continue after the verified profile step.',
+              completedSteps: request.recentBoundaries.map((boundary) => boundary.summary),
+            };
+          }),
+        });
+
+        let attempts = 0;
+        const cerebrum: CerebrumAdapter = {
+          stream: vi.fn(async (_messages, _tools, callbacks) => {
+            attempts++;
+            if (attempts === 1) {
+              await callbacks.onToolCall({
+                id: 'tool-1',
+                name: 'browserNavigateProfile',
+                args: {},
+              });
+              callbacks.onFinish(
+                '',
+                [{ id: 'tool-1', name: 'browserNavigateProfile', args: {} }],
+                makeFinishMeta({
+                  finishReason: 'tool-calls',
+                  rawFinishReason: 'tool_calls',
+                  stepFinishReasons: ['tool-calls'],
+                  toolCallCount: 1,
+                  hadToolActivity: true,
+                  textChars: 0,
+                  lastContentKind: 'tool-call',
+                  endedWithToolCall: true,
+                  hadFinalText: false,
+                }),
+              );
+              return;
+            }
+
+            await callbacks.onToolCall({
+              id: 'sig-1',
+              name: 'task_complete',
+              args: { summary: 'done', evidence: 'Observed the profile state.' },
+            });
+            callbacks.onFinish(
+              'Completed from the verified profile state.',
+              [
+                {
+                  id: 'sig-1',
+                  name: 'task_complete',
+                  args: { summary: 'done', evidence: 'Observed the profile state.' },
+                },
+              ],
+              makeFinishMeta({
+                finishReason: 'stop',
+                rawFinishReason: 'stop',
+                stepFinishReasons: ['stop'],
+                textChars: 'Completed from the verified profile state.'.length,
+              }),
+            );
+          }),
+          summarize: vi.fn(async () => 'summary'),
+        };
+
+        localOrch.setCerebrum(cerebrum);
+        const conversationId = localOrch.startConversation();
+        await localOrch.sendMessage('continue the X task');
+
+        expect(recoveryRequests).toHaveLength(1);
+        expect(recoveryRequests[0]).toMatchObject({
+          turnOutcome: 'ended_on_tool_calls',
+          lastContentKind: 'tool-call',
+        });
+        expect(recoveryRequests[0]?.latestBoundary?.summary).toContain(
+          'Opened the CereWorkerX profile on X.',
+        );
+        expect(recoveryRequests[0]?.browserState.currentUrl).toBe('https://x.com/CereWorkerX');
+
+        const journal = localOrch
+          .getConversationStore()
+          .getTurnJournal(conversationId, recoveryRequests[0]!.turnId);
+        expect(journal.some((entry) => entry.type === 'turn_started')).toBe(true);
+        expect(
+          journal.some(
+            (entry) =>
+              entry.type === 'tool_end' &&
+              entry.summary.includes('Opened the CereWorkerX profile on X.'),
+          ),
+        ).toBe(true);
+        expect(
+          journal.some(
+            (entry) =>
+              entry.type === 'boundary' &&
+              entry.summary.includes('Opened the CereWorkerX profile on X.'),
+          ),
+        ).toBe(true);
+        expect(journal.some((entry) => entry.type === 'recovery')).toBe(true);
+      } finally {
+        await localOrch.stop();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
     it('preserves long browser progress and checkpoints across completion retries', async () => {
       const localOrch = new Orchestrator({ maxNudgeRetries: 1 });
       try {
-        localOrch.registerTool('browserConnect', createStructuredTool('Connected to Chrome via extension', {
-          action: 'connect_browser',
-          summary: 'Connected to Chrome via extension.',
-          stateChanging: true,
-        }));
-        localOrch.registerTool('browserNavigateProfile', createStructuredTool('Navigated to https://x.com/CereWorkerX - Title: Profile / X', {
-          action: 'navigate',
-          summary: 'Opened the CereWorkerX profile on X.',
-          url: 'https://x.com/CereWorkerX',
-          stateChanging: true,
-        }));
-        localOrch.registerTool('browserGetProfileText', createStructuredTool('Reviewed recent profile posts.', {
-          action: 'read_page_text',
-          summary: 'Reviewed recent profile posts for continuity.',
-          url: 'https://x.com/CereWorkerX',
-          stateChanging: false,
-        }));
-        localOrch.registerTool('browserNavigateHome', createStructuredTool('Navigated to https://x.com/home - Title: Home / X', {
-          action: 'navigate',
-          summary: 'Returned to the X home timeline.',
-          url: 'https://x.com/home',
-          stateChanging: true,
-        }));
-        localOrch.registerTool('browserLikePost', createStructuredTool('clicked like', {
-          action: 'click_text',
-          summary: 'Liked the Science girl post on the home timeline.',
-          url: 'https://x.com/home',
-          targetText: 'Like',
-          stateChanging: true,
-        }));
+        localOrch.registerTool(
+          'browserConnect',
+          createStructuredTool('Connected to Chrome via extension', {
+            action: 'connect_browser',
+            summary: 'Connected to Chrome via extension.',
+            stateChanging: true,
+          }),
+        );
+        localOrch.registerTool(
+          'browserNavigateProfile',
+          createStructuredTool('Navigated to https://x.com/CereWorkerX - Title: Profile / X', {
+            action: 'navigate',
+            summary: 'Opened the CereWorkerX profile on X.',
+            url: 'https://x.com/CereWorkerX',
+            stateChanging: true,
+          }),
+        );
+        localOrch.registerTool(
+          'browserGetProfileText',
+          createStructuredTool('Reviewed recent profile posts.', {
+            action: 'read_page_text',
+            summary: 'Reviewed recent profile posts for continuity.',
+            url: 'https://x.com/CereWorkerX',
+            stateChanging: false,
+          }),
+        );
+        localOrch.registerTool(
+          'browserNavigateHome',
+          createStructuredTool('Navigated to https://x.com/home - Title: Home / X', {
+            action: 'navigate',
+            summary: 'Returned to the X home timeline.',
+            url: 'https://x.com/home',
+            stateChanging: true,
+          }),
+        );
+        localOrch.registerTool(
+          'browserLikePost',
+          createStructuredTool('clicked like', {
+            action: 'click_text',
+            summary: 'Liked the Science girl post on the home timeline.',
+            url: 'https://x.com/home',
+            targetText: 'Like',
+            stateChanging: true,
+          }),
+        );
 
         const attemptInputs: Message[][] = [];
         let attempts = 0;
@@ -655,11 +853,19 @@ describe('Orchestrator', () => {
 
             if (attempts === 1) {
               await callbacks.onToolCall({ id: 'tool-1', name: 'browserConnect', args: {} });
-              await callbacks.onToolCall({ id: 'tool-2', name: 'browserNavigateProfile', args: {} });
+              await callbacks.onToolCall({
+                id: 'tool-2',
+                name: 'browserNavigateProfile',
+                args: {},
+              });
               await callbacks.onToolCall({
                 id: 'cp-1',
                 name: 'task_checkpoint',
-                args: { step: 'session verified', status: 'done', evidence: 'Connected to Chrome and opened the CereWorkerX profile.' },
+                args: {
+                  step: 'session verified',
+                  status: 'done',
+                  evidence: 'Connected to Chrome and opened the CereWorkerX profile.',
+                },
               });
               await callbacks.onToolCall({ id: 'tool-3', name: 'browserGetProfileText', args: {} });
               await callbacks.onToolCall({ id: 'tool-4', name: 'browserNavigateHome', args: {} });
@@ -667,18 +873,38 @@ describe('Orchestrator', () => {
               await callbacks.onToolCall({
                 id: 'cp-2',
                 name: 'task_checkpoint',
-                args: { step: 'engagement pass', status: 'done', evidence: 'Liked one Science girl post on the home timeline.' },
+                args: {
+                  step: 'engagement pass',
+                  status: 'done',
+                  evidence: 'Liked one Science girl post on the home timeline.',
+                },
               });
               callbacks.onFinish(
                 '',
                 [
                   { id: 'tool-1', name: 'browserConnect', args: {} },
                   { id: 'tool-2', name: 'browserNavigateProfile', args: {} },
-                  { id: 'cp-1', name: 'task_checkpoint', args: { step: 'session verified', status: 'done', evidence: 'Connected to Chrome and opened the CereWorkerX profile.' } },
+                  {
+                    id: 'cp-1',
+                    name: 'task_checkpoint',
+                    args: {
+                      step: 'session verified',
+                      status: 'done',
+                      evidence: 'Connected to Chrome and opened the CereWorkerX profile.',
+                    },
+                  },
                   { id: 'tool-3', name: 'browserGetProfileText', args: {} },
                   { id: 'tool-4', name: 'browserNavigateHome', args: {} },
                   { id: 'tool-5', name: 'browserLikePost', args: {} },
-                  { id: 'cp-2', name: 'task_checkpoint', args: { step: 'engagement pass', status: 'done', evidence: 'Liked one Science girl post on the home timeline.' } },
+                  {
+                    id: 'cp-2',
+                    name: 'task_checkpoint',
+                    args: {
+                      step: 'engagement pass',
+                      status: 'done',
+                      evidence: 'Liked one Science girl post on the home timeline.',
+                    },
+                  },
                 ],
                 makeFinishMeta({
                   finishReason: 'tool-calls',
@@ -697,12 +923,23 @@ describe('Orchestrator', () => {
               name: 'task_complete',
               args: {
                 summary: 'Finished the daily X run.',
-                evidence: 'The session was verified, profile continuity was checked, and one like was already confirmed in the retry ledger.',
+                evidence:
+                  'The session was verified, profile continuity was checked, and one like was already confirmed in the retry ledger.',
               },
             });
             callbacks.onFinish(
               'Completed from preserved progress.',
-              [{ id: 'sig-1', name: 'task_complete', args: { summary: 'Finished the daily X run.', evidence: 'The session was verified, profile continuity was checked, and one like was already confirmed in the retry ledger.' } }],
+              [
+                {
+                  id: 'sig-1',
+                  name: 'task_complete',
+                  args: {
+                    summary: 'Finished the daily X run.',
+                    evidence:
+                      'The session was verified, profile continuity was checked, and one like was already confirmed in the retry ledger.',
+                  },
+                },
+              ],
               makeFinishMeta({
                 finishReason: 'stop',
                 rawFinishReason: 'stop',
@@ -723,12 +960,15 @@ describe('Orchestrator', () => {
         expect(attempts).toBe(2);
         const retryMessages = attemptInputs[1] ?? [];
         const resumeMessage = retryMessages.find(
-          (message) => message.role === 'system' && message.metadata?.source === 'completion-resume',
+          (message) =>
+            message.role === 'system' && message.metadata?.source === 'completion-resume',
         );
         expect(resumeMessage?.content).toContain('session verified');
         expect(resumeMessage?.content).toContain('engagement pass');
         expect(resumeMessage?.content).toContain('Opened the CereWorkerX profile on X.');
-        expect(resumeMessage?.content).toContain('Liked the Science girl post on the home timeline.');
+        expect(resumeMessage?.content).toContain(
+          'Liked the Science girl post on the home timeline.',
+        );
         expect(resumeMessage?.content).toContain('Current URL: https://x.com/home');
         expect(retryMessages.filter((message) => message.role === 'tool')).toHaveLength(0);
         expect(localOrch.getMessages().map((message) => [message.role, message.content])).toEqual([
@@ -872,7 +1112,9 @@ describe('Orchestrator', () => {
     it('triggerFineTune throws when startFineTune fails', async () => {
       const cerebellum = createMockCerebellum();
       (cerebellum.startFineTune as ReturnType<typeof vi.fn>).mockResolvedValue({
-        jobId: '', started: false, error: 'GPU busy',
+        jobId: '',
+        started: false,
+        error: 'GPU busy',
       });
       orch.setCerebellum(cerebellum);
 

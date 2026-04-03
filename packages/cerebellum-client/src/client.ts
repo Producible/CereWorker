@@ -75,6 +75,31 @@ export interface RecoveryTaskCheckpoint {
   summary: string;
 }
 
+export interface RecoveryBoundary {
+  id: string;
+  kind: 'tool' | 'checkpoint' | 'completion' | 'stall' | 'recovery';
+  action: string;
+  summary: string;
+  createdAt: number;
+  stateChanging: boolean;
+  browserState?: RecoveryBrowserState;
+  url?: string;
+  tabId?: string;
+  evidence?: string;
+  checkpointStatus?: 'done' | 'in_progress';
+}
+
+export type TurnOutcome =
+  | 'completed'
+  | 'completed_no_text'
+  | 'ended_on_tool_calls'
+  | 'completion_signal_missing'
+  | 'aborted'
+  | 'stalled'
+  | 'protocol_error';
+
+export type StreamContentKind = 'text' | 'tool-call' | 'empty' | 'other' | 'error';
+
 export interface TurnRecoveryRequest {
   conversationId: string;
   turnId: string;
@@ -86,12 +111,17 @@ export interface TurnRecoveryRequest {
   stallRetryCount: number;
   completionRetryCount: number;
   finishReason?: string;
+  turnOutcome: TurnOutcome;
+  lastContentKind: StreamContentKind;
   elapsedSeconds?: number;
   partialContent?: string;
   latestUserMessage?: string;
   browserState: RecoveryBrowserState;
   progressEntries: RecoveryProgressEntry[];
   taskCheckpoints: RecoveryTaskCheckpoint[];
+  latestBoundary?: RecoveryBoundary;
+  recentBoundaries: RecoveryBoundary[];
+  repetitionSignals: string[];
 }
 
 export interface TurnRecoveryAssessment {
@@ -185,7 +215,9 @@ export class CerebellumClient {
     }
     if (!existsSync(protoPath)) {
       this.connected = false;
-      throw new Error(`Proto file not found at ${protoPath}. Reinstall @cereworker/cerebellum-client.`);
+      throw new Error(
+        `Proto file not found at ${protoPath}. Reinstall @cereworker/cerebellum-client.`,
+      );
     }
 
     const packageDefinition = protoLoader.loadSync(protoPath, {
@@ -200,10 +232,7 @@ export class CerebellumClient {
     const proto = grpc.loadPackageDefinition(packageDefinition) as any;
     const CerebellumService = proto.cereworker.cerebellum.Cerebellum;
 
-    this.client = new CerebellumService(
-      this.address,
-      grpc.credentials.createInsecure(),
-    );
+    this.client = new CerebellumService(this.address, grpc.credentials.createInsecure());
 
     // Test connection with a deadline
     try {
@@ -385,6 +414,8 @@ export class CerebellumClient {
           stallRetryCount: request.stallRetryCount,
           completionRetryCount: request.completionRetryCount,
           finishReason: request.finishReason ?? '',
+          turnOutcome: request.turnOutcome,
+          lastContentKind: request.lastContentKind,
           elapsedSeconds: request.elapsedSeconds ?? 0,
           partialContent: request.partialContent ?? '',
           latestUserMessage: request.latestUserMessage ?? '',
@@ -415,6 +446,59 @@ export class CerebellumClient {
             evidence: checkpoint.evidence,
             summary: checkpoint.summary,
           })),
+          latestBoundary: request.latestBoundary
+            ? {
+                id: request.latestBoundary.id,
+                kind: request.latestBoundary.kind,
+                action: request.latestBoundary.action,
+                summary: request.latestBoundary.summary,
+                createdAt: request.latestBoundary.createdAt,
+                stateChanging: request.latestBoundary.stateChanging,
+                browserState: request.latestBoundary.browserState
+                  ? {
+                      currentUrl: request.latestBoundary.browserState.currentUrl ?? '',
+                      activeTabId: request.latestBoundary.browserState.activeTabId ?? '',
+                      tabs: (request.latestBoundary.browserState.tabs ?? []).map(
+                        (tab: RecoveryBrowserTab) => ({
+                          id: tab.id,
+                          title: tab.title ?? '',
+                          url: tab.url,
+                          active: tab.active,
+                        }),
+                      ),
+                    }
+                  : undefined,
+                url: request.latestBoundary.url ?? '',
+                tabId: request.latestBoundary.tabId ?? '',
+                evidence: request.latestBoundary.evidence ?? '',
+                checkpointStatus: request.latestBoundary.checkpointStatus ?? '',
+              }
+            : undefined,
+          recentBoundaries: request.recentBoundaries.map((boundary: RecoveryBoundary) => ({
+            id: boundary.id,
+            kind: boundary.kind,
+            action: boundary.action,
+            summary: boundary.summary,
+            createdAt: boundary.createdAt,
+            stateChanging: boundary.stateChanging,
+            browserState: boundary.browserState
+              ? {
+                  currentUrl: boundary.browserState.currentUrl ?? '',
+                  activeTabId: boundary.browserState.activeTabId ?? '',
+                  tabs: (boundary.browserState.tabs ?? []).map((tab: RecoveryBrowserTab) => ({
+                    id: tab.id,
+                    title: tab.title ?? '',
+                    url: tab.url,
+                    active: tab.active,
+                  })),
+                }
+              : undefined,
+            url: boundary.url ?? '',
+            tabId: boundary.tabId ?? '',
+            evidence: boundary.evidence ?? '',
+            checkpointStatus: boundary.checkpointStatus ?? '',
+          })),
+          repetitionSignals: request.repetitionSignals,
         },
         { deadline },
         (err: Error | null, response: GrpcClient) => {

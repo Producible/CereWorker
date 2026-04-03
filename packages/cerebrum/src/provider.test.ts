@@ -4,9 +4,11 @@ const streamTextMock = vi.hoisted(() => vi.fn());
 const generateTextMock = vi.hoisted(() => vi.fn());
 const toolMock = vi.hoisted(() => vi.fn());
 const stepCountIsMock = vi.hoisted(() => vi.fn());
-const jsonSchemaMock = vi.hoisted(() => vi.fn((schema: unknown) => ({
-  jsonSchema: typeof schema === 'function' ? (schema as () => unknown)() : schema,
-})));
+const jsonSchemaMock = vi.hoisted(() =>
+  vi.fn((schema: unknown) => ({
+    jsonSchema: typeof schema === 'function' ? (schema as () => unknown)() : schema,
+  })),
+);
 const createOpenAIMock = vi.hoisted(() => vi.fn());
 const openAIChatMock = vi.hoisted(() => vi.fn());
 const createAnthropicMock = vi.hoisted(() => vi.fn());
@@ -107,24 +109,27 @@ describe('CerebrumProvider OpenAI Codex OAuth', () => {
       temperature: 0.7,
     });
 
-    await (provider as unknown as { getModel: (provider: string, model: string) => Promise<unknown> })
-      .getModel('openai-codex', 'gpt-5.4');
+    await (
+      provider as unknown as { getModel: (provider: string, model: string) => Promise<unknown> }
+    ).getModel('openai-codex', 'gpt-5.4');
 
     expect(tokenStoreLoadMock).toHaveBeenCalledWith('openai-codex');
     expect(tokenStoreSaveMock).toHaveBeenCalledWith(
       'openai-codex',
       expect.objectContaining({ accountId: 'acct_123' }),
     );
-    expect(createOpenAIMock).toHaveBeenCalledWith(expect.objectContaining({
-      apiKey: 'access-123',
-      baseURL: 'https://chatgpt.com/backend-api/codex',
-      headers: expect.objectContaining({
-        'chatgpt-account-id': 'acct_123',
-        'OpenAI-Beta': 'responses=experimental',
-        originator: 'cereworker',
-        'User-Agent': 'cereworker',
+    expect(createOpenAIMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKey: 'access-123',
+        baseURL: 'https://chatgpt.com/backend-api/codex',
+        headers: expect.objectContaining({
+          'chatgpt-account-id': 'acct_123',
+          'OpenAI-Beta': 'responses=experimental',
+          originator: 'cereworker',
+          'User-Agent': 'cereworker',
+        }),
       }),
-    }));
+    );
     expect(responsesMock).toHaveBeenCalledWith('gpt-5.4');
   });
 
@@ -141,13 +146,16 @@ describe('CerebrumProvider OpenAI Codex OAuth', () => {
       temperature: 0.7,
     });
 
-    await (provider as unknown as { getModel: (provider: string, model: string) => Promise<unknown> })
-      .getModel('openai', 'gpt-5.4');
+    await (
+      provider as unknown as { getModel: (provider: string, model: string) => Promise<unknown> }
+    ).getModel('openai', 'gpt-5.4');
 
     expect(tokenStoreLoadMock).toHaveBeenCalledWith('openai-codex');
-    expect(createOpenAIMock).toHaveBeenCalledWith(expect.objectContaining({
-      baseURL: 'https://chatgpt.com/backend-api/codex',
-    }));
+    expect(createOpenAIMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseURL: 'https://chatgpt.com/backend-api/codex',
+      }),
+    );
   });
 
   it('fails with a clear error when account metadata is missing', async () => {
@@ -174,8 +182,9 @@ describe('CerebrumProvider OpenAI Codex OAuth', () => {
     });
 
     await expect(
-      (provider as unknown as { getModel: (provider: string, model: string) => Promise<unknown> })
-        .getModel('openai-codex', 'gpt-5.2-codex'),
+      (
+        provider as unknown as { getModel: (provider: string, model: string) => Promise<unknown> }
+      ).getModel('openai-codex', 'gpt-5.2-codex'),
     ).rejects.toThrow('missing account metadata');
   });
 
@@ -379,9 +388,7 @@ describe('CerebrumProvider OpenAI Codex OAuth', () => {
     });
 
     await provider.stream(
-      [
-        { id: 'user-1', role: 'user', content: 'Hi there', timestamp: 1 },
-      ],
+      [{ id: 'user-1', role: 'user', content: 'Hi there', timestamp: 1 }],
       {
         analyze: {
           description: 'Analyze a payload',
@@ -439,10 +446,12 @@ describe('CerebrumProvider OpenAI Codex OAuth', () => {
         },
       },
     });
-    expect(createOpenAIMock).toHaveBeenCalledWith(expect.objectContaining({
-      apiKey: 'google-test-key',
-      baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai',
-    }));
+    expect(createOpenAIMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKey: 'google-test-key',
+        baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai',
+      }),
+    );
     expect(openAIChatMock).toHaveBeenCalledWith('gemini-2.0-flash');
   });
 
@@ -460,13 +469,16 @@ describe('CerebrumProvider OpenAI Codex OAuth', () => {
       temperature: 0.7,
     });
 
-    await (provider as unknown as { getModel: (provider: string, model: string) => Promise<unknown> })
-      .getModel('google', 'gemini-2.5-pro');
+    await (
+      provider as unknown as { getModel: (provider: string, model: string) => Promise<unknown> }
+    ).getModel('google', 'gemini-2.5-pro');
 
-    expect(createOpenAIMock).toHaveBeenCalledWith(expect.objectContaining({
-      apiKey: 'google-test-key',
-      baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai',
-    }));
+    expect(createOpenAIMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKey: 'google-test-key',
+        baseURL: 'https://generativelanguage.googleapis.com/v1beta/openai',
+      }),
+    );
     expect(openAIChatMock).toHaveBeenCalledWith('gemini-2.5-pro');
   });
 
@@ -588,9 +600,7 @@ describe('CerebrumProvider OpenAI Codex OAuth', () => {
     });
 
     await provider.stream(
-      [
-        { id: 'user-1', role: 'user', content: 'Hi there', timestamp: 1 },
-      ],
+      [{ id: 'user-1', role: 'user', content: 'Hi there', timestamp: 1 }],
       {
         spawn_agent: {
           description: 'Spawn an agent',
@@ -638,14 +648,16 @@ describe('CerebrumProvider OpenAI Codex OAuth', () => {
 
     await provider.generate('Say hello');
 
-    expect(generateTextMock).toHaveBeenCalledWith(expect.objectContaining({
-      providerOptions: {
-        openai: {
-          instructions: 'You are the Cerebrum of CereWorker, a dual-LLM autonomous agent.',
-          store: false,
+    expect(generateTextMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerOptions: {
+          openai: {
+            instructions: 'You are the Cerebrum of CereWorker, a dual-LLM autonomous agent.',
+            store: false,
+          },
         },
-      },
-    }));
+      }),
+    );
     expect(generateTextMock.mock.calls[0][0]).not.toHaveProperty('temperature');
   });
 
@@ -677,10 +689,12 @@ describe('CerebrumProvider OpenAI Codex OAuth', () => {
     );
 
     expect(streamTextMock).toHaveBeenCalledTimes(1);
-    expect(streamTextMock.mock.calls[0][0]).toEqual(expect.objectContaining({
-      system: 'Use normal Gemini.',
-      temperature: 0.7,
-    }));
+    expect(streamTextMock.mock.calls[0][0]).toEqual(
+      expect.objectContaining({
+        system: 'Use normal Gemini.',
+        temperature: 0.7,
+      }),
+    );
   });
 
   it('uses OpenAI chat transport for OpenRouter models', async () => {
@@ -696,13 +710,16 @@ describe('CerebrumProvider OpenAI Codex OAuth', () => {
       temperature: 0.7,
     });
 
-    await (provider as unknown as { getModel: (provider: string, model: string) => Promise<unknown> })
-      .getModel('openrouter', 'auto');
+    await (
+      provider as unknown as { getModel: (provider: string, model: string) => Promise<unknown> }
+    ).getModel('openrouter', 'auto');
 
-    expect(createOpenAIMock).toHaveBeenCalledWith(expect.objectContaining({
-      apiKey: 'openrouter-test-key',
-      baseURL: 'https://openrouter.ai/api/v1',
-    }));
+    expect(createOpenAIMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        apiKey: 'openrouter-test-key',
+        baseURL: 'https://openrouter.ai/api/v1',
+      }),
+    );
     expect(openAIChatMock).toHaveBeenCalledWith('auto');
   });
 
@@ -722,13 +739,16 @@ describe('CerebrumProvider OpenAI Codex OAuth', () => {
       temperature: 0.7,
     });
 
-    await (provider as unknown as { getModel: (provider: string, model: string) => Promise<unknown> })
-      .getModel('minimax', 'MiniMax-M2.7');
+    await (
+      provider as unknown as { getModel: (provider: string, model: string) => Promise<unknown> }
+    ).getModel('minimax', 'MiniMax-M2.7');
 
-    expect(createAnthropicMock).toHaveBeenCalledWith(expect.objectContaining({
-      authToken: 'minimax-test-token',
-      baseURL: 'https://api.minimax.io/anthropic',
-    }));
+    expect(createAnthropicMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authToken: 'minimax-test-token',
+        baseURL: 'https://api.minimax.io/anthropic',
+      }),
+    );
     expect(anthropicModelMock).toHaveBeenCalledWith('MiniMax-M2.7');
   });
 
@@ -753,9 +773,7 @@ describe('CerebrumProvider OpenAI Codex OAuth', () => {
           role: 'cerebrum',
           content: 'Working on it',
           timestamp: 2,
-          toolCalls: [
-            { id: 'call_abc|item:456', name: 'spawn_agent', args: { task: 'delegate' } },
-          ],
+          toolCalls: [{ id: 'call_abc|item:456', name: 'spawn_agent', args: { task: 'delegate' } }],
         },
         {
           id: 'tool-1',
@@ -822,9 +840,7 @@ describe('CerebrumProvider OpenAI Codex OAuth', () => {
     });
 
     await provider.stream(
-      [
-        { id: 'user-1', role: 'user', content: 'Hi there', timestamp: 1 },
-      ],
+      [{ id: 'user-1', role: 'user', content: 'Hi there', timestamp: 1 }],
       {
         search: {
           description: 'Search the web',
@@ -859,7 +875,10 @@ describe('CerebrumProvider OpenAI Codex OAuth', () => {
     );
 
     const request = streamTextMock.mock.calls[0][0] as {
-      tools: Record<string, { execute: (args: Record<string, unknown>, ctx: { toolCallId: string }) => Promise<string> }>;
+      tools: Record<
+        string,
+        { execute: (args: Record<string, unknown>, ctx: { toolCallId: string }) => Promise<string> }
+      >;
     };
     await request.tools.search.execute(
       { query: 'Tom &amp; Jerry &quot;test&quot;' },
@@ -890,8 +909,9 @@ describe('CerebrumProvider OpenAI Codex OAuth', () => {
         temperature: 0.7,
       });
 
-      await (provider as unknown as { getModel: (provider: string, model: string) => Promise<unknown> })
-        .getModel('xai', 'grok-4');
+      await (
+        provider as unknown as { getModel: (provider: string, model: string) => Promise<unknown> }
+      ).getModel('xai', 'grok-4');
 
       const options = createOpenAIMock.mock.calls[0][0] as { fetch?: typeof fetch };
       expect(options.fetch).toBeTypeOf('function');
@@ -953,7 +973,12 @@ describe('CerebrumProvider abortSignal', () => {
     await provider.stream(
       [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }],
       {},
-      { onChunk: () => {}, onToolCall: async () => ({ callId: '', output: '', isError: false }), onFinish: () => {}, onError: () => {} },
+      {
+        onChunk: () => {},
+        onToolCall: async () => ({ callId: '', output: '', isError: false }),
+        onFinish: () => {},
+        onError: () => {},
+      },
       { abortSignal: ac.signal },
     );
 
@@ -974,7 +999,12 @@ describe('CerebrumProvider abortSignal', () => {
     await provider.stream(
       [{ id: '1', role: 'user', content: 'hi', timestamp: 0 }],
       {},
-      { onChunk: () => {}, onToolCall: async () => ({ callId: '', output: '', isError: false }), onFinish: () => {}, onError: () => {} },
+      {
+        onChunk: () => {},
+        onToolCall: async () => ({ callId: '', output: '', isError: false }),
+        onFinish: () => {},
+        onError: () => {},
+      },
     );
 
     const args = streamTextMock.mock.calls[0][0] as { abortSignal?: AbortSignal };
@@ -1022,37 +1052,46 @@ describe('CerebrumProvider abortSignal', () => {
       },
     );
 
-    expect(onFinish).toHaveBeenCalledWith(
-      'done',
-      [{ id: 'tool-1', name: 'workTool', args: {} }],
-      {
-        finishReason: 'stop',
-        rawFinishReason: 'stop',
-        stepFinishReasons: ['tool-calls'],
-        chunkCount: 4,
-        textChars: 4,
-        toolCallCount: 1,
-        hadToolActivity: true,
-        stepCount: 1,
-      },
-    );
+    expect(onFinish).toHaveBeenCalledWith('done', [{ id: 'tool-1', name: 'workTool', args: {} }], {
+      finishReason: 'stop',
+      rawFinishReason: 'stop',
+      stepFinishReasons: ['tool-calls'],
+      chunkCount: 4,
+      textChars: 4,
+      toolCallCount: 1,
+      hadToolActivity: true,
+      stepCount: 1,
+      lastContentKind: 'text',
+      endedWithToolCall: false,
+      hadFinalText: true,
+    });
   });
 
   it('breaks out when a streamed tool call hangs and the abort signal fires', async () => {
-    streamTextMock.mockImplementationOnce((request: {
-      tools: Record<string, { execute: (args: Record<string, unknown>, context: { toolCallId: string }) => Promise<string> }>;
-    }) => ({
-      fullStream: (async function* () {
-        yield {
-          type: 'tool-call',
-          toolCallId: 'tool-1',
-          toolName: 'hangTool',
-          input: {},
-        };
-        await request.tools.hangTool.execute({}, { toolCallId: 'tool-1' });
-        yield { type: 'text-delta', text: 'done' };
-      })(),
-    }));
+    streamTextMock.mockImplementationOnce(
+      (request: {
+        tools: Record<
+          string,
+          {
+            execute: (
+              args: Record<string, unknown>,
+              context: { toolCallId: string },
+            ) => Promise<string>;
+          }
+        >;
+      }) => ({
+        fullStream: (async function* () {
+          yield {
+            type: 'tool-call',
+            toolCallId: 'tool-1',
+            toolName: 'hangTool',
+            input: {},
+          };
+          await request.tools.hangTool.execute({}, { toolCallId: 'tool-1' });
+          yield { type: 'text-delta', text: 'done' };
+        })(),
+      }),
+    );
 
     const provider = new CerebrumProvider({
       defaultProvider: 'openai',

@@ -183,6 +183,11 @@ class CerebellumServicer(cerebellum_pb2_grpc.CerebellumServicer):
         completed = []
         seen = set()
 
+        for boundary in request.recent_boundaries:
+            if boundary.kind in ("tool", "checkpoint", "completion") and boundary.summary and boundary.summary not in seen:
+                completed.append(boundary.summary)
+                seen.add(boundary.summary)
+
         for checkpoint in request.task_checkpoints:
             if checkpoint.status == "done" and checkpoint.summary and checkpoint.summary not in seen:
                 completed.append(checkpoint.summary)
@@ -196,16 +201,31 @@ class CerebellumServicer(cerebellum_pb2_grpc.CerebellumServicer):
         return completed[-10:]
 
     def _looks_repetitive(self, request):
+        if list(request.repetition_signals):
+            return True
+
         recent_actions = [entry.action for entry in request.progress_entries if entry.source == "tool"][-6:]
         recent_summaries = [entry.summary for entry in request.progress_entries if entry.source == "tool"][-6:]
         if len(recent_actions) >= 4 and len(set(recent_actions)) <= 2:
             return True
         if len(recent_summaries) >= 4 and len(set(recent_summaries)) <= 2:
             return True
+        boundary_summaries = [boundary.summary for boundary in request.recent_boundaries if boundary.kind == "tool"][-6:]
+        if len(boundary_summaries) >= 4 and len(set(boundary_summaries)) <= 2:
+            return True
         return False
 
     def _derive_next_step(self, request, completed_steps):
+        latest_boundary = getattr(request, "latest_boundary", None)
+        latest_boundary_summary = getattr(latest_boundary, "summary", "").strip() if latest_boundary else ""
+        latest_boundary_kind = getattr(latest_boundary, "kind", "").strip() if latest_boundary else ""
         current_url = request.browser_state.current_url
+        if latest_boundary_kind == "completion" and latest_boundary_summary:
+            return "Use the recorded completion state to write the final answer or stop only if the current page contradicts the verified result."
+        if latest_boundary_kind == "checkpoint" and latest_boundary_summary:
+            return f"Continue after this verified checkpoint: {latest_boundary_summary}"
+        if latest_boundary_kind == "tool" and latest_boundary_summary:
+            return f"Continue after this verified browser action: {latest_boundary_summary}"
         if current_url and "x.com/home" in current_url:
             return "Stay on the current home timeline and continue from the next unfinished engagement or publishing step without reopening already verified pages."
         if current_url and "x.com/" in current_url and current_url.rstrip("/").split("/")[-1]:
@@ -221,11 +241,30 @@ class CerebellumServicer(cerebellum_pb2_grpc.CerebellumServicer):
             "The failed attempt tool history has been removed. Treat the verified state below as authoritative.",
         ]
 
+        if getattr(request, "turn_outcome", ""):
+            lines.append(f"Turn outcome: {request.turn_outcome}")
+        if getattr(request, "finish_reason", ""):
+            lines.append(f"Finish reason: {request.finish_reason}")
+        if getattr(request, "last_content_kind", ""):
+            lines.append(f"Last content kind: {request.last_content_kind}")
+
         if completed_steps:
             lines.append("")
             lines.append("Completed steps:")
             for step in completed_steps:
                 lines.append(f"- {step}")
+
+        latest_boundary = getattr(request, "latest_boundary", None)
+        latest_boundary_summary = getattr(latest_boundary, "summary", "").strip() if latest_boundary else ""
+        if latest_boundary_summary:
+            lines.append("")
+            lines.append(f"Latest verified boundary: {latest_boundary_summary}")
+
+        if list(request.repetition_signals):
+            lines.append("")
+            lines.append("Repetition warnings:")
+            for signal in list(request.repetition_signals)[:5]:
+                lines.append(f"- {signal}")
 
         if request.browser_state.current_url or request.browser_state.active_tab_id or request.browser_state.tabs:
             lines.append("")
@@ -274,13 +313,19 @@ class CerebellumServicer(cerebellum_pb2_grpc.CerebellumServicer):
                 action = "retry"
                 diagnosis = f"The stalled turn should be retried from the last verified state instead of continuing to wait in {phase}."
         else:
-            if repetitive and request.completion_retry_count >= 1:
+            if request.turn_outcome == "completion_signal_missing" and request.completion_retry_count >= 1 and repetitive:
+                action = "stop"
+                diagnosis = "The turn keeps repeating verified browser work without producing the required completion signal."
+            elif repetitive and request.completion_retry_count >= 1:
                 action = "stop"
                 diagnosis = "The turn is repeating the same verified browser steps without producing a final answer."
             else:
                 action = "retry"
                 finish_reason = request.finish_reason or "tool-calls"
-                diagnosis = f"The turn ended with {finish_reason} and no valid final answer, so it should resume from the verified state instead of restarting."
+                diagnosis = (
+                    f"The turn ended with outcome {request.turn_outcome or 'unknown'}"
+                    f" ({finish_reason}) and no valid final answer, so it should resume from the verified state instead of restarting."
+                )
 
         next_step = self._derive_next_step(request, completed_steps)
         if action == "wait":

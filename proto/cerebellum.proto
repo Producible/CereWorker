@@ -155,6 +155,20 @@ message RecoveryTaskCheckpoint {
   string summary = 4;
 }
 
+message RecoveryBoundary {
+  string id = 1;
+  string kind = 2;
+  string action = 3;
+  string summary = 4;
+  int64 created_at = 5;
+  bool state_changing = 6;
+  RecoveryBrowserState browser_state = 7;
+  string url = 8;
+  string tab_id = 9;
+  string evidence = 10;
+  string checkpoint_status = 11;
+}
+
 message AssessTurnRecoveryRequest {
   string conversation_id = 1;
   string turn_id = 2;
@@ -172,6 +186,11 @@ message AssessTurnRecoveryRequest {
   RecoveryBrowserState browser_state = 14;
   repeated RecoveryProgressEntry progress_entries = 15;
   repeated RecoveryTaskCheckpoint task_checkpoints = 16;
+  RecoveryBoundary latest_boundary = 17;
+  repeated RecoveryBoundary recent_boundaries = 18;
+  repeated string repetition_signals = 19;
+  string turn_outcome = 20;
+  string last_content_kind = 21;
 }
 
 message AssessTurnRecoveryResponse {

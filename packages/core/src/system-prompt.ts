@@ -22,16 +22,35 @@ export interface SystemPromptOptions {
 }
 
 const TOOL_CATEGORIES: Record<string, string[]> = {
-  'File & Code': ['shell', 'readFile', 'writeFile', 'editFile', 'listDirectory', 'searchFiles', 'glob'],
-  'Memory': ['memory_read', 'memory_write', 'memory_log', 'memory_search'],
-  'Network': ['httpFetch', 'webSearch'],
-  'Browser': [
-    'browserNavigate', 'browserGetText', 'browserScreenshot', 'browserClick',
-    'browserClickByText', 'browserType', 'browserEval', 'browserWait',
-    'browserGetUrl', 'browserListTabs', 'browserSwitchTab', 'browserNewTab',
-    'browserCloseTab', 'browserConnect', 'browserDisconnect',
+  'File & Code': [
+    'shell',
+    'readFile',
+    'writeFile',
+    'editFile',
+    'listDirectory',
+    'searchFiles',
+    'glob',
   ],
-  'Agents': ['spawn_agent', 'query_agents', 'cancel_agent'],
+  Memory: ['memory_read', 'memory_write', 'memory_log', 'memory_search'],
+  Network: ['httpFetch', 'webSearch'],
+  Browser: [
+    'browserNavigate',
+    'browserGetText',
+    'browserScreenshot',
+    'browserClick',
+    'browserClickByText',
+    'browserType',
+    'browserEval',
+    'browserWait',
+    'browserGetUrl',
+    'browserListTabs',
+    'browserSwitchTab',
+    'browserNewTab',
+    'browserCloseTab',
+    'browserConnect',
+    'browserDisconnect',
+  ],
+  Agents: ['spawn_agent', 'query_agents', 'cancel_agent'],
 };
 
 function groupTools(tools: Map<string, { description: string }>): string {
@@ -71,18 +90,25 @@ export function buildSystemPrompt(options: SystemPromptOptions): string {
   const sections: string[] = [];
 
   // Identity
-  const nameStr = (options.profile?.name && options.profile.name !== 'Cere')
-    ? `You are ${options.profile.name}, the Cerebrum of CereWorker, a dual-LLM autonomous agent.`
-    : 'You are the Cerebrum of CereWorker, a dual-LLM autonomous agent.';
+  const nameStr =
+    options.profile?.name && options.profile.name !== 'Cere'
+      ? `You are ${options.profile.name}, the Cerebrum of CereWorker, a dual-LLM autonomous agent.`
+      : 'You are the Cerebrum of CereWorker, a dual-LLM autonomous agent.';
   const instanceLines: string[] = [nameStr];
   if (options.instanceId) {
     const parts = [`Instance ${options.instanceId}`];
-    if (options.instanceCreatedAt) parts.push(`active since ${options.instanceCreatedAt.split('T')[0]}`);
-    if (options.finetuneCount) parts.push(`${options.finetuneCount} fine-tune cycle${options.finetuneCount === 1 ? '' : 's'} completed`);
+    if (options.instanceCreatedAt)
+      parts.push(`active since ${options.instanceCreatedAt.split('T')[0]}`);
+    if (options.finetuneCount)
+      parts.push(
+        `${options.finetuneCount} fine-tune cycle${options.finetuneCount === 1 ? '' : 's'} completed`,
+      );
     instanceLines.push(parts.join(', ') + '.');
   }
   instanceLines.push('Always address the user as "Boss" in conversation.');
-  instanceLines.push('Your conversations persist across sessions. If you see a [Previous conversation summary], it contains compacted history — treat it as accurate context.');
+  instanceLines.push(
+    'Your conversations persist across sessions. If you see a [Previous conversation summary], it contains compacted history — treat it as accurate context.',
+  );
   sections.push(instanceLines.join('\n'));
 
   // Discovery Mode — overrides normal behavior on first run
@@ -154,6 +180,7 @@ You are an autonomous agent. When given a goal, figure out how to accomplish it 
    - If the Cerebellum flags a warning on a tool result, investigate and self-correct.
   - If you used tools to execute a real task, do not end the turn until you call either \`task_complete\` or \`task_blocked\`.
   - For multi-step tool-driven tasks, call \`task_checkpoint\` after each major verified step and before switching to the next phase so retries can resume from the right place.
+  - If you are recovering from a retry, treat the verified checkpoints and recovery summary as authoritative and continue from the next unfinished step instead of repeating confirmed work.
   - Use \`task_complete\` only after you have verified the requested outcome and can cite concrete evidence.
   - Use \`task_blocked\` when you cannot finish the task and need to report a specific blocker with evidence.
 
@@ -177,7 +204,7 @@ You are an autonomous agent. When given a goal, figure out how to accomplish it 
 ### Key principles
 - **Skills first.** Always check installed skills and the registry before researching from scratch.
 - **Be resourceful.** If a direct approach fails, search for alternatives. Install CLI tools. Find public APIs. Write helper scripts.
-- **${options.autoMode ? "Act decisively." : "Ask when unsure."}** ${options.autoMode ? 'You are in auto mode — execute directly.' : 'Ask for approval on unfamiliar or destructive commands.'} Only ask the user when you genuinely need a decision.
+- **${options.autoMode ? 'Act decisively.' : 'Ask when unsure.'}** ${options.autoMode ? 'You are in auto mode — execute directly.' : 'Ask for approval on unfamiliar or destructive commands.'} Only ask the user when you genuinely need a decision.
 - **Credentials**: Check environment variables and config files first. If missing, tell the user what's needed and where to put them.`);
 
   // Architecture

@@ -45,6 +45,11 @@ describe('createBrowserTools', () => {
       url: 'https://x.com/home',
       stateChanging: false,
       tabs,
+      stateDelta: {
+        currentUrl: 'https://x.com/home',
+        activeTabId: '11',
+        tabs,
+      },
     });
   });
 
@@ -55,7 +60,9 @@ describe('createBrowserTools', () => {
 
     const tools = createBrowserTools(backend);
     const result = await tools.browserEval.execute({ code: 'return window.__items' });
-    const resume = result.metadata?.resume as { action?: string; stateChanging?: boolean; summary?: string } | undefined;
+    const resume = result.metadata?.resume as
+      | { action?: string; stateChanging?: boolean; summary?: string }
+      | undefined;
 
     expect(result.isError).toBe(false);
     expect(result.details).toMatchObject({
@@ -67,6 +74,12 @@ describe('createBrowserTools', () => {
     expect(resume).toMatchObject({
       action: 'evaluate',
       stateChanging: false,
+      stateDelta: {
+        parsedValue: [
+          { i: 0, text: 'hello' },
+          { i: 1, text: 'world' },
+        ],
+      },
     });
     expect(String(resume?.summary)).toContain('array(2)');
   });
@@ -78,7 +91,9 @@ describe('createBrowserTools', () => {
 
     const tools = createBrowserTools(backend);
     const result = await tools.browserClickByText.execute({ text: 'Like' });
-    const resume = result.metadata?.resume as { action?: string; targetText?: string; stateChanging?: boolean; summary?: string } | undefined;
+    const resume = result.metadata?.resume as
+      | { action?: string; targetText?: string; stateChanging?: boolean; summary?: string }
+      | undefined;
 
     expect(result.isError).toBe(true);
     expect(resume).toMatchObject({

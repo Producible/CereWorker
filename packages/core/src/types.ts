@@ -61,7 +61,14 @@ export interface VerificationResult {
   toolName: string;
 }
 
-export type StreamFinishReason = 'stop' | 'length' | 'content-filter' | 'tool-calls' | 'error' | 'other';
+export type StreamFinishReason =
+  | 'stop'
+  | 'length'
+  | 'content-filter'
+  | 'tool-calls'
+  | 'error'
+  | 'other';
+export type StreamContentKind = 'text' | 'tool-call' | 'empty' | 'other' | 'error';
 
 export interface StreamFinishMetadata {
   finishReason?: StreamFinishReason;
@@ -72,7 +79,12 @@ export interface StreamFinishMetadata {
   toolCallCount: number;
   hadToolActivity: boolean;
   stepCount: number;
+  lastContentKind: StreamContentKind;
+  endedWithToolCall: boolean;
+  hadFinalText: boolean;
 }
+
+export interface TurnProtocolState extends StreamFinishMetadata {}
 
 export interface BrowserTabSnapshot {
   id: string;
@@ -108,6 +120,52 @@ export interface ProgressEntry {
   checkpointStatus?: TaskCheckpointStatus;
 }
 
+export type TurnOutcome =
+  | 'completed'
+  | 'completed_no_text'
+  | 'ended_on_tool_calls'
+  | 'completion_signal_missing'
+  | 'aborted'
+  | 'stalled'
+  | 'protocol_error';
+
+export type TurnBoundaryKind = 'tool' | 'checkpoint' | 'completion' | 'stall' | 'recovery';
+
+export interface TurnBoundarySummary {
+  id: string;
+  kind: TurnBoundaryKind;
+  action: string;
+  summary: string;
+  createdAt: number;
+  stateChanging: boolean;
+  browserState?: BrowserStateSnapshot;
+  url?: string;
+  tabId?: string;
+  evidence?: string;
+  checkpointStatus?: TaskCheckpointStatus;
+}
+
+export type TurnJournalEntryType =
+  | 'turn_started'
+  | 'partial_text'
+  | 'tool_start'
+  | 'tool_end'
+  | 'checkpoint'
+  | 'boundary'
+  | 'completion_signal'
+  | 'recovery'
+  | 'turn_finished'
+  | 'turn_error';
+
+export interface TurnJournalEntry {
+  turnId: string;
+  attempt: number;
+  timestamp: number;
+  type: TurnJournalEntryType;
+  summary: string;
+  data?: Record<string, unknown>;
+}
+
 export type RecoveryCause = 'stall' | 'completion';
 export type RecoveryAction = 'wait' | 'retry' | 'stop';
 
@@ -122,12 +180,17 @@ export interface TurnRecoveryRequest {
   stallRetryCount: number;
   completionRetryCount: number;
   finishReason?: string;
+  turnOutcome: TurnOutcome;
+  lastContentKind: StreamContentKind;
   elapsedSeconds?: number;
   partialContent?: string;
   latestUserMessage?: string;
   browserState: BrowserStateSnapshot;
   progressEntries: ProgressEntry[];
   taskCheckpoints: TaskCheckpoint[];
+  latestBoundary?: TurnBoundarySummary;
+  recentBoundaries: TurnBoundarySummary[];
+  repetitionSignals: string[];
 }
 
 export interface TurnRecoveryAssessment {
@@ -140,7 +203,13 @@ export interface TurnRecoveryAssessment {
   waitSeconds?: number;
 }
 
-export type SubAgentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled' | 'timeout';
+export type SubAgentStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'timeout';
 export type SubAgentCleanup = 'delete' | 'keep';
 
 export interface SubAgentState {

@@ -143,8 +143,11 @@ describe('ConversationStore', () => {
           metadata TEXT
         );
       `);
-      db.prepare('INSERT INTO conversations (id, createdAt, updatedAt) VALUES (?, ?, ?)')
-        .run('conv-1', 1, 2);
+      db.prepare('INSERT INTO conversations (id, createdAt, updatedAt) VALUES (?, ?, ?)').run(
+        'conv-1',
+        1,
+        2,
+      );
       db.prepare(
         `INSERT INTO messages (id, conversationId, role, content, timestamp, toolCalls, toolResult, metadata)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -161,6 +164,40 @@ describe('ConversationStore', () => {
       expect(existsSync(join(dir, 'conversations', 'conv-1', 'messages.jsonl'))).toBe(true);
       expect(existsSync(`${dbPath}.bak`)).toBe(true);
       migrated.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('stores per-turn journal entries in plain JSONL files', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'conversation-journal-'));
+    try {
+      const fileStore = new ConversationStore(dir);
+      const conversation = fileStore.create();
+      fileStore.appendTurnJournalEntry(conversation.id, 'turn-1', {
+        turnId: 'turn-1',
+        attempt: 1,
+        timestamp: 123,
+        type: 'turn_started',
+        summary: 'Turn started.',
+      });
+      fileStore.appendTurnJournalEntry(conversation.id, 'turn-1', {
+        turnId: 'turn-1',
+        attempt: 1,
+        timestamp: 124,
+        type: 'boundary',
+        summary: 'Opened the X profile page.',
+        data: { url: 'https://x.com/CereWorkerX' },
+      });
+
+      expect(fileStore.getTurnJournal(conversation.id, 'turn-1')).toEqual([
+        expect.objectContaining({ type: 'turn_started', summary: 'Turn started.' }),
+        expect.objectContaining({ type: 'boundary', summary: 'Opened the X profile page.' }),
+      ]);
+      expect(existsSync(join(dir, 'conversations', conversation.id, 'turns', 'turn-1.jsonl'))).toBe(
+        true,
+      );
+      fileStore.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
