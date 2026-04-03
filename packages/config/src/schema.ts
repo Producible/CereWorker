@@ -100,6 +100,17 @@ export const configSchema = z.object({
     })
     .default({}),
 
+  conversations: z
+    .object({
+      turnJournals: z
+        .object({
+          maxDays: z.number().int().min(0).default(30),
+          maxFilesPerConversation: z.number().int().min(0).default(100),
+        })
+        .default({}),
+    })
+    .default({}),
+
   tools: z
     .object({
       shell: z

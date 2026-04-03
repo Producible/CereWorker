@@ -147,6 +147,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
     toolRuntime: config.tools.runtime,
     streamStallThreshold: config.cerebrum.streamStallThreshold,
     maxNudgeRetries: config.cerebrum.maxNudgeRetries,
+    turnJournalRetention: config.conversations.turnJournals,
   });
 
   const cerebrumConfig = {

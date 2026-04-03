@@ -26,6 +26,17 @@ interface ConversationMeta {
   updatedAt: number;
 }
 
+export interface TurnJournalRetentionPolicy {
+  maxDays: number;
+  maxFilesPerConversation: number;
+}
+
+interface TurnJournalFileInfo {
+  turnId: string;
+  path: string;
+  mtimeMs: number;
+}
+
 export class ConversationStore {
   private readonly inMemory: boolean;
   private readonly baseDir: string | null;
@@ -222,6 +233,62 @@ export class ConversationStore {
     return readJsonLines<TurnJournalEntry>(this.getTurnJournalPath(conversationId, turnId));
   }
 
+  pruneTurnJournals(
+    conversationId: string,
+    policy: TurnJournalRetentionPolicy,
+  ): { prunedByAge: number; prunedByCount: number; remaining: number } {
+    if (this.inMemory) {
+      return { prunedByAge: 0, prunedByCount: 0, remaining: 0 };
+    }
+
+    return withTextStoreLock(this.getConversationDir(conversationId), () => {
+      const meta = this.readConversationMeta(conversationId);
+      if (!meta) return { prunedByAge: 0, prunedByCount: 0, remaining: 0 };
+
+      const files = this.listTurnJournalFiles(conversationId);
+      if (files.length === 0) {
+        return { prunedByAge: 0, prunedByCount: 0, remaining: 0 };
+      }
+
+      let retained = [...files];
+      let prunedByAge = 0;
+      let prunedByCount = 0;
+
+      if (policy.maxDays > 0) {
+        const cutoff = Date.now() - policy.maxDays * 24 * 60 * 60 * 1000;
+        const expired = retained.filter((file) => file.mtimeMs < cutoff);
+        for (const file of expired) {
+          rmSync(file.path, { force: true });
+        }
+        prunedByAge = expired.length;
+        retained = retained.filter((file) => file.mtimeMs >= cutoff);
+      }
+
+      if (policy.maxFilesPerConversation > 0 && retained.length > policy.maxFilesPerConversation) {
+        const sorted = [...retained].sort(
+          (a, b) => b.mtimeMs - a.mtimeMs || a.turnId.localeCompare(b.turnId),
+        );
+        const keep = new Set(
+          sorted
+            .slice(0, policy.maxFilesPerConversation)
+            .map((file) => file.path),
+        );
+        const overflow = retained.filter((file) => !keep.has(file.path));
+        for (const file of overflow) {
+          rmSync(file.path, { force: true });
+        }
+        prunedByCount = overflow.length;
+        retained = retained.filter((file) => keep.has(file.path));
+      }
+
+      return {
+        prunedByAge,
+        prunedByCount,
+        remaining: retained.length,
+      };
+    });
+  }
+
   deleteMessages(conversationId: string, messageIds: string[]): number {
     if (messageIds.length === 0) return 0;
 
@@ -290,6 +357,21 @@ export class ConversationStore {
 
   private getTurnJournalPath(id: string, turnId: string): string {
     return join(this.getTurnsDir(id), `${turnId}.jsonl`);
+  }
+
+  private listTurnJournalFiles(id: string): TurnJournalFileInfo[] {
+    const turnsDir = this.getTurnsDir(id);
+    if (!existsSync(turnsDir)) return [];
+    return readdirSync(turnsDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.jsonl'))
+      .map((entry) => {
+        const path = join(turnsDir, entry.name);
+        return {
+          turnId: entry.name.slice(0, -'.jsonl'.length),
+          path,
+          mtimeMs: statSync(path).mtimeMs,
+        };
+      });
   }
 
   private readConversationMeta(id: string): ConversationMeta | undefined {

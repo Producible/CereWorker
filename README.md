@@ -125,7 +125,7 @@ The installer detects your OS, installs Node.js if missing, installs CereWorker 
 npm install -g @cereworker/cli
 ```
 
-CereWorker persists conversations, pairing state, plans, and fine-tune material as plain JSON/JSONL files under `~/.cereworker/`, so runs can be inspected and diffed by hand.
+CereWorker persists conversations, pairing state, plans, and fine-tune material as plain JSON/JSONL files under `~/.cereworker/`, so runs can be inspected and diffed by hand. Per-turn recovery journals are stored under `~/.cereworker/conversations/<conversationId>/turns/` and pruned automatically by age and count.
 
 ### Setup
 
@@ -768,6 +768,11 @@ hippocampus:
   directory: ~/.cereworker/memory
   maxDailyLogDays: 30
   autoLog: true
+
+conversations:
+  turnJournals:
+    maxDays: 30
+    maxFilesPerConversation: 100
 
 subAgents:
   enabled: true

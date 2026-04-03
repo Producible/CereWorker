@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createRequire } from 'node:module';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readdirSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ConversationStore } from './conversation.js';
@@ -197,6 +197,52 @@ describe('ConversationStore', () => {
       expect(existsSync(join(dir, 'conversations', conversation.id, 'turns', 'turn-1.jsonl'))).toBe(
         true,
       );
+      fileStore.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('prunes turn journals by age before enforcing max files per conversation', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'conversation-journal-prune-'));
+    try {
+      const fileStore = new ConversationStore(dir);
+      const conversation = fileStore.create();
+      const turnsDir = join(dir, 'conversations', conversation.id, 'turns');
+      const now = Date.now();
+      const fortyDaysAgo = new Date(now - 40 * 24 * 60 * 60 * 1000);
+      const thirtyFiveDaysAgo = new Date(now - 35 * 24 * 60 * 60 * 1000);
+      const fiveDaysAgo = new Date(now - 5 * 24 * 60 * 60 * 1000);
+      const oneDayAgo = new Date(now - 24 * 60 * 60 * 1000);
+      const current = new Date(now);
+
+      for (const turnId of ['turn-old-1', 'turn-old-2', 'turn-keep-1', 'turn-keep-2', 'turn-keep-3']) {
+        fileStore.appendTurnJournalEntry(conversation.id, turnId, {
+          turnId,
+          attempt: 1,
+          timestamp: now,
+          type: 'turn_started',
+          summary: turnId,
+        });
+      }
+
+      utimesSync(join(turnsDir, 'turn-old-1.jsonl'), fortyDaysAgo, fortyDaysAgo);
+      utimesSync(join(turnsDir, 'turn-old-2.jsonl'), thirtyFiveDaysAgo, thirtyFiveDaysAgo);
+      utimesSync(join(turnsDir, 'turn-keep-1.jsonl'), fiveDaysAgo, fiveDaysAgo);
+      utimesSync(join(turnsDir, 'turn-keep-2.jsonl'), oneDayAgo, oneDayAgo);
+      utimesSync(join(turnsDir, 'turn-keep-3.jsonl'), current, current);
+
+      const result = fileStore.pruneTurnJournals(conversation.id, {
+        maxDays: 30,
+        maxFilesPerConversation: 2,
+      });
+
+      expect(result).toEqual({
+        prunedByAge: 2,
+        prunedByCount: 1,
+        remaining: 2,
+      });
+      expect(readdirSync(turnsDir).sort()).toEqual(['turn-keep-2.jsonl', 'turn-keep-3.jsonl']);
       fileStore.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });

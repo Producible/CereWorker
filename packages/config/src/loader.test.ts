@@ -47,6 +47,8 @@ describe('loadConfig', () => {
     expect(config.tools.runtime.engine).toBe('enhanced');
     expect(config.logging.level).toBe('info');
     expect(config.tui.showActivity).toBe(true);
+    expect(config.conversations.turnJournals.maxDays).toBe(30);
+    expect(config.conversations.turnJournals.maxFilesPerConversation).toBe(100);
   });
 
   it('applies overrides', () => {
@@ -176,5 +178,19 @@ describe('loadConfig', () => {
 
     expect(config.tui.showActivity).toBe(false);
     expect(config.tui.theme).toBe('auto');
+  });
+
+  it('loads turn journal retention overrides', () => {
+    const config = loadConfig({
+      conversations: {
+        turnJournals: {
+          maxDays: 14,
+          maxFilesPerConversation: 50,
+        },
+      },
+    });
+
+    expect(config.conversations.turnJournals.maxDays).toBe(14);
+    expect(config.conversations.turnJournals.maxFilesPerConversation).toBe(50);
   });
 });

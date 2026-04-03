@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { Orchestrator } from './orchestrator.js';
@@ -789,6 +789,68 @@ describe('Orchestrator', () => {
           ),
         ).toBe(true);
         expect(journal.some((entry) => entry.type === 'recovery')).toBe(true);
+      } finally {
+        await localOrch.stop();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('prunes older turn journals after successful turn completion', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'orchestrator-prune-success-'));
+      const localOrch = new Orchestrator({
+        conversationStore: new ConversationStore(dir),
+        turnJournalRetention: {
+          maxDays: 30,
+          maxFilesPerConversation: 1,
+        },
+      });
+      try {
+        const cerebrum: CerebrumAdapter = {
+          stream: vi.fn(async (_messages, _tools, callbacks) => {
+            callbacks.onFinish('Completed.', [], makeFinishMeta());
+          }),
+          summarize: vi.fn(async () => 'summary'),
+        };
+
+        localOrch.setCerebrum(cerebrum);
+        const conversationId = localOrch.startConversation();
+        await localOrch.sendMessage('first turn');
+        await localOrch.sendMessage('second turn');
+
+        const turnsDir = join(dir, 'conversations', conversationId, 'turns');
+        expect(readdirSync(turnsDir)).toHaveLength(1);
+      } finally {
+        await localOrch.stop();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('prunes older turn journals after erroring turns', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'orchestrator-prune-error-'));
+      const localOrch = new Orchestrator({
+        conversationStore: new ConversationStore(dir),
+        turnJournalRetention: {
+          maxDays: 30,
+          maxFilesPerConversation: 1,
+        },
+      });
+      try {
+        const cerebrum: CerebrumAdapter = {
+          stream: vi.fn(async (_messages, _tools, callbacks) => {
+            const error = new Error('boom');
+            callbacks.onError(error);
+            throw error;
+          }),
+          summarize: vi.fn(async () => 'summary'),
+        };
+
+        localOrch.setCerebrum(cerebrum);
+        const conversationId = localOrch.startConversation();
+        await localOrch.sendMessage('first error');
+        await localOrch.sendMessage('second error');
+
+        const turnsDir = join(dir, 'conversations', conversationId, 'turns');
+        expect(readdirSync(turnsDir)).toHaveLength(1);
       } finally {
         await localOrch.stop();
         rmSync(dir, { recursive: true, force: true });

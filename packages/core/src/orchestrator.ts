@@ -1,6 +1,6 @@
 import { nanoid } from 'nanoid';
 import { TypedEventEmitter, type WatchdogStage } from './events.js';
-import { ConversationStore } from './conversation.js';
+import { ConversationStore, type TurnJournalRetentionPolicy } from './conversation.js';
 import { SubAgentManager } from './sub-agent-manager.js';
 import { createSubAgentTools } from './sub-agent-tools.js';
 import { createLogger } from './logger.js';
@@ -212,6 +212,7 @@ export interface OrchestratorOptions {
   toolRuntime?: Partial<ToolRuntimeConfig>;
   streamStallThreshold?: number;
   maxNudgeRetries?: number;
+  turnJournalRetention?: TurnJournalRetentionPolicy;
 }
 
 export class Orchestrator extends TypedEventEmitter {
@@ -268,6 +269,10 @@ export class Orchestrator extends TypedEventEmitter {
   private streamStallThreshold = 30_000;
   private maxNudgeRetries = 2;
   private maxCompletionRetries = 2;
+  private turnJournalRetention: TurnJournalRetentionPolicy = {
+    maxDays: 30,
+    maxFilesPerConversation: 100,
+  };
   private streamPhase: StreamPhase = 'idle';
   private activeToolCall: { id: string; name: string; startedAt: number } | null = null;
   private currentStreamTurn: { turnId: string; attempt: number; conversationId: string } | null =
@@ -306,6 +311,12 @@ export class Orchestrator extends TypedEventEmitter {
     if (options?.maxNudgeRetries) {
       this.maxNudgeRetries = options.maxNudgeRetries;
       this.maxCompletionRetries = options.maxNudgeRetries;
+    }
+    if (options?.turnJournalRetention) {
+      this.turnJournalRetention = {
+        ...this.turnJournalRetention,
+        ...options.turnJournalRetention,
+      };
     }
   }
 
@@ -1077,6 +1088,28 @@ export class Orchestrator extends TypedEventEmitter {
       this.currentStreamTurn.turnId,
       entry,
     );
+  }
+
+  private pruneTurnJournals(conversationId: string): void {
+    try {
+      const result = this.conversations.pruneTurnJournals(
+        conversationId,
+        this.turnJournalRetention,
+      );
+      if (result.prunedByAge > 0 || result.prunedByCount > 0) {
+        log.debug('Pruned turn journals', {
+          conversationId,
+          prunedByAge: result.prunedByAge,
+          prunedByCount: result.prunedByCount,
+          remaining: result.remaining,
+        });
+      }
+    } catch (error) {
+      log.warn('Failed to prune turn journals', {
+        conversationId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   private persistPartialContentSnapshot(force = false): void {
@@ -2496,6 +2529,7 @@ export class Orchestrator extends TypedEventEmitter {
                   completionSignal: completionState.signal,
                   finalContent: this.truncateResumeText(displayContent, 2_000),
                 });
+                this.pruneTurnJournals(convId);
 
                 const guardFailure = this.evaluateCompletionGuard(
                   displayContent,
@@ -2822,6 +2856,7 @@ export class Orchestrator extends TypedEventEmitter {
               error: err.message,
             },
           );
+          this.pruneTurnJournals(convId);
           if (retryCause === 'completion') {
             this.emitCompletionTrace(
               'retry_failed',

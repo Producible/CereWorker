@@ -51,6 +51,7 @@ export {
   withTextStoreLock,
 } from './text-store.js';
 export { ConversationStore } from './conversation.js';
+export type { TurnJournalRetentionPolicy } from './conversation.js';
 export { Orchestrator } from './orchestrator.js';
 export { ToolRuntime } from './tool-runtime.js';
 export { createLogger, configureLogger } from './logger.js';
