@@ -855,6 +855,8 @@ GitHub Actions runs the new test layers in two stages:
 
 CereWorker is built around a practical agent architecture focused on channels, skills, persistent memory, and autonomous task execution, extended here with the Cerebellum/Cerebrum dual-LLM design.
 
+Thanks to Anthropic for open-sourcing Claude Code. Its harness design and agent workflow ideas have been a useful reference while improving CereWorker's recovery, tool execution, and long-running task behavior.
+
 ## License
 
 MIT
