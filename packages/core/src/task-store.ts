@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { nanoid } from 'nanoid';
@@ -27,6 +27,8 @@ export class TaskStore {
   private readonly runsDir: string | null;
   private memoryTasks = new Map<string, TaskDefinition>();
   private memoryRuns = new Map<string, TaskRunRecord[]>();
+  private definitionsCache: TaskStoreFileShape | null = null;
+  private definitionsCacheMtimeMs: number | null = null;
 
   constructor(basePath?: string) {
     this.inMemory = basePath === ':memory:';
@@ -49,8 +51,13 @@ export class TaskStore {
   }
 
   get(taskId: string): TaskDefinition | undefined {
-    if (this.inMemory) return this.memoryTasks.get(taskId);
-    return this.list().find((task) => task.id === taskId);
+    if (this.inMemory) {
+      const task = this.memoryTasks.get(taskId);
+      return task ? { ...task } : undefined;
+    }
+    const file = this.readDefinitionsFile();
+    const task = file.tasks.find((entry) => entry.id === taskId);
+    return task ? { ...task } : undefined;
   }
 
   upsert(task: TaskDefinition): TaskDefinition {
@@ -114,14 +121,24 @@ export class TaskStore {
 
   private readDefinitionsFile(): TaskStoreFileShape {
     if (!this.definitionsPath || !existsSync(this.definitionsPath)) {
+      this.definitionsCache = { tasks: [] };
+      this.definitionsCacheMtimeMs = null;
       return { tasks: [] };
     }
     try {
+      const stat = statSync(this.definitionsPath);
+      if (this.definitionsCache && this.definitionsCacheMtimeMs === stat.mtimeMs) {
+        return {
+          tasks: this.definitionsCache.tasks.map((task) => ({ ...task })),
+        };
+      }
       const raw = JSON.parse(readFileSync(this.definitionsPath, 'utf-8')) as unknown;
       if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { tasks: [] };
       const tasks = Array.isArray((raw as { tasks?: unknown[] }).tasks)
         ? ((raw as { tasks: TaskDefinition[] }).tasks ?? [])
         : [];
+      this.definitionsCache = { tasks: tasks.map((task) => ({ ...task })) };
+      this.definitionsCacheMtimeMs = stat.mtimeMs;
       return { tasks };
     } catch (error) {
       log.warn('Failed to read task definitions', { error: String(error) });
@@ -131,5 +148,14 @@ export class TaskStore {
 
   private writeDefinitionsFile(tasks: TaskDefinition[]): void {
     writeJsonFileAtomic(this.definitionsPath!, { tasks });
+    try {
+      this.definitionsCache = { tasks: tasks.map((task) => ({ ...task })) };
+      this.definitionsCacheMtimeMs = existsSync(this.definitionsPath!)
+        ? statSync(this.definitionsPath!).mtimeMs
+        : null;
+    } catch {
+      this.definitionsCache = null;
+      this.definitionsCacheMtimeMs = null;
+    }
   }
 }

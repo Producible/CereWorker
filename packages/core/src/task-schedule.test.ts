@@ -53,4 +53,19 @@ describe('task-schedule', () => {
     });
     expect(next?.toISOString()).toBe('2026-04-04T22:00:00.000Z');
   });
+
+  it('rejects invalid time strings and intervals', () => {
+    expect(() => normalizeTaskSchedule('daily at 25:00')).toThrow(
+      'Invalid time string: 25:00',
+    );
+    expect(() =>
+      normalizeTaskSchedule({ type: 'interval', every: -1, unit: 'hours' }),
+    ).toThrow('Interval schedules require a positive "every" value.');
+  });
+
+  it('rejects invalid one-shot due dates', () => {
+    expect(() =>
+      normalizeTaskSchedule({ type: 'one_shot', dueAt: 'definitely-not-a-date' }),
+    ).toThrow('Invalid one-shot dueAt: definitely-not-a-date');
+  });
 });

@@ -258,6 +258,13 @@ Or from source:
 docker compose up -d cerebellum
 ```
 
+If you pull source changes that modify [`proto/cerebellum.proto`](/home/vincent/Projects/CereWorker/proto/cerebellum.proto) or [`cerebellum/src/heartbeat.py`](/home/vincent/Projects/CereWorker/cerebellum/src/heartbeat.py), rebuild the local Cerebellum container before restarting:
+
+```bash
+docker compose build cerebellum
+docker compose up -d cerebellum
+```
+
 ### Updating
 
 CereWorker checks for new versions on startup. If a newer release is available on npm, the banner shows an update notice with the install command. The check is cached for 24 hours and runs in the background (no startup delay). `cereworker -v` also shows available updates.

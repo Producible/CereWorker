@@ -138,6 +138,51 @@ describe('Orchestrator', () => {
       expect(orch.unregisterTool('greet')).toBe(true);
     });
 
+    it('only forwards ingress metadata to internal task tools', async () => {
+      let taskContext: unknown;
+      let externalContext: unknown;
+
+      orch.registerTool('task_upsert', {
+        description: 'internal task tool',
+        parameters: {},
+        execute: vi.fn(async (_args, context) => {
+          taskContext = context;
+          return { output: 'task saved' };
+        }),
+      });
+      orch.registerTool('external_check', {
+        description: 'external tool',
+        parameters: {},
+        execute: vi.fn(async (_args, context) => {
+          externalContext = context;
+          return { output: 'external done' };
+        }),
+      });
+      orch.setCerebrum({
+        stream: vi.fn(async (_messages, _tools, callbacks) => {
+          await callbacks.onToolCall({ id: 'task-1', name: 'task_upsert', args: {} });
+          await callbacks.onToolCall({ id: 'tool-1', name: 'external_check', args: {} });
+          callbacks.onFinish('done', [], makeFinishMeta({ toolCallCount: 2, hadToolActivity: true }));
+        }),
+        summarize: vi.fn(async () => 'summary'),
+      });
+
+      const conversationId = orch.startConversation();
+      await orch.sendMessage('hello', conversationId, {
+        source: 'channel',
+        ingress: {
+          channelId: 'telegram',
+          senderId: 'boss-1',
+          senderName: 'Boss',
+          routeTo: 'chat-1',
+          timestamp: Date.now(),
+        },
+      });
+
+      expect((taskContext as { ingress?: { senderId?: string } })?.ingress?.senderId).toBe('boss-1');
+      expect((externalContext as { ingress?: unknown })?.ingress).toBeUndefined();
+    });
+
     it('registerTools registers multiple tools', () => {
       orch.registerTools({
         tool_a: createTestTool(),

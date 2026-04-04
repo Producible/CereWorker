@@ -62,4 +62,15 @@ describe('TaskStore', () => {
     expect(store.get('temp-task')).toBeUndefined();
     expect(store.listRuns('temp-task')).toHaveLength(1);
   });
+
+  it('refreshes cached definitions when another store instance writes changes', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'cw-task-store-cache-'));
+    const first = new TaskStore(dir);
+    const second = new TaskStore(dir);
+
+    expect(first.list()).toEqual([]);
+    second.upsert(makeTask('background-task'));
+
+    expect(first.get('background-task')?.goal).toBe('Goal for background-task');
+  });
 });

@@ -147,6 +147,65 @@ describe('createService integration', () => {
     await secondService.shutdown();
   });
 
+  it('hashes long configured task ids and rejects normalized collisions', async () => {
+    const longA = `daily-x-status-${'a'.repeat(80)}`;
+    const longB = `daily-x-status-${'b'.repeat(80)}`;
+    const service = createService(
+      makeConfig({
+        tasks: [
+          {
+            id: longA,
+            goal: 'Post the first long-id task.',
+            schedule: 'every 3 hours',
+            enabled: true,
+            autoMode: true,
+            timeoutMinutes: 10,
+          },
+          {
+            id: longB,
+            goal: 'Post the second long-id task.',
+            schedule: 'daily at 10 pm',
+            enabled: true,
+            autoMode: true,
+            timeoutMinutes: 10,
+          },
+        ],
+      }),
+      { homeDir: () => homeDir },
+    );
+
+    const ids = service.getTaskDefinitions().map((task) => task.id);
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).not.toBe(ids[1]);
+    await service.shutdown();
+
+    expect(() =>
+      createService(
+        makeConfig({
+          tasks: [
+            {
+              id: 'Alpha Task',
+              goal: 'First task.',
+              schedule: 'daily',
+              enabled: true,
+              autoMode: true,
+              timeoutMinutes: 10,
+            },
+            {
+              id: 'alpha-task',
+              goal: 'Second task.',
+              schedule: 'daily',
+              enabled: true,
+              autoMode: true,
+              timeoutMinutes: 10,
+            },
+          ],
+        }),
+        { homeDir: () => homeDir },
+      ),
+    ).toThrow('Task id collision');
+  });
+
   it('archives the exact training batch for each fine-tune round in human-readable files', async () => {
     const service = createService(
       makeConfig({

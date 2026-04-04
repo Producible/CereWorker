@@ -1,5 +1,5 @@
 import { execFileSync, execSync, spawn, type SpawnOptions, type ChildProcess } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -225,20 +225,46 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
   const taskStore = new TaskStore(join(dataDir, 'tasks'));
   const legacyTaskStateFile = join(homeDir(), '.cereworker', 'task-state.json');
 
-  function normalizeTaskId(value: string): string {
+  const TASK_ID_MAX_LENGTH = 48;
+
+  function buildNormalizedTaskId(value: string): string {
     const normalized = value
       .trim()
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 48);
+      .replace(/^-+|-+$/g, '');
     if (!normalized) {
       throw new Error('Task id must contain at least one letter or number.');
+    }
+    if (normalized.length <= TASK_ID_MAX_LENGTH) {
+      return normalized;
+    }
+
+    const suffix = createHash('sha1')
+      .update(value)
+      .digest('hex')
+      .slice(0, 8);
+    const prefix = normalized
+      .slice(0, TASK_ID_MAX_LENGTH - suffix.length - 1)
+      .replace(/-+$/g, '');
+    return `${prefix}-${suffix}`;
+  }
+
+  function normalizeTaskId(
+    value: string,
+    options: { reservedIds?: Set<string>; currentId?: string } = {},
+  ): string {
+    const normalized = buildNormalizedTaskId(value);
+    if (options.reservedIds?.has(normalized) && normalized !== options.currentId) {
+      throw new Error(`Task id collision for "${value}". Choose a more specific task id.`);
     }
     return normalized;
   }
 
-  function normalizeConfiguredTask(task: CereWorkerConfig['tasks'][number]): TaskDefinition {
+  function normalizeConfiguredTask(
+    task: CereWorkerConfig['tasks'][number],
+    reservedIds: Set<string>,
+  ): TaskDefinition {
     const now = new Date().toISOString();
     const schedule = normalizeTaskSchedule(task.schedule as string | TaskSchedule, {
       defaultTimezone: instanceTimezone,
@@ -247,8 +273,10 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
     const kind = task.kind === 'recurring' && schedule.type === 'one_shot'
       ? 'one_shot'
       : task.kind;
+    const id = normalizeTaskId(task.id, { reservedIds });
+    reservedIds.add(id);
     return {
-      id: normalizeTaskId(task.id),
+      id,
       goal: task.goal,
       enabled: task.enabled,
       kind,
@@ -266,7 +294,8 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
     };
   }
 
-  const configuredTasks = config.tasks.map(normalizeConfiguredTask);
+  const configuredTaskIds = new Set<string>();
+  const configuredTasks = config.tasks.map((task) => normalizeConfiguredTask(task, configuredTaskIds));
   for (const configuredTask of configuredTasks) {
     const existing = taskStore.get(configuredTask.id);
     if (!existing) {
@@ -539,19 +568,17 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
       const session = orchestrator.getQuerySession(conversationId, sessionId);
       if (!session) return;
       const sessionEvents = orchestrator.getSessionEvents(conversationId, sessionId);
-      const hasQualifyingActivity =
-        session.source !== 'local' ||
-        sessionEvents.some((event) =>
-          [
-            'tool_finished',
-            'recovery_assessed',
-            'channel_ingress',
-            'channel_egress',
-            'node_tool_started',
-            'node_tool_finished',
-            'node_status',
-          ].includes(event.type),
-        );
+      const hasQualifyingActivity = sessionEvents.some((event) =>
+        [
+          'tool_finished',
+          'recovery_assessed',
+          'channel_ingress',
+          'channel_egress',
+          'node_tool_started',
+          'node_tool_finished',
+          'node_status',
+        ].includes(event.type),
+      );
       if (!hasQualifyingActivity) return;
 
       const boundarySummary = session.latestBoundary?.summary ?? 'No verified boundary recorded.';
@@ -711,23 +738,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
   const heartbeatTaskIdsByTaskId = new Map<string, string>();
 
   function toCerebellumTaskSchedule(schedule: TaskSchedule): CerebellumTaskSchedule {
-    if (schedule.type === 'interval') {
-      return { type: 'interval', every: schedule.every, unit: schedule.unit };
-    }
-    if (schedule.type === 'daily_at') {
-      return {
-        type: 'daily_at',
-        time: schedule.time,
-        timezone: schedule.timezone,
-        catchUpPolicy: schedule.catchUpPolicy,
-      };
-    }
-    return {
-      type: 'one_shot',
-      dueAt: schedule.dueAt,
-      timezone: schedule.timezone,
-      catchUpPolicy: schedule.catchUpPolicy,
-    };
+    return { ...schedule };
   }
 
   function getTaskDefinitions(): TaskDefinition[] {
@@ -891,7 +902,11 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
     const goal = String(args.goal ?? '').trim();
     if (!goal) throw new Error('task_upsert requires a goal.');
     const providedId = args.id ? String(args.id) : goal.split('\n')[0];
-    const taskId = normalizeTaskId(providedId);
+    const existingIds = new Set(taskStore.list().map((task) => task.id));
+    const taskId = normalizeTaskId(providedId, {
+      reservedIds: existingIds,
+      currentId: buildNormalizedTaskId(providedId),
+    });
     const schedule = normalizeTaskSchedule(
       (args.schedule as string | TaskSchedule | undefined) ?? 'daily',
       { defaultTimezone: instanceTimezone, defaultCatchUpPolicy: 'once' },

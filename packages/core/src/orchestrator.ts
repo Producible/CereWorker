@@ -2699,6 +2699,7 @@ export class Orchestrator extends TypedEventEmitter {
                   args: toolCall.args,
                 });
                 const isInternalTaskSignal = this.isInternalTaskSignalTool(normalizedToolName);
+                const toolIngress = isInternalTaskSignal ? options?.ingress : undefined;
                 if (isInternalTaskSignal) {
                   completionState.internalToolCallCount++;
                 } else {
@@ -2725,7 +2726,7 @@ export class Orchestrator extends TypedEventEmitter {
                   scopeKey: convId,
                   turnId,
                   attempt: attemptNumber,
-                  ingress: options?.ingress,
+                  ingress: toolIngress,
                   abortSignal: abortController.signal,
                 });
                 this.logStreamDebug(
