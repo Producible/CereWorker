@@ -14,6 +14,7 @@ export function parseSignalEnvelope(raw: unknown): InboundMessage | null {
 
   return {
     channelId: 'signal',
+    routeTo: groupId ?? source,
     senderId: source,
     text: dataMessage.message,
     sessionId: groupId ? `group:${groupId}` : `dm:${source}`,

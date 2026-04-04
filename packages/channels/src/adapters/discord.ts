@@ -107,6 +107,7 @@ export function createDiscordChannel(config: DiscordChannelConfig): ChannelPlugi
 
         const inbound: InboundMessage = {
           channelId: 'discord',
+          routeTo: message.channelId,
           senderId: message.author.id,
           senderName: message.author.username,
           text,
@@ -165,6 +166,7 @@ export function createDiscordChannel(config: DiscordChannelConfig): ChannelPlugi
 
         const inbound: InboundMessage = {
           channelId: 'discord',
+          routeTo: cmd.channelId ?? undefined,
           senderId: cmd.user.id,
           senderName: cmd.user.username,
           text,

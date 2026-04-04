@@ -36,6 +36,19 @@ export type {
   SessionMemorySnapshot,
   SessionEvent,
   QuerySession,
+  TaskScheduleCatchUpPolicy,
+  TaskScheduleUnit,
+  TaskKind,
+  TaskReportTarget,
+  TaskOriginSource,
+  TaskRunStatus,
+  IntervalTaskSchedule,
+  DailyAtTaskSchedule,
+  OneShotTaskSchedule,
+  TaskSchedule,
+  TaskOrigin,
+  TaskDefinition,
+  TaskRunRecord,
   TrainingExample,
   TransportEnvelope,
   RecoveryCause,
@@ -104,5 +117,12 @@ export { DiscoveryEngine } from './discovery.js';
 export type { DiscoveryResult, DiscoveryCallbacks } from './discovery.js';
 export { PlanStore } from './plan-store.js';
 export type { Plan, PlanStep, PlanStatus, PlanStepStatus } from './plan-store.js';
+export { TaskStore } from './task-store.js';
+export {
+  normalizeTaskSchedule,
+  formatTaskSchedule,
+  taskScheduleToHint,
+  getNextTaskRun,
+} from './task-schedule.js';
 export { ProactiveController } from './proactive.js';
 export type { ProactiveConfig, ProactiveOutput } from './proactive.js';

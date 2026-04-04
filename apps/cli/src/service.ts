@@ -10,13 +10,20 @@ import {
   PairingStore,
   InstanceStore,
   PlanStore,
+  TaskStore,
   ProactiveController,
   createLogger,
   createHttpTools,
-  withTextStoreLock,
-  writeJsonFileAtomic,
+  normalizeTaskSchedule,
+  formatTaskSchedule,
+  taskScheduleToHint,
+  getNextTaskRun,
+  type TaskDefinition,
+  type TaskRunRecord,
+  type TaskSchedule,
+  type TaskReportTarget,
 } from '@cereworker/core';
-import { CerebellumClient } from '@cereworker/cerebellum-client';
+import { CerebellumClient, type TaskSchedule as CerebellumTaskSchedule } from '@cereworker/cerebellum-client';
 import { CerebrumProvider, createBuiltinTools } from '@cereworker/cerebrum';
 import type { CereWorkerConfig } from '@cereworker/config';
 import { createChannelManager, type ChannelManager } from '@cereworker/channels';
@@ -85,6 +92,8 @@ export interface ServiceInstance {
   startGateway(callbacks?: GatewayCallbacks): Promise<GatewayHandles>;
   runTask(taskId: string): Promise<{ success: boolean; error?: string }>;
   getTaskState(): Record<string, TaskStateEntry>;
+  getTaskDefinitions(): TaskDefinition[];
+  getTaskRuns(taskId: string): TaskRunRecord[];
   getEnabledTasks(): Array<{ id: string; goal: string; schedule: string; autoMode: boolean; timeoutMinutes: number }>;
   listHeartbeatTasks(): Promise<Array<{ taskId: string; description: string; status: string; lastRun?: number; scheduleHint: string; metadata?: Record<string, string> }>>;
   shutdown(): Promise<void>;
@@ -118,6 +127,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
 
   // Create persistent conversation store
   const conversationStore = new ConversationStore(dataDbPath);
+  const planStore = new PlanStore(dataDbPath);
 
   // Instance identity
   const instanceStore = new InstanceStore(dataDir);
@@ -210,40 +220,119 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
     log.info('Skills loaded', { count: eligible.length, total: allSkills.length });
   }
 
-  // Set recurring tasks so system prompt includes them
-  const enabledTasks = config.tasks.filter((t) => t.enabled);
-  if (enabledTasks.length > 0) {
-    orchestrator.setRecurringTasks(enabledTasks.map((t) => ({ id: t.id, goal: t.goal, schedule: t.schedule })));
-    log.info('Recurring tasks configured', { count: enabledTasks.length });
-  }
+  const instanceTimezone = instanceStore.get()?.timezone
+    ?? (Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
+  const taskStore = new TaskStore(join(dataDir, 'tasks'));
+  const legacyTaskStateFile = join(homeDir(), '.cereworker', 'task-state.json');
 
-  // Load persisted task state (conversationId mappings)
-  const taskStateFile = join(homeDir(), '.cereworker', 'task-state.json');
-  type TaskState = Record<string, { conversationId: string; lastRunAt?: string; runCount?: number }>;
-  let taskState: TaskState = {};
-  try {
-    if (existsSync(taskStateFile)) {
-      taskState = JSON.parse(readFileSync(taskStateFile, 'utf-8'));
-      for (const [taskId, state] of Object.entries(taskState)) {
-        if (state.conversationId) {
-          orchestrator.setTaskConversation(taskId, state.conversationId);
-        }
-      }
-      log.info('Task state restored', { tasks: Object.keys(taskState).length });
+  function normalizeTaskId(value: string): string {
+    const normalized = value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 48);
+    if (!normalized) {
+      throw new Error('Task id must contain at least one letter or number.');
     }
-  } catch {
-    log.debug('No task state to restore');
+    return normalized;
   }
 
-  function saveTaskState(): void {
-    try {
-      withTextStoreLock(taskStateFile, () => {
-        writeJsonFileAtomic(taskStateFile, taskState);
+  function normalizeConfiguredTask(task: CereWorkerConfig['tasks'][number]): TaskDefinition {
+    const now = new Date().toISOString();
+    const schedule = normalizeTaskSchedule(task.schedule as string | TaskSchedule, {
+      defaultTimezone: instanceTimezone,
+      defaultCatchUpPolicy: 'once',
+    });
+    const kind = task.kind === 'recurring' && schedule.type === 'one_shot'
+      ? 'one_shot'
+      : task.kind;
+    return {
+      id: normalizeTaskId(task.id),
+      goal: task.goal,
+      enabled: task.enabled,
+      kind,
+      schedule,
+      autoMode: task.autoMode,
+      timeoutMinutes: task.timeoutMinutes,
+      reportTarget: task.reportTarget ?? 'origin',
+      createdAt: now,
+      updatedAt: now,
+      origin: {
+        source: 'config',
+        createdAt: now,
+      },
+      timezone: schedule.type === 'interval' ? undefined : schedule.timezone,
+    };
+  }
+
+  const configuredTasks = config.tasks.map(normalizeConfiguredTask);
+  for (const configuredTask of configuredTasks) {
+    const existing = taskStore.get(configuredTask.id);
+    if (!existing) {
+      taskStore.upsert(configuredTask);
+      continue;
+    }
+    if (existing.origin?.source === 'config') {
+      taskStore.upsert({
+        ...existing,
+        goal: configuredTask.goal,
+        enabled: configuredTask.enabled,
+        kind: configuredTask.kind,
+        schedule: configuredTask.schedule,
+        autoMode: configuredTask.autoMode,
+        timeoutMinutes: configuredTask.timeoutMinutes,
+        reportTarget: configuredTask.reportTarget,
+        updatedAt: new Date().toISOString(),
+        timezone: configuredTask.timezone,
       });
-    } catch (err) {
-      log.warn('Failed to save task state', { error: (err as Error).message });
     }
   }
+
+  type TaskState = Record<string, { conversationId: string; lastRunAt?: string; runCount?: number }>;
+  const legacyTaskState: TaskState = existsSync(legacyTaskStateFile)
+    ? JSON.parse(readFileSync(legacyTaskStateFile, 'utf-8'))
+    : {};
+  for (const [taskId, state] of Object.entries(legacyTaskState)) {
+    const existing = taskStore.get(taskId);
+    if (!existing) continue;
+    const next = {
+      ...existing,
+      activeConversationId: existing.activeConversationId || state.conversationId || undefined,
+      lastRunAt: existing.lastRunAt || state.lastRunAt,
+      runCount: existing.runCount ?? state.runCount ?? 0,
+    };
+    taskStore.upsert(next);
+  }
+
+  function listActiveTasks(): TaskDefinition[] {
+    return taskStore
+      .list()
+      .filter((task) => task.enabled && !(task.kind === 'one_shot' && task.lastResult === 'success'));
+  }
+
+  function refreshOrchestratorTaskPrompt(): void {
+    const activeTasks = listActiveTasks();
+    orchestrator.setRecurringTasks(activeTasks.map((task) => ({
+      id: task.id,
+      goal: task.goal,
+      schedule: formatTaskSchedule(task.schedule),
+    })));
+    if (activeTasks.length > 0) {
+      log.info('Routine tasks configured', { count: activeTasks.length });
+    }
+  }
+
+  function restoreTaskConversations(): void {
+    for (const task of taskStore.list()) {
+      if (task.activeConversationId) {
+        orchestrator.setTaskConversation(task.id, task.activeConversationId);
+      }
+    }
+  }
+
+  restoreTaskConversations();
+  refreshOrchestratorTaskPrompt();
 
   const channelConversationStateFile = join(homeDir(), '.cereworker', 'channel-conversations.json');
   let channelConversationState = loadChannelConversationState(channelConversationStateFile);
@@ -618,6 +707,335 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
   channelManager.setDmPolicy(config.channels.dmPolicy);
   channelManager.setPairingProvider(pairingStore);
 
+  const heartbeatTaskMap = new Map<string, { type: 'finetune' } | { type: 'task'; taskId: string }>();
+  const heartbeatTaskIdsByTaskId = new Map<string, string>();
+
+  function toCerebellumTaskSchedule(schedule: TaskSchedule): CerebellumTaskSchedule {
+    if (schedule.type === 'interval') {
+      return { type: 'interval', every: schedule.every, unit: schedule.unit };
+    }
+    if (schedule.type === 'daily_at') {
+      return {
+        type: 'daily_at',
+        time: schedule.time,
+        timezone: schedule.timezone,
+        catchUpPolicy: schedule.catchUpPolicy,
+      };
+    }
+    return {
+      type: 'one_shot',
+      dueAt: schedule.dueAt,
+      timezone: schedule.timezone,
+      catchUpPolicy: schedule.catchUpPolicy,
+    };
+  }
+
+  function getTaskDefinitions(): TaskDefinition[] {
+    return taskStore.list().sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  function getTaskRuns(taskId: string): TaskRunRecord[] {
+    return taskStore.listRuns(taskId);
+  }
+
+  function getTaskState(): Record<string, TaskStateEntry> {
+    return Object.fromEntries(
+      taskStore.list().map((task) => [
+        task.id,
+        {
+          conversationId: task.activeConversationId ?? '',
+          lastRunAt: task.lastRunAt,
+          runCount: task.runCount,
+        },
+      ]),
+    );
+  }
+
+  function getEnabledTasks(): Array<{ id: string; goal: string; schedule: string; autoMode: boolean; timeoutMinutes: number }> {
+    return listActiveTasks().map((task) => ({
+      id: task.id,
+      goal: task.goal,
+      schedule: formatTaskSchedule(task.schedule),
+      autoMode: task.autoMode,
+      timeoutMinutes: task.timeoutMinutes,
+    }));
+  }
+
+  function taskListText(tasks: TaskDefinition[]): string {
+    if (tasks.length === 0) return 'No active routine tasks.';
+    return tasks.map((task) => {
+      const nextRun = getNextTaskRun(task.schedule, new Date(), {
+        lastRunAt: task.lastRunAt,
+        timezone: task.timezone ?? instanceTimezone,
+      });
+      const status = task.lastResult === 'running' ? 'running' : task.enabled ? 'active' : 'disabled';
+      return [
+        `${task.id} | ${task.kind} | ${formatTaskSchedule(task.schedule)} | ${status}`,
+        `Goal: ${task.goal.split('\n')[0]}`,
+        `Next: ${nextRun ? nextRun.toISOString() : 'n/a'}`,
+      ].join('\n');
+    }).join('\n\n');
+  }
+
+  function resolveOriginReportTarget(task: TaskDefinition): {
+    channelId: string;
+    to: string;
+    threadId?: string;
+    replyToId?: string;
+  } | null {
+    const origin = task.origin;
+    if (!origin?.channelId) return null;
+    const to = origin.routeTo
+      ?? origin.threadId
+      ?? origin.sessionId?.split(':').slice(1).join(':')
+      ?? '';
+    if (!to) return null;
+    return {
+      channelId: origin.channelId,
+      to,
+      threadId: origin.threadId,
+      replyToId: origin.replyToId,
+    };
+  }
+
+  async function deliverTaskReport(task: TaskDefinition, run: TaskRunRecord): Promise<TaskRunRecord> {
+    if (task.reportTarget !== 'origin') return run;
+    const target = resolveOriginReportTarget(task);
+    if (!target) return run;
+    const headline = run.status === 'success'
+      ? `Scheduled task "${task.id}" completed.`
+      : `Scheduled task "${task.id}" failed.`;
+    const body = [
+      headline,
+      `Goal: ${task.goal.split('\n')[0]}`,
+      `Status: ${run.status}`,
+      `Summary: ${run.summary}`,
+      run.error ? `Error: ${run.error}` : null,
+      run.completedAt ? `Completed: ${run.completedAt}` : null,
+    ].filter(Boolean).join('\n');
+    await channelManager.send(target.channelId, {
+      to: target.to,
+      text: body,
+      threadId: target.threadId,
+      replyToId: target.replyToId,
+    });
+    return { ...run, reportDeliveredAt: new Date().toISOString() };
+  }
+
+  async function unregisterHeartbeatTask(taskId: string): Promise<void> {
+    const heartbeatId = heartbeatTaskIdsByTaskId.get(taskId);
+    if (!heartbeatId || !cerebellumClient) return;
+    await cerebellumClient.unregisterTask(heartbeatId);
+    heartbeatTaskIdsByTaskId.delete(taskId);
+    heartbeatTaskMap.delete(heartbeatId);
+  }
+
+  async function registerHeartbeatTask(task: TaskDefinition): Promise<void> {
+    if (!cerebellumClient) return;
+    await unregisterHeartbeatTask(task.id);
+    if (!task.enabled || (task.kind === 'one_shot' && task.lastResult === 'success')) {
+      return;
+    }
+    const heartbeatId = await cerebellumClient.registerTask(
+      task.goal.split('\n')[0],
+      taskScheduleToHint(task.schedule),
+      {
+        type: 'task',
+        taskId: task.id,
+        taskKind: task.kind,
+        createdAt: task.createdAt,
+        lastRunAt: task.lastRunAt ?? '',
+        lastScheduledSlot: task.lastScheduledSlot ?? '',
+      },
+      toCerebellumTaskSchedule(task.schedule),
+    );
+    if (!heartbeatId) return;
+    heartbeatTaskIdsByTaskId.set(task.id, heartbeatId);
+    heartbeatTaskMap.set(heartbeatId, { type: 'task', taskId: task.id });
+  }
+
+  async function syncHeartbeatTasks(): Promise<void> {
+    if (!cerebellumClient) return;
+    for (const taskId of Array.from(heartbeatTaskIdsByTaskId.keys())) {
+      await unregisterHeartbeatTask(taskId);
+    }
+    for (const task of listActiveTasks()) {
+      await registerHeartbeatTask(task);
+    }
+  }
+
+  async function saveTaskDefinition(task: TaskDefinition): Promise<TaskDefinition> {
+    const saved = taskStore.upsert(task);
+    if (saved.activeConversationId) {
+      orchestrator.setTaskConversation(saved.id, saved.activeConversationId);
+    }
+    refreshOrchestratorTaskPrompt();
+    if (cerebellumClient?.isConnected()) {
+      await registerHeartbeatTask(saved);
+    }
+    return saved;
+  }
+
+  async function removeTaskDefinition(taskId: string): Promise<boolean> {
+    await unregisterHeartbeatTask(taskId);
+    const removed = taskStore.remove(taskId);
+    refreshOrchestratorTaskPrompt();
+    return removed;
+  }
+
+  async function upsertTaskFromTool(
+    args: Record<string, unknown>,
+    context?: { conversationId?: string; ingress?: { channelId?: string; routeTo?: string; senderId?: string; senderName?: string; sessionId?: string; threadId?: string; replyToId?: string; timestamp?: number } },
+  ): Promise<{ task: TaskDefinition; created: boolean }> {
+    const now = new Date().toISOString();
+    const goal = String(args.goal ?? '').trim();
+    if (!goal) throw new Error('task_upsert requires a goal.');
+    const providedId = args.id ? String(args.id) : goal.split('\n')[0];
+    const taskId = normalizeTaskId(providedId);
+    const schedule = normalizeTaskSchedule(
+      (args.schedule as string | TaskSchedule | undefined) ?? 'daily',
+      { defaultTimezone: instanceTimezone, defaultCatchUpPolicy: 'once' },
+    );
+    const existing = taskStore.get(taskId);
+    const reportTarget = (args.reportTarget as TaskReportTarget | undefined)
+      ?? (context?.ingress?.channelId ? 'origin' : 'none');
+    const task: TaskDefinition = {
+      ...(existing ?? {
+        id: taskId,
+        createdAt: now,
+        origin: {
+          source: context?.ingress?.channelId ? 'channel' : 'conversation',
+          createdAt: now,
+          conversationId: context?.conversationId,
+          channelId: context?.ingress?.channelId,
+          routeTo: context?.ingress?.routeTo,
+          senderId: context?.ingress?.senderId,
+          senderName: context?.ingress?.senderName,
+          sessionId: context?.ingress?.sessionId,
+          threadId: context?.ingress?.threadId,
+          replyToId: context?.ingress?.replyToId,
+        },
+      }),
+      id: taskId,
+      goal,
+      enabled: args.enabled === undefined ? existing?.enabled ?? true : Boolean(args.enabled),
+      kind: (args.kind as TaskDefinition['kind'] | undefined) ?? existing?.kind ?? (schedule.type === 'one_shot' ? 'one_shot' : 'recurring'),
+      schedule,
+      autoMode: args.autoMode === undefined ? existing?.autoMode ?? true : Boolean(args.autoMode),
+      timeoutMinutes: args.timeoutMinutes === undefined ? existing?.timeoutMinutes ?? 10 : Number(args.timeoutMinutes),
+      reportTarget,
+      timezone: schedule.type === 'interval' ? undefined : schedule.timezone,
+      updatedAt: now,
+    };
+    if (task.kind === 'one_shot' && !task.activePlanId) {
+      const plan = planStore.save({
+        taskId,
+        goal,
+        steps: [{ description: goal.split('\n')[0], status: 'pending' }],
+        conversationId: task.activeConversationId,
+        status: 'in_progress',
+      });
+      task.activePlanId = plan.id;
+    }
+    return { task: await saveTaskDefinition(task), created: !existing };
+  }
+
+  const taskManagementParameters = {
+    type: 'object',
+    properties: {
+      id: { type: 'string' },
+      goal: { type: 'string' },
+      kind: { type: 'string', enum: ['recurring', 'one_shot'] },
+      schedule: {
+        oneOf: [
+          { type: 'string' },
+          {
+            type: 'object',
+            properties: {
+              type: { type: 'string', enum: ['interval', 'daily_at', 'one_shot'] },
+              every: { type: 'number' },
+              unit: { type: 'string', enum: ['minutes', 'hours', 'days', 'weeks'] },
+              time: { type: 'string' },
+              dueAt: { type: 'string' },
+              timezone: { type: 'string' },
+              catchUpPolicy: { type: 'string', enum: ['none', 'once'] },
+            },
+          },
+        ],
+      },
+      enabled: { type: 'boolean' },
+      autoMode: { type: 'boolean' },
+      timeoutMinutes: { type: 'number' },
+      reportTarget: { type: 'string', enum: ['origin', 'none'] },
+    },
+    required: ['goal', 'schedule'],
+  } as const;
+
+  orchestrator.registerTool('task_upsert', {
+    description: 'Create or update a scheduled or one-shot task in the instance task registry.',
+    parameters: taskManagementParameters as unknown as Record<string, unknown>,
+    execute: async (args, context) => {
+      const result = await upsertTaskFromTool(args, {
+        conversationId: context?.conversationId,
+        ingress: context?.ingress,
+      });
+      return {
+        output: `${result.created ? 'Created' : 'Updated'} task ${result.task.id} (${formatTaskSchedule(result.task.schedule)}).`,
+        details: { task: result.task },
+      };
+    },
+  });
+
+  orchestrator.registerTool('task_list', {
+    description: 'List active routine tasks and active long-running one-shot tasks.',
+    parameters: { type: 'object', properties: {} } as Record<string, unknown>,
+    execute: async () => {
+      const tasks = listActiveTasks();
+      return {
+        output: taskListText(tasks),
+        details: { tasks },
+      };
+    },
+  });
+
+  orchestrator.registerTool('task_get', {
+    description: 'Get a specific task definition and recent run history.',
+    parameters: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+    } as Record<string, unknown>,
+    execute: async (args) => {
+      const id = normalizeTaskId(String(args.id ?? ''));
+      const task = taskStore.get(id);
+      if (!task) {
+        return { output: `Task ${id} not found.`, isError: true };
+      }
+      const runs = taskStore.listRuns(id).slice(-5);
+      return {
+        output: `${task.id}: ${formatTaskSchedule(task.schedule)}\n${task.goal}`,
+        details: { task, runs },
+      };
+    },
+  });
+
+  orchestrator.registerTool('task_remove', {
+    description: 'Disable and remove a task from the active task registry.',
+    parameters: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
+    } as Record<string, unknown>,
+    execute: async (args) => {
+      const id = normalizeTaskId(String(args.id ?? ''));
+      const removed = await removeTaskDefinition(id);
+      return {
+        output: removed ? `Removed task ${id}.` : `Task ${id} not found.`,
+        isError: !removed,
+      };
+    },
+  });
+
   // Seed approved users from static allowFrom config
   const channelConfigs = config.channels as Record<string, unknown>;
   for (const [channelId, channelCfg] of Object.entries(channelConfigs)) {
@@ -638,7 +1056,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
       if (parsed) {
         const cmdCtx: CommandContext = {
           orchestrator, cerebrum, channelManager, skillRegistry, config,
-          service: { runTask, getTaskState, getEnabledTasks } as unknown as ServiceInstance,
+          service: { runTask, getTaskState, getEnabledTasks, getTaskDefinitions, getTaskRuns } as unknown as ServiceInstance,
           currentModel: cerebrum.getDefaultModel(),
           currentProvider: cerebrum.getDefaultProvider(),
           autoMode: orchestrator.getAutoMode(),
@@ -664,8 +1082,10 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
           turnId,
           ingress: {
             channelId: msg.channelId,
+            routeTo: msg.routeTo,
             senderId: msg.senderId,
             senderName: msg.senderName,
+            sessionId: msg.sessionId,
             threadId: msg.threadId,
             replyToId: msg.replyToId,
             timestamp: msg.timestamp,
@@ -687,8 +1107,10 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
           `Sent channel reply to ${msg.senderName || msg.senderId || 'unknown recipient'}.`,
           {
             channelId: msg.channelId,
+            routeTo: msg.routeTo,
             senderId: msg.senderId,
             senderName: msg.senderName,
+            sessionId: msg.sessionId,
             threadId: msg.threadId,
             replyToId: msg.replyToId,
             replyExcerpt: reply.slice(0, 500),
@@ -815,6 +1237,82 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
 
   // Prefix for docker commands — set to 'sudo ' if user lacks permission
   let dockerPrefix = '';
+
+  async function executeManagedTask(
+    task: TaskDefinition,
+    options: {
+      slotKey?: string;
+      scheduledFor?: string;
+      reason?: string;
+      timeoutMs?: number;
+      autoMode?: boolean;
+    } = {},
+  ): Promise<{ success: boolean; error?: string }> {
+    const startedAt = new Date().toISOString();
+    const runningTask: TaskDefinition = {
+      ...task,
+      activeConversationId: orchestrator.getTaskConversation(task.id) ?? task.activeConversationId,
+      lastRunAt: startedAt,
+      lastScheduledSlot: options.slotKey ?? task.lastScheduledSlot,
+      lastResult: 'running',
+      runCount: (task.runCount ?? 0) + 1,
+      updatedAt: startedAt,
+    };
+    await saveTaskDefinition(runningTask);
+
+    const result = await orchestrator.runTask(task.id, task.goal, {
+      timeoutMs: options.timeoutMs ?? task.timeoutMinutes * 60_000,
+      autoMode: options.autoMode ?? task.autoMode,
+    });
+
+    const completedAt = new Date().toISOString();
+    const conversationId = orchestrator.getTaskConversation(task.id) ?? runningTask.activeConversationId;
+    const finalTask: TaskDefinition = {
+      ...runningTask,
+      activeConversationId: conversationId,
+      lastResult: result.success ? 'success' : 'failure',
+      lastSummary: result.success
+        ? `Completed task ${task.id}${options.reason ? ` (${options.reason})` : ''}.`
+        : (result.error ?? `Task ${task.id} failed.`),
+      updatedAt: completedAt,
+      ...(task.kind === 'one_shot' && result.success ? { enabled: false } : {}),
+    };
+
+    if (finalTask.activePlanId) {
+      planStore.updateStatus(finalTask.activePlanId, result.success ? 'completed' : 'failed');
+    }
+
+    const runRecordBase: Omit<TaskRunRecord, 'id' | 'taskId'> = {
+      status: result.success ? 'success' : 'failure',
+      scheduledFor: options.scheduledFor,
+      slotKey: options.slotKey,
+      startedAt,
+      completedAt,
+      summary: finalTask.lastSummary ?? '',
+      error: result.success ? undefined : result.error,
+      conversationId,
+    };
+
+    const reportableRun = await deliverTaskReport(finalTask, {
+      id: '',
+      taskId: task.id,
+      ...runRecordBase,
+    }).catch((err) => {
+      log.warn('Failed to deliver task report', { taskId: task.id, error: (err as Error).message });
+      return { id: '', taskId: task.id, ...runRecordBase };
+    });
+    taskStore.appendRun(task.id, {
+      ...runRecordBase,
+      reportDeliveredAt: reportableRun.reportDeliveredAt,
+    });
+
+    await saveTaskDefinition(finalTask);
+
+    if (!result.success) {
+      log.warn('Managed task failed', { taskId: task.id, error: result.error });
+    }
+    return result;
+  }
 
   function isDockerAvailable(): boolean {
     // Check if Docker is installed (check PATH, then common locations)
@@ -1165,10 +1663,17 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
       // Non-blocking
     }
 
-    // Register heartbeat tasks: fine-tuning + recurring tasks
-    const heartbeatTaskMap = new Map<string, { type: 'finetune' } | { type: 'recurring'; configId: string }>();
-
     const registerHeartbeatTasks = async () => {
+      for (const heartbeatId of Array.from(heartbeatTaskMap.keys())) {
+        try {
+          await client.unregisterTask(heartbeatId);
+        } catch {
+          // Best effort during reconnect/re-registration
+        }
+      }
+      heartbeatTaskMap.clear();
+      heartbeatTaskIdsByTaskId.clear();
+
       // Fine-tune task
       if (config.cerebellum.finetune?.enabled) {
         try {
@@ -1182,30 +1687,11 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
             log.info('Fine-tune heartbeat task registered', { taskId, schedule: finetuneScheduleHint });
           }
         } catch (err) {
-          log.warn('Failed to register fine-tune task', { error: (err as Error).message });
+            log.warn('Failed to register fine-tune task', { error: (err as Error).message });
         }
       }
 
-      // Recurring tasks from config
-      for (const task of enabledTasks) {
-        const scheduleHint = task.schedule === 'daily' ? 'every day'
-          : task.schedule === 'hourly' ? 'every hour'
-          : task.schedule === 'weekly' ? 'every week'
-          : task.schedule;
-        try {
-          const taskId = await client.registerTask(
-            task.goal.split('\n')[0],
-            scheduleHint,
-            { type: 'recurring-task', configId: task.id },
-          );
-          if (taskId) {
-            heartbeatTaskMap.set(taskId, { type: 'recurring', configId: task.id });
-            log.info('Recurring task registered with heartbeat', { taskId, configId: task.id, schedule: scheduleHint });
-          }
-        } catch (err) {
-          log.warn('Failed to register recurring task', { error: (err as Error).message, taskId: task.id });
-        }
-      }
+      await syncHeartbeatTasks();
 
       if (heartbeatTaskMap.size === 0) return;
 
@@ -1223,25 +1709,18 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
                 orchestrator.triggerFineTune().catch((err) =>
                   log.info('Auto fine-tune deferred', { reason: (err as Error).message }),
                 );
-              } else if (mapping.type === 'recurring') {
-                const taskConfig = enabledTasks.find((t) => t.id === mapping.configId);
-                if (!taskConfig) continue;
-                log.info('Heartbeat triggered recurring task', { taskId: mapping.configId });
-                orchestrator.runTask(mapping.configId, taskConfig.goal, {
-                  timeoutMs: taskConfig.timeoutMinutes * 60_000,
-                  autoMode: taskConfig.autoMode,
-                }).then((result) => {
-                  // Persist task state after each run
-                  const convId = orchestrator.getTaskConversation(mapping.configId);
-                  taskState[mapping.configId] = {
-                    conversationId: convId ?? '',
-                    lastRunAt: new Date().toISOString(),
-                    runCount: (taskState[mapping.configId]?.runCount ?? 0) + 1,
-                  };
-                  saveTaskState();
-                  if (!result.success) {
-                    log.warn('Recurring task failed', { taskId: mapping.configId, error: result.error });
-                  }
+              } else if (mapping.type === 'task') {
+                const task = taskStore.get(mapping.taskId);
+                if (!task || !task.enabled) continue;
+                log.info('Heartbeat triggered managed task', {
+                  taskId: mapping.taskId,
+                  scheduledFor: action.scheduledFor,
+                  slotKey: action.slotKey,
+                });
+                void executeManagedTask(task, {
+                  scheduledFor: action.scheduledFor,
+                  slotKey: action.slotKey,
+                  reason: action.reason,
                 });
               }
             }
@@ -1276,6 +1755,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
         // Attempt reconnect
         try {
           await cerebellumClient.connect();
+          await registerHeartbeatTasks();
         } catch {
           // Will retry next poll
         }
@@ -1453,8 +1933,6 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
   // --- Proactive Controller ---
   let proactiveController: ProactiveController | null = null;
   if (config.proactive.enabled) {
-    const planStore = new PlanStore(dataDbPath);
-
     proactiveController = new ProactiveController({
       planStore,
       instanceStore,
@@ -1521,32 +1999,9 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
   }
 
   async function runTask(taskId: string): Promise<{ success: boolean; error?: string }> {
-    const taskConfig = enabledTasks.find((t) => t.id === taskId);
-    if (!taskConfig) return { success: false, error: `Unknown task: ${taskId}` };
-
-    const result = await orchestrator.runTask(taskId, taskConfig.goal, {
-      timeoutMs: taskConfig.timeoutMinutes * 60_000,
-      autoMode: taskConfig.autoMode,
-    });
-
-    // Persist state
-    const convId = orchestrator.getTaskConversation(taskId);
-    taskState[taskId] = {
-      conversationId: convId ?? '',
-      lastRunAt: new Date().toISOString(),
-      runCount: (taskState[taskId]?.runCount ?? 0) + 1,
-    };
-    saveTaskState();
-
-    return result;
-  }
-
-  function getTaskState(): Record<string, TaskStateEntry> {
-    return { ...taskState };
-  }
-
-  function getEnabledTasks(): Array<{ id: string; goal: string; schedule: string; autoMode: boolean; timeoutMinutes: number }> {
-    return enabledTasks;
+    const task = taskStore.get(normalizeTaskId(taskId));
+    if (!task) return { success: false, error: `Unknown task: ${taskId}` };
+    return executeManagedTask(task, { reason: 'manual' });
   }
 
   async function listHeartbeatTasks(): Promise<Array<{ taskId: string; description: string; status: string; lastRun?: number; scheduleHint: string; metadata?: Record<string, string> }>> {
@@ -1568,6 +2023,8 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
     startGateway,
     runTask,
     getTaskState,
+    getTaskDefinitions,
+    getTaskRuns,
     getEnabledTasks,
     listHeartbeatTasks,
     shutdown,

@@ -61,6 +61,7 @@ export function createFeishuChannel(config: FeishuChannelConfig): ChannelPlugin 
 
           const inbound: InboundMessage = {
             channelId: 'feishu',
+            routeTo: message.chat_id as string,
             senderId,
             text,
             sessionId: message.root_id

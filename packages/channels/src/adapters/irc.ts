@@ -135,6 +135,7 @@ export function createIrcChannel(config: IrcChannelConfig): ChannelPlugin {
 
             const inbound: InboundMessage = {
               channelId: 'irc',
+              routeTo: target.startsWith('#') ? target : nick,
               senderId: nick,
               senderName: nick,
               text,

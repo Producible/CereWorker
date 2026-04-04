@@ -14,6 +14,38 @@ const providerConfigSchema = z.object({
     .optional(),
 });
 
+const taskScheduleSchema = z.union([
+  z.string(),
+  z.object({
+    type: z.literal('interval'),
+    every: z.number().int().positive(),
+    unit: z.enum(['minutes', 'hours', 'days', 'weeks']),
+  }),
+  z.object({
+    type: z.literal('daily_at'),
+    time: z.string(),
+    timezone: z.string().optional(),
+    catchUpPolicy: z.enum(['none', 'once']).default('once'),
+  }),
+  z.object({
+    type: z.literal('one_shot'),
+    dueAt: z.string(),
+    timezone: z.string().optional(),
+    catchUpPolicy: z.enum(['none', 'once']).default('once'),
+  }),
+]);
+
+const taskConfigSchema = z.object({
+  id: z.string(),
+  goal: z.string(),
+  kind: z.enum(['recurring', 'one_shot']).default('recurring'),
+  schedule: taskScheduleSchema.default('daily'),
+  enabled: z.boolean().default(true),
+  autoMode: z.boolean().default(true),
+  timeoutMinutes: z.number().default(10),
+  reportTarget: z.enum(['origin', 'none']).default('origin'),
+});
+
 export const configSchema = z.object({
   profile: z
     .object({
@@ -306,16 +338,7 @@ export const configSchema = z.object({
     .default({}),
 
   tasks: z
-    .array(
-      z.object({
-        id: z.string(),
-        goal: z.string(),
-        schedule: z.string().default('daily'),
-        enabled: z.boolean().default(true),
-        autoMode: z.boolean().default(true),
-        timeoutMinutes: z.number().default(10),
-      }),
-    )
+    .array(taskConfigSchema)
     .default([]),
 
   proactive: z

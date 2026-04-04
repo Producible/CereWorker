@@ -70,6 +70,7 @@ export function createWhatsAppChannel(config: WhatsAppChannelConfig): ChannelPlu
 
           const inbound: InboundMessage = {
             channelId: 'whatsapp',
+            routeTo: jid,
             senderId,
             senderName: msg.pushName ?? undefined,
             text,

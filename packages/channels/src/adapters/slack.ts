@@ -32,6 +32,7 @@ export function createSlackChannel(config: SlackChannelConfig): ChannelPlugin {
 
         const inbound: InboundMessage = {
           channelId: 'slack',
+          routeTo: message.channel,
           senderId: ('user' in message ? message.user : '') ?? '',
           text: message.text,
           sessionId: ('thread_ts' in message && message.thread_ts)

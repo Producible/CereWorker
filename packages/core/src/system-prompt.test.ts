@@ -184,10 +184,16 @@ describe('buildSystemPrompt', () => {
         { id: 'repo-check', goal: 'Check repos for issues', schedule: 'hourly' },
       ],
     }));
-    expect(result).toContain('## Recurring Tasks');
-    expect(result).toContain('2 recurring task(s)');
+    expect(result).toContain('## Routine Tasks');
+    expect(result).toContain('2 active scheduled task(s)');
     expect(result).toContain('**daily-report** (daily)');
     expect(result).toContain('**repo-check** (hourly)');
+  });
+
+  it('includes task registry guidance in verification section', () => {
+    const result = buildSystemPrompt(makeOptions());
+    expect(result).toContain('task_upsert');
+    expect(result).toContain('task_list');
   });
 
   it('omits recurring tasks section when empty', () => {

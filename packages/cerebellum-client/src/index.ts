@@ -3,6 +3,7 @@ export type {
   CerebellumStatus,
   TaskState,
   TaskAction,
+  TaskSchedule,
   HeartbeatEvent,
   VerificationResult,
   VerificationCheck,

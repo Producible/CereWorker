@@ -37,6 +37,16 @@ export interface ToolExecutionContext {
   scopeKey?: string;
   turnId?: string;
   attempt?: number;
+  ingress?: {
+    channelId?: string;
+    routeTo?: string;
+    senderId?: string;
+    senderName?: string;
+    sessionId?: string;
+    threadId?: string;
+    replyToId?: string;
+    timestamp?: number;
+  };
   runtimeEngine: ToolRuntimeEngine;
   abortSignal?: AbortSignal;
 }
@@ -124,6 +134,7 @@ export class ToolRuntime {
     scopeKey?: string;
     turnId?: string;
     attempt?: number;
+    ingress?: ToolExecutionContext['ingress'];
     abortSignal?: AbortSignal;
   }): Promise<ToolRuntimeExecution> {
     const normalizedToolName = normalizeToolName(params.toolCall.name);
@@ -138,6 +149,7 @@ export class ToolRuntime {
       scopeKey: executionScope,
       turnId: params.turnId,
       attempt: params.attempt,
+      ingress: params.ingress,
       runtimeEngine: this.config.engine,
       abortSignal: params.abortSignal,
     };

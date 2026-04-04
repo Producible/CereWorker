@@ -5,6 +5,7 @@ export interface ChannelMeta {
 
 export interface InboundMessage {
   channelId: string;
+  routeTo?: string;
   senderId: string;
   senderName?: string;
   text: string;

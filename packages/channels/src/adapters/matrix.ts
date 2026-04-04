@@ -35,6 +35,7 @@ export function createMatrixChannel(config: MatrixChannelConfig): ChannelPlugin 
         const senderId = event.getSender() ?? '';
         const inbound: InboundMessage = {
           channelId: 'matrix',
+          routeTo: room.roomId,
           senderId,
           text: content.body ?? '',
           sessionId: `room:${room.roomId}`,

@@ -7,6 +7,7 @@ import { createLogger } from './logger.js';
 const log = createLogger('instance');
 
 const CURRENT_SCHEMA_VERSION = 1;
+const DEFAULT_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
 export interface FineTuneRecord {
   jobId: string;
@@ -28,6 +29,7 @@ export interface InstanceIdentity {
   id: string;
   createdAt: string;
   lastBootAt: string;
+  timezone: string;
   profile: InstanceProfile;
   conversationCount: number;
   finetuneLineage: FineTuneRecord[];
@@ -66,6 +68,7 @@ export class InstanceStore {
       id: randomUUID(),
       createdAt: now,
       lastBootAt: now,
+      timezone: DEFAULT_TIMEZONE,
       profile: { ...profile, source },
       conversationCount: 0,
       finetuneLineage: [],
@@ -125,6 +128,13 @@ export class InstanceStore {
     log.info('Updated instance profile', { name: this.identity.profile.name });
   }
 
+  updateTimezone(timezone: string): void {
+    if (!this.identity) return;
+    this.identity.timezone = timezone;
+    this.save();
+    log.info('Updated instance timezone', { timezone });
+  }
+
   /** Set conversation count directly (used for migration). */
   setConversationCount(count: number): void {
     if (!this.identity) return;
@@ -142,6 +152,7 @@ export class InstanceStore {
         id: (raw.id as string) ?? randomUUID(),
         createdAt: (raw.createdAt as string) ?? new Date().toISOString(),
         lastBootAt: (raw.lastBootAt as string) ?? new Date().toISOString(),
+        timezone: (raw.timezone as string) ?? DEFAULT_TIMEZONE,
         profile: (raw.profile as InstanceProfile) ?? {
           name: 'Cere',
           role: 'general-purpose assistant',

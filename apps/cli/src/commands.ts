@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { Orchestrator } from '@cereworker/core';
+import { formatTaskSchedule, getNextTaskRun, type Orchestrator } from '@cereworker/core';
 import type { CerebrumProvider } from '@cereworker/cerebrum';
 import type { ChannelManager } from '@cereworker/channels';
 import type { SkillRegistry } from '@cereworker/skills';
@@ -51,7 +51,7 @@ export const SLASH_COMMANDS: Array<{ name: string; hint: string }> = [
   { name: '/resume', hint: 'resume conversation' },
   { name: '/skills', hint: 'list skills' },
   { name: '/stop', hint: 'emergency stop' },
-  { name: '/task', hint: 'recurring tasks' },
+  { name: '/task', hint: 'scheduled tasks' },
   { name: '/tasks', hint: 'cerebellum heartbeat tasks' },
 ];
 
@@ -109,7 +109,7 @@ export function handleSlashCommand(command: string, args: string, ctx: CommandCo
   /nodes                Show connected nodes
   /auto [on|off]        Toggle auto mode
   /finetune [sub]       Fine-tuning: start, status, config, history
-  /task [sub]           Recurring tasks: list, run <id>, history <id>
+  /task [sub]           Scheduled tasks: list, run <id>, history <id>
   /tasks                List Cerebellum heartbeat tasks
   /stop                 Emergency stop
   /clear                Start a new conversation (TUI only)
@@ -362,29 +362,30 @@ export function handleSlashCommand(command: string, args: string, ctx: CommandCo
           ),
         };
       } else if (taskSub === 'history' && taskTarget) {
-        const convId = orchestrator.getTaskConversation(taskTarget);
-        if (!convId) return { type: 'message', text: `No conversation history for task "${taskTarget}".` };
-        const messages = orchestrator.getMessages(convId);
-        if (messages.length === 0) return { type: 'message', text: `Task "${taskTarget}" has an empty conversation.` };
-        const lines = messages.slice(-10).map((m) => {
-          const prefix = m.role === 'user' ? '[GOAL]' : '[AGENT]';
-          const text = m.content.length > 200 ? m.content.slice(0, 200) + '...' : m.content;
-          return `  ${prefix} ${text}`;
+        const runs = service.getTaskRuns(taskTarget);
+        if (runs.length === 0) return { type: 'message', text: `No run history for task "${taskTarget}".` };
+        const lines = runs.slice(-10).map((run) => {
+          const completed = run.completedAt ? formatLocalTimestamp(run.completedAt) : 'in progress';
+          return `  ${run.status.padEnd(8)} | ${completed}\n    ${run.summary}`;
         });
-        return { type: 'message', text: `Task "${taskTarget}" — last ${lines.length} messages:\n${lines.join('\n')}`, sticky: true };
+        return { type: 'message', text: `Task "${taskTarget}" — last ${lines.length} runs:\n${lines.join('\n')}`, sticky: true };
       } else if (taskSub === '' || taskSub === 'list') {
-        const tasks = service.getEnabledTasks();
-        if (tasks.length === 0) return { type: 'message', text: 'No recurring tasks configured.' };
-        const state = service.getTaskState();
-        const lines = tasks.map((t) => {
-          const s = state[t.id];
-          const running = orchestrator.isTaskRunning(t.id) ? ' [RUNNING]' : '';
-          const lastRun = s?.lastRunAt ? ` (last: ${formatLocalTimestamp(s.lastRunAt)}, runs: ${s.runCount ?? 0})` : ' (never run)';
-          return `  ${t.id} (${t.schedule})${running}${lastRun}\n    ${t.goal.split('\n')[0]}`;
+        const tasks = service.getTaskDefinitions().filter((task) => task.enabled);
+        if (tasks.length === 0) return { type: 'message', text: 'No active scheduled tasks.' };
+        const lines = tasks.map((task) => {
+          const running = task.lastResult === 'running' || orchestrator.isTaskRunning(task.id) ? ' [RUNNING]' : '';
+          const nextRun = getNextTaskRun(task.schedule, new Date(), {
+            lastRunAt: task.lastRunAt,
+            timezone: task.timezone,
+          });
+          const lastRun = task.lastRunAt
+            ? `last: ${formatLocalTimestamp(task.lastRunAt)}, runs: ${task.runCount ?? 0}`
+            : 'never run';
+          return `  ${task.id} (${task.kind}, ${formatTaskSchedule(task.schedule)})${running}\n    ${task.goal.split('\n')[0]}\n    ${lastRun}; next: ${nextRun ? formatLocalTimestamp(nextRun.toISOString()) : 'n/a'}`;
         });
-        return { type: 'message', text: `Recurring Tasks:\n${lines.join('\n')}`, sticky: true };
+        return { type: 'message', text: `Scheduled Tasks:\n${lines.join('\n')}`, sticky: true };
       }
-      return { type: 'message', text: 'Usage: /task [list|run|history]\n  /task run <id>     Manually trigger a task\n  /task history <id> Show recent messages' };
+      return { type: 'message', text: 'Usage: /task [list|run|history]\n  /task run <id>     Manually trigger a task\n  /task history <id> Show recent run history' };
     }
 
     case 'tasks': {

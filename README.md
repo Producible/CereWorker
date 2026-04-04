@@ -57,7 +57,7 @@ This isn't just an architectural novelty. The key insight: **a 600M-parameter mo
 
 ### 1. Heartbeat: Deterministic Scheduling with LLM Tiebreaker
 
-Tasks are registered with natural language hints like "every 5 minutes" or "when idle." Deterministic code parses these into intervals and handles clear-cut cases: too early? skip. Way overdue? invoke. Only in the ambiguous zone (0.8x-2.0x the interval) does the Cerebellum get asked a single binary question: "Should this task run now? yes or no." The model is a tiebreaker, not a scheduler.
+Tasks now live in a text-backed task registry under `~/.cereworker/tasks/` and support three schedule families: interval (`every 3 hours`), exact local time (`daily at 10:00 PM` with timezone), and one-shot due tasks. Deterministic code handles slot calculation, catch-up-once behavior, and clear-cut interval decisions. Only in the ambiguous interval zone (0.8x-2.0x the interval) does the Cerebellum get asked a single binary question: "Should this task run now? yes or no." The model is a tiebreaker, not a scheduler.
 
 ### 2. Muscle+Skeleton: Programmatic Verification + Binary Verdict
 
@@ -98,6 +98,15 @@ The **Hippocampus** is CereWorker's temporary memory layer, inspired by the brai
 The **SubAgentManager** enables the Cerebrum to spawn independent workers for parallel tasks. Each sub-agent gets its own isolated conversation, session (`session.json` + `transcript.jsonl`), and memory directory (`~/.cereworker/agents/<id>/memory/`). Sub-agents share the same Cerebrum provider and tool registry but cannot spawn sub-sub-agents (preventing infinite recursion). The Cerebellum monitors sub-agent health via the `ReportAgentStates` RPC -- deterministic checks detect stalls and timeouts, and the model answers "should we retry this stalled agent? yes/no" for ambiguous cases. The Cerebrum manages sub-agents through three tools: `spawn_agent`, `query_agents`, and `cancel_agent`.
 
 Every conversation also carries a plain-text session ledger under `~/.cereworker/conversations/<conversationId>/sessions/`, so retries, recovery boundaries, and later inspection all stay attached to the same single-instance history instead of being reconstructed only from prompts.
+
+### Harness Improvements
+
+Recent harness work makes long-running tool and browser tasks much more resumable and inspectable:
+
+- **Protocol-aware turn outcomes.** The orchestrator now classifies how a turn actually ended (`completed`, `ended_on_tool_calls`, `completion_signal_missing`, `stalled`, etc.) instead of inferring success only from final text.
+- **Append-only turn journals and session ledgers.** Each turn writes plain JSONL journals and each session keeps a ledger of ingress, tool activity, recovery decisions, boundaries, memory updates, and channel/node events.
+- **Recovery from verified boundaries.** Retries now resume from the latest committed boundary and browser state snapshot instead of replaying raw failed tool history or injecting a generic "continue" prompt.
+- **Single-instance control plane.** Session snapshots, ledgers, and fine-tune artifacts all stay attached to the same learned instance, so continuity survives retries, restarts, and later inspection.
 
 **Channels** are pluggable IM adapters. Each implements a simple interface: `start(handler)`, `stop()`, `send(msg)`, `isAllowed(senderId)`. The channel manager starts all enabled channels and routes inbound messages through the orchestrator, so the agent can be reached via Slack, Discord, Telegram, Matrix, Feishu, WeChat, WhatsApp, Signal, or IRC simultaneously.
 
@@ -331,8 +340,8 @@ When you type a message in the TUI:
 Running in parallel:
 
 1. The Cerebellum's heartbeat engine ticks every N seconds (configurable, default 30s)
-2. For each registered task, deterministic code checks elapsed time against the schedule: too early (< 0.8x interval)? skip. Way overdue (> 2.0x interval)? invoke. No model needed
-3. Only for tasks in the ambiguous zone does the Cerebellum get asked: "Should this run now? yes/no" (3 tokens, binary verdict)
+2. For each registered task, deterministic code evaluates its schedule type: interval cadence, exact local-time slots with timezone/catch-up handling, or one-shot due time
+3. Interval tasks still use the old fast path: too early (< 0.8x interval)? skip. Way overdue (> 2.0x interval)? invoke. Only the ambiguous interval zone needs a model tiebreaker
 4. "Invoke" actions stream back to the TypeScript orchestrator via gRPC server-streaming
 5. The orchestrator executes the invoked tasks (which may trigger Cerebrum calls, tool runs, or notifications)
 
@@ -398,9 +407,9 @@ This prevents the common failure mode where complex multi-tool workflows (browse
 
 CereWorker supports a hub-spoke topology where one instance (the **gateway**) coordinates multiple instances (**nodes**) on other machines. The gateway's Cerebrum can call tools on any connected node as if they were local.
 
-**Gateway mode**: One CereWorker instance runs the Cerebrum and starts a WebSocket server. Nodes connect and register their local tools. The gateway creates proxy tools (`shell@workstation-gpu`, `file@nas-server`, etc.) that the Cerebrum can call during normal reasoning. Tool invocations are forwarded over WebSocket, executed on the remote node (respecting the node's local exec-policy), and results flow back transparently.
+**Gateway mode**: One CereWorker instance runs the Cerebrum and starts a WebSocket server. Nodes connect and register their local tools. The gateway creates proxy tools (`shell@workstation-gpu`, `file@nas-server`, etc.) that the Cerebrum can call during normal reasoning. Tool invocations are forwarded over a **versioned session bus envelope** with per-node sequencing, acknowledgements, replay state, and session metadata (`conversationId`, `sessionId`, `turnId`, `attempt`). Remote `tool.started`, `tool.finished`, and `node.status` events are written back into the same session ledger as local work.
 
-**Node mode**: A CereWorker instance connects to a gateway and exposes its local tools. It receives `invoke` frames, executes them locally, and returns results. Emergency stop commands propagate from gateway to all nodes.
+**Node mode**: A CereWorker instance connects to a gateway and exposes its local tools. It receives session-aware invoke envelopes, executes them locally, emits tool lifecycle events, and returns structured results. Emergency stop commands propagate from gateway to all nodes.
 
 **Standalone mode** (default): No gateway behavior. Everything works as a single-machine agent.
 
@@ -689,9 +698,9 @@ The Hippocampus is CereWorker's temporary memory layer that bridges conversation
         curated-memory.jsonl
 ```
 
-The Cerebrum reads and writes memory through four tools: `memory_read`, `memory_write`, `memory_log`, and `memory_search`. During normal operation, completed turns can also append a short per-session markdown trace under `memory/session/` so the instance keeps a working memory lane separate from curated project knowledge. Periodically, a **curator** reviews the Hippocampus and asks the Cerebrum: "Which of these memories contain durable knowledge worth permanently learning?" The answer is extracted as structured instruction/response pairs and queued for the Cerebellum's fine-tuning pipeline together with instance/session metadata.
+The Cerebrum reads and writes memory through four tools: `memory_read`, `memory_write`, `memory_log`, and `memory_search`. During normal operation, completed turns can also append a short per-session markdown trace under `memory/session/` so the instance keeps a working memory lane separate from curated project knowledge. Stop hooks now also export **daily continuity summaries** and **structured training candidates** (recovery, completion, verification, and session examples) as human-readable artifacts. Periodically, a **curator** reviews the Hippocampus and asks the Cerebrum: "Which of these memories contain durable knowledge worth permanently learning?" The answer is extracted as structured instruction/response pairs and queued for the Cerebellum's fine-tuning pipeline together with instance/session metadata.
 
-This creates a natural flow: conversation --> session ledger + Hippocampus files --> curation (Cerebrum) --> fine-tuning queue --> per-round archive --> permanent knowledge (model weights).
+This creates a natural flow: conversation --> turn journal + session ledger + Hippocampus files --> curation / stop-hook extraction --> fine-tuning queue --> per-round archive --> permanent knowledge (model weights).
 
 On first start after upgrading from the old SQLite-backed layout, CereWorker exports legacy `conversations.db` data into the text layout above and keeps the original file as `conversations.db.bak`.
 

@@ -1,5 +1,11 @@
 export type MessageRole = 'user' | 'cerebrum' | 'cerebellum' | 'tool' | 'system';
 export type SessionSource = 'local' | 'channel' | 'gateway' | 'node';
+export type TaskScheduleCatchUpPolicy = 'none' | 'once';
+export type TaskScheduleUnit = 'minutes' | 'hours' | 'days' | 'weeks';
+export type TaskKind = 'recurring' | 'one_shot';
+export type TaskReportTarget = 'origin' | 'none';
+export type TaskOriginSource = 'config' | 'conversation' | 'channel' | 'system';
+export type TaskRunStatus = 'running' | 'success' | 'failure' | 'cancelled';
 
 export interface ToolCall {
   id: string;
@@ -39,6 +45,83 @@ export interface TaskAction {
   taskId: string;
   action: 'invoke' | 'skip' | 'defer' | 'cancel';
   reason: string;
+  scheduledFor?: string;
+  slotKey?: string;
+}
+
+export interface IntervalTaskSchedule {
+  type: 'interval';
+  every: number;
+  unit: TaskScheduleUnit;
+}
+
+export interface DailyAtTaskSchedule {
+  type: 'daily_at';
+  time: string;
+  timezone?: string;
+  catchUpPolicy?: TaskScheduleCatchUpPolicy;
+}
+
+export interface OneShotTaskSchedule {
+  type: 'one_shot';
+  dueAt: string;
+  timezone?: string;
+  catchUpPolicy?: TaskScheduleCatchUpPolicy;
+}
+
+export type TaskSchedule =
+  | IntervalTaskSchedule
+  | DailyAtTaskSchedule
+  | OneShotTaskSchedule;
+
+export interface TaskOrigin {
+  source: TaskOriginSource;
+  createdAt: string;
+  conversationId?: string;
+  channelId?: string;
+  routeTo?: string;
+  senderId?: string;
+  senderName?: string;
+  sessionId?: string;
+  threadId?: string;
+  replyToId?: string;
+}
+
+export interface TaskDefinition {
+  id: string;
+  goal: string;
+  enabled: boolean;
+  kind: TaskKind;
+  schedule: TaskSchedule;
+  autoMode: boolean;
+  timeoutMinutes: number;
+  reportTarget: TaskReportTarget;
+  createdAt: string;
+  updatedAt: string;
+  origin?: TaskOrigin;
+  timezone?: string;
+  activeConversationId?: string;
+  activePlanId?: string;
+  lastScheduledSlot?: string;
+  lastRunAt?: string;
+  lastResult?: TaskRunStatus;
+  lastSummary?: string;
+  runCount?: number;
+}
+
+export interface TaskRunRecord {
+  id: string;
+  taskId: string;
+  status: TaskRunStatus;
+  scheduledFor?: string;
+  slotKey?: string;
+  startedAt: string;
+  completedAt?: string;
+  summary: string;
+  error?: string;
+  conversationId?: string;
+  sessionId?: string;
+  reportDeliveredAt?: string;
 }
 
 export interface CerebellumStatus {

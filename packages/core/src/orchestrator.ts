@@ -48,10 +48,18 @@ const log = createLogger('orchestrator');
 const TASK_COMPLETE_TOOL = 'task_complete';
 const TASK_BLOCKED_TOOL = 'task_blocked';
 const TASK_CHECKPOINT_TOOL = 'task_checkpoint';
+const TASK_UPSERT_TOOL = 'task_upsert';
+const TASK_REMOVE_TOOL = 'task_remove';
+const TASK_LIST_TOOL = 'task_list';
+const TASK_GET_TOOL = 'task_get';
 const INTERNAL_TASK_TOOL_NAMES = new Set([
   TASK_COMPLETE_TOOL,
   TASK_BLOCKED_TOOL,
   TASK_CHECKPOINT_TOOL,
+  TASK_UPSERT_TOOL,
+  TASK_REMOVE_TOOL,
+  TASK_LIST_TOOL,
+  TASK_GET_TOOL,
 ]);
 const SYSTEM_FALLBACK_COMPLETION_PROMPT =
   '[System fallback] The last turn ended without a final answer. Continue from the last verified state and end by calling task_complete or task_blocked before your final answer.';
@@ -226,8 +234,10 @@ export interface SendMessageOptions {
   turnId?: string;
   ingress?: {
     channelId?: string;
+    routeTo?: string;
     senderId?: string;
     senderName?: string;
+    sessionId?: string;
     threadId?: string;
     replyToId?: string;
     timestamp?: number;
@@ -2537,8 +2547,10 @@ export class Orchestrator extends TypedEventEmitter {
             `Received channel message from ${options.ingress.senderName || options.ingress.senderId || 'unknown sender'}.`,
             {
               channelId: options.ingress.channelId,
+              routeTo: options.ingress.routeTo,
               senderId: options.ingress.senderId,
               senderName: options.ingress.senderName,
+              sessionId: options.ingress.sessionId,
               threadId: options.ingress.threadId,
               replyToId: options.ingress.replyToId,
               timestamp: options.ingress.timestamp,
@@ -2713,6 +2725,7 @@ export class Orchestrator extends TypedEventEmitter {
                   scopeKey: convId,
                   turnId,
                   attempt: attemptNumber,
+                  ingress: options?.ingress,
                   abortSignal: abortController.signal,
                 });
                 this.logStreamDebug(

@@ -183,6 +183,7 @@ You are an autonomous agent. When given a goal, figure out how to accomplish it 
   - If you are recovering from a retry, treat the verified checkpoints and recovery summary as authoritative and continue from the next unfinished step instead of repeating confirmed work.
   - Use \`task_complete\` only after you have verified the requested outcome and can cite concrete evidence.
   - Use \`task_blocked\` when you cannot finish the task and need to report a specific blocker with evidence.
+  - When Boss asks you to create, update, remove, or list routines, use \`task_upsert\`, \`task_remove\`, \`task_get\`, and \`task_list\` so the task registry stays authoritative.
 
 5. **Learn**: Persist what you learned for next time.
    - \`memory_write\`: update long-term context in MEMORY.md (preferences, architecture, decisions).
@@ -270,16 +271,16 @@ Status: ${ft.status}. ${statusDetail}
 - The user can check status with /finetune, start training with /finetune start, and configure with /finetune config.`);
   }
 
-  // Recurring Tasks
+  // Routine Tasks
   if (options.recurringTasks?.length) {
     const taskLines = options.recurringTasks
       .map((t) => `- **${t.id}** (${t.schedule}): ${t.goal.split('\n')[0]}`)
       .join('\n');
-    sections.push(`## Recurring Tasks
-You have ${options.recurringTasks.length} recurring task(s) that execute automatically on schedule:
+    sections.push(`## Routine Tasks
+You have ${options.recurringTasks.length} active scheduled task(s):
 ${taskLines}
 
-When executing a recurring task:
+When executing a scheduled task:
 - You are in a persistent conversation for this task — review history for context from previous runs.
 - Use memory_log to record outcomes and learnings.
 - If a task requires credentials you don't have, explain clearly what's needed and where to put them.`);

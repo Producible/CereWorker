@@ -17,6 +17,7 @@ export interface TaskState {
   status: 'pending' | 'running' | 'waiting' | 'completed';
   lastRun?: number;
   scheduleHint: string;
+  schedule?: TaskSchedule;
   metadata?: Record<string, string>;
 }
 
@@ -24,7 +25,14 @@ export interface TaskAction {
   taskId: string;
   action: 'invoke' | 'skip' | 'defer' | 'cancel';
   reason: string;
+  scheduledFor?: string;
+  slotKey?: string;
 }
+
+export type TaskSchedule =
+  | { type: 'interval'; every: number; unit: 'minutes' | 'hours' | 'days' | 'weeks' }
+  | { type: 'daily_at'; time: string; timezone?: string; catchUpPolicy?: 'none' | 'once' }
+  | { type: 'one_shot'; dueAt: string; timezone?: string; catchUpPolicy?: 'none' | 'once' };
 
 export interface HeartbeatEvent {
   timestamp: number;
@@ -285,12 +293,18 @@ export class CerebellumClient {
     description: string,
     scheduleHint: string,
     metadata?: Record<string, string>,
+    schedule?: TaskSchedule,
   ): Promise<string | null> {
     if (!this.connected) return null;
 
     return new Promise((resolve, reject) => {
       this.client.registerTask(
-        { description, scheduleHint, metadata: metadata || {} },
+        {
+          description,
+          scheduleHint,
+          metadata: metadata || {},
+          schedule: this.serializeTaskSchedule(schedule),
+        },
         (err: Error | null, response: GrpcClient) => {
           if (err) {
             reject(err);
@@ -329,6 +343,7 @@ export class CerebellumClient {
             status: t.status,
             lastRun: t.lastRun,
             scheduleHint: t.scheduleHint,
+            schedule: this.deserializeTaskSchedule(t.schedule),
             metadata: t.metadata,
           })),
         );
@@ -349,6 +364,8 @@ export class CerebellumClient {
             taskId: a.taskId,
             action: a.action,
             reason: a.reason,
+            scheduledFor: a.scheduledFor || undefined,
+            slotKey: a.slotKey || undefined,
           })),
         };
       }
@@ -665,5 +682,61 @@ export class CerebellumClient {
         });
       });
     });
+  }
+
+  private serializeTaskSchedule(schedule?: TaskSchedule): Record<string, unknown> | undefined {
+    if (!schedule) return undefined;
+    if (schedule.type === 'interval') {
+      return {
+        interval: {
+          every: schedule.every,
+          unit: schedule.unit,
+        },
+      };
+    }
+    if (schedule.type === 'daily_at') {
+      return {
+        dailyAt: {
+          time: schedule.time,
+          timezone: schedule.timezone ?? '',
+          catchUpPolicy: schedule.catchUpPolicy ?? 'once',
+        },
+      };
+    }
+    return {
+      oneShot: {
+        dueAt: schedule.dueAt,
+        timezone: schedule.timezone ?? '',
+        catchUpPolicy: schedule.catchUpPolicy ?? 'once',
+      },
+    };
+  }
+
+  private deserializeTaskSchedule(raw: GrpcClient): TaskSchedule | undefined {
+    if (!raw) return undefined;
+    if (raw.interval && Number(raw.interval.every) > 0) {
+      return {
+        type: 'interval',
+        every: Number(raw.interval.every),
+        unit: raw.interval.unit,
+      };
+    }
+    if (raw.dailyAt && raw.dailyAt.time) {
+      return {
+        type: 'daily_at',
+        time: raw.dailyAt.time,
+        timezone: raw.dailyAt.timezone || undefined,
+        catchUpPolicy: raw.dailyAt.catchUpPolicy || undefined,
+      };
+    }
+    if (raw.oneShot && raw.oneShot.dueAt) {
+      return {
+        type: 'one_shot',
+        dueAt: raw.oneShot.dueAt,
+        timezone: raw.oneShot.timezone || undefined,
+        catchUpPolicy: raw.oneShot.catchUpPolicy || undefined,
+      };
+    }
+    return undefined;
   }
 }

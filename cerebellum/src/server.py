@@ -57,6 +57,7 @@ class CerebellumServicer(cerebellum_pb2_grpc.CerebellumServicer):
                 "status": t.status,
                 "last_run": t.last_run,
                 "schedule_hint": t.schedule_hint,
+                "schedule": t.schedule,
                 "metadata": dict(t.metadata),
             }
             for t in request.tasks
@@ -85,6 +86,10 @@ class CerebellumServicer(cerebellum_pb2_grpc.CerebellumServicer):
             ta.task_id = action["task_id"]
             ta.action = action["action"]
             ta.reason = action["reason"]
+            if action.get("scheduled_for"):
+                ta.scheduled_for = action["scheduled_for"]
+            if action.get("slot_key"):
+                ta.slot_key = action["slot_key"]
         return response
 
     async def RegisterTask(self, request, context):
@@ -92,6 +97,11 @@ class CerebellumServicer(cerebellum_pb2_grpc.CerebellumServicer):
             request.description,
             request.schedule_hint,
             dict(request.metadata) if request.metadata else None,
+            {
+                "interval": request.schedule.interval if request.schedule.HasField("interval") else None,
+                "dailyAt": request.schedule.daily_at if request.schedule.HasField("daily_at") else None,
+                "oneShot": request.schedule.one_shot if request.schedule.HasField("one_shot") else None,
+            } if request.HasField("schedule") else None,
         )
         return cerebellum_pb2.RegisterTaskResponse(task_id=task_id)
 
@@ -111,6 +121,19 @@ class CerebellumServicer(cerebellum_pb2_grpc.CerebellumServicer):
             ts.schedule_hint = t.get("schedule_hint", "")
             for k, v in t.get("metadata", {}).items():
                 ts.metadata[k] = v
+            schedule = t.get("schedule")
+            if schedule:
+                if schedule.get("type") == "interval":
+                    ts.schedule.interval.every = schedule.get("every", 0)
+                    ts.schedule.interval.unit = schedule.get("unit", "")
+                elif schedule.get("type") == "daily_at":
+                    ts.schedule.daily_at.time = schedule.get("time", "")
+                    ts.schedule.daily_at.timezone = schedule.get("timezone", "")
+                    ts.schedule.daily_at.catch_up_policy = schedule.get("catch_up_policy", "")
+                elif schedule.get("type") == "one_shot":
+                    ts.schedule.one_shot.due_at = schedule.get("due_at", "")
+                    ts.schedule.one_shot.timezone = schedule.get("timezone", "")
+                    ts.schedule.one_shot.catch_up_policy = schedule.get("catch_up_policy", "")
         return response
 
     async def GetStatus(self, request, context):

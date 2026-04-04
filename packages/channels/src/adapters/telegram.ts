@@ -26,6 +26,7 @@ export function createTelegramChannel(config: TelegramChannelConfig): ChannelPlu
         const senderId = String(message.from?.id ?? '');
         const inbound: InboundMessage = {
           channelId: 'telegram',
+          routeTo: String(message.chat.id),
           senderId,
           senderName: message.from?.username ?? message.from?.first_name,
           text: message.text,

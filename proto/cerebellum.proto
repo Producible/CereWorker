@@ -46,12 +46,15 @@ message TaskState {
   int64 last_run = 4;
   string schedule_hint = 5;        // natural language like "every 5 minutes" or "when idle"
   map<string, string> metadata = 6;
+  TaskSchedule schedule = 7;
 }
 
 message TaskAction {
   string task_id = 1;
   string action = 2;               // "invoke", "skip", "defer", "cancel"
   string reason = 3;               // cerebellum's reasoning
+  string scheduled_for = 4;
+  string slot_key = 5;
 }
 
 message HeartbeatRequest {
@@ -73,10 +76,36 @@ message RegisterTaskRequest {
   string description = 1;
   string schedule_hint = 2;
   map<string, string> metadata = 3;
+  TaskSchedule schedule = 4;
 }
 
 message RegisterTaskResponse {
   string task_id = 1;
+}
+
+message IntervalTaskSchedule {
+  int32 every = 1;
+  string unit = 2;
+}
+
+message DailyAtTaskSchedule {
+  string time = 1;
+  string timezone = 2;
+  string catch_up_policy = 3;
+}
+
+message OneShotTaskSchedule {
+  string due_at = 1;
+  string timezone = 2;
+  string catch_up_policy = 3;
+}
+
+message TaskSchedule {
+  oneof kind {
+    IntervalTaskSchedule interval = 1;
+    DailyAtTaskSchedule daily_at = 2;
+    OneShotTaskSchedule one_shot = 3;
+  }
 }
 
 message UnregisterTaskRequest {

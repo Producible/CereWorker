@@ -46,6 +46,7 @@ export function createWeChatChannel(config: WeChatChannelConfig): ChannelPlugin 
 
         const inbound: InboundMessage = {
           channelId: 'wechat',
+          routeTo: room ? room.id : talker.id,
           senderId,
           senderName: talker.name(),
           text,
