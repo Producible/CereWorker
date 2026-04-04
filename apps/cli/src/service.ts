@@ -1,4 +1,5 @@
 import { execFileSync, execSync, spawn, type SpawnOptions, type ChildProcess } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -651,20 +652,16 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
 
       // Regular message — send to orchestrator
       const conversationId = getOrCreateChannelConversationId(msg);
+      const turnId = randomUUID().replace(/-/g, '').slice(0, 10);
       let proactiveReply = '';
       const unsub = orchestrator.on('message:proactive', ({ content }) => {
         proactiveReply += (proactiveReply ? '\n\n' : '') + content;
-      });
-      let activeSessionId = '';
-      const endUnsub = orchestrator.on('message:cerebrum:end', (event) => {
-        if (event.conversationId === conversationId) {
-          activeSessionId = event.sessionId;
-        }
       });
 
       try {
         await orchestrator.sendMessage(msg.text, conversationId, {
           source: 'channel',
+          turnId,
           ingress: {
             channelId: msg.channelId,
             senderId: msg.senderId,
@@ -675,7 +672,6 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
           },
         });
       } finally {
-        endUnsub();
         unsub();
       }
 
@@ -683,10 +679,10 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
       const lastMsg = messages[messages.length - 1];
       const reply = lastMsg?.role === 'cerebrum' ? lastMsg.content : undefined;
 
-      if (reply && activeSessionId) {
+      if (reply) {
         orchestrator.recordSessionEvent(
           conversationId,
-          activeSessionId,
+          turnId,
           'channel_egress',
           `Sent channel reply to ${msg.senderName || msg.senderId || 'unknown recipient'}.`,
           {

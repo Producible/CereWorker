@@ -223,6 +223,7 @@ export interface OrchestratorOptions {
 
 export interface SendMessageOptions {
   source?: SessionSource;
+  turnId?: string;
   ingress?: {
     channelId?: string;
     senderId?: string;
@@ -2489,7 +2490,7 @@ export class Orchestrator extends TypedEventEmitter {
     let nextRetryContext: Message | null = null;
     // Track message IDs from failed attempts so they can be excluded from retries and cleaned up.
     const failedAttemptMessageIds: string[] = [];
-    const turnId = nanoid(10);
+    const turnId = options?.turnId ?? nanoid(10);
     const maxTotalAttempts = 1 + this.maxNudgeRetries + this.maxCompletionRetries;
     let loopTerminated = false;
     let nextRetryCause: RetryCause | null = null;

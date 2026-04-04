@@ -27,6 +27,8 @@ const DEFAULT_STATE: PersistedBusState = {
   outbound: [],
 };
 
+const MAX_OUTBOUND_ENVELOPES = 500;
+
 function shouldPersistOutgoing(eventType: SessionBusEventType): boolean {
   return ![
     'transport.connect',
@@ -120,6 +122,9 @@ export class SessionBusState {
 
     if (shouldPersistOutgoing(base.eventType)) {
       this.state.outbound.push(envelope as AnyGatewayFrame);
+      if (this.state.outbound.length > MAX_OUTBOUND_ENVELOPES) {
+        this.state.outbound = this.state.outbound.slice(-MAX_OUTBOUND_ENVELOPES);
+      }
     }
     this.persist();
     return envelope;

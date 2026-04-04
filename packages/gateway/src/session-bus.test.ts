@@ -104,4 +104,37 @@ describe('SessionBusState', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('caps persisted outbound envelopes to bound replay state growth', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'session-bus-'));
+    try {
+      const bus = new SessionBusState(join(dir, 'state.json'));
+      for (let i = 0; i < 600; i++) {
+        bus.createEnvelope({
+          eventType: 'tool.finished',
+          senderId: 'node-1',
+          sessionId: 'turn-1',
+          source: 'node',
+          payload: {
+            invocationId: `inv-${i}`,
+            tool: 'shell',
+            args: { command: `echo ${i}` },
+            nodeId: 'node-1',
+            result: {
+              callId: `call-${i}`,
+              output: String(i),
+              isError: false,
+            },
+          },
+        });
+      }
+
+      const replay = bus.replayAfter(0);
+      expect(replay).toHaveLength(500);
+      expect(replay[0]?.payload).toMatchObject({ invocationId: 'inv-100' });
+      expect(replay.at(-1)?.payload).toMatchObject({ invocationId: 'inv-599' });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

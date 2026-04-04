@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -939,6 +939,27 @@ describe('createService integration', () => {
       'hello from b',
       'reply:hello from b',
     ]);
+
+    const sessionsDirA = join(
+      homeDir,
+      '.cereworker',
+      'conversations',
+      savedMap[keyA],
+      'sessions',
+    );
+    const sessionLedgersA = readdirSync(sessionsDirA)
+      .filter((name) => name.endsWith('.jsonl'))
+      .map((name) =>
+        JSON.parse(
+          `[${readFileSync(join(sessionsDirA, name), 'utf-8').trim().split('\n').join(',')}]`,
+        ) as Array<{ type: string }>,
+      );
+    expect(
+      sessionLedgersA.some((ledger) =>
+        ledger.some((event) => event.type === 'channel_ingress')
+        && ledger.some((event) => event.type === 'channel_egress'),
+      ),
+    ).toBe(true);
 
     await service.shutdown();
   });
