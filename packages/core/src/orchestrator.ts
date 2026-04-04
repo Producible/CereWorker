@@ -1133,6 +1133,7 @@ export class Orchestrator extends TypedEventEmitter {
     latestUserMessage: string,
     stallRetryCount: number,
     completionRetryCount: number,
+    priorSession?: QuerySession | null,
   ): QuerySession {
     const timestamp = Date.now();
     const instance = this.instanceStore?.get();
@@ -1151,6 +1152,10 @@ export class Orchestrator extends TypedEventEmitter {
       completionRetryCount,
       instanceId: instance?.id,
       checkpointPath: instance?.activeCheckpoint ?? null,
+      // Carry forward recovery state from prior attempt for crash recovery
+      ...(priorSession?.latestBoundary ? { latestBoundary: priorSession.latestBoundary } : {}),
+      ...(priorSession?.lastOutcome ? { lastOutcome: priorSession.lastOutcome } : {}),
+      ...(priorSession?.lastError ? { lastError: priorSession.lastError } : {}),
     };
   }
 
@@ -2461,6 +2466,7 @@ export class Orchestrator extends TypedEventEmitter {
           sessionId: turnId,
           source: sessionSource,
         };
+        const priorSession = this.currentQuerySession;
         this.currentQuerySession = this.createQuerySession(
           convId,
           turnId,
@@ -2469,6 +2475,7 @@ export class Orchestrator extends TypedEventEmitter {
           latestUserMessage,
           this.streamNudgeCount,
           completionRetryCount,
+          priorSession,
         );
         this.saveCurrentQuerySession();
         this.currentPartialContent = '';
@@ -2988,6 +2995,12 @@ export class Orchestrator extends TypedEventEmitter {
                 completionSignal,
                 'error',
               );
+              this.appendTurnJournalEntry('turn_error', assessment.diagnosis || 'Recovery returned stop.', {
+                retryCause: 'completion',
+                completionRetryCount,
+                stallRetryCount: this.streamNudgeCount,
+                error: assessment.diagnosis || 'Recovery returned stop.',
+              });
               this.emit({
                 type: 'error',
                 error: new Error(
@@ -3037,6 +3050,12 @@ export class Orchestrator extends TypedEventEmitter {
               completionSignal,
               'error',
             );
+            this.appendTurnJournalEntry('turn_error', `Completion retries exhausted (${completionRetryCount}/${this.maxCompletionRetries}).`, {
+              retryCause: 'completion',
+              completionRetryCount,
+              stallRetryCount: this.streamNudgeCount,
+              error: assessment.diagnosis || 'Completion retries exhausted.',
+            });
             this.emit({
               type: 'error',
               error: new Error(
@@ -3107,6 +3126,12 @@ export class Orchestrator extends TypedEventEmitter {
               stallRecovery.assessment.operatorMessage,
             );
             this.emit({ type: 'message:system', message: systemMessage });
+            this.appendTurnJournalEntry('turn_error', stallRecovery.assessment.diagnosis || 'Stall recovery returned stop.', {
+              retryCause: 'stall',
+              stallRetryCount: this.streamNudgeCount,
+              completionRetryCount,
+              error: stallRecovery.assessment.diagnosis || 'Stall recovery returned stop.',
+            });
             this.emit({ type: 'error', error: new Error(stallRecovery.assessment.diagnosis) });
             if (failedAttemptMessageIds.length > 0) {
               this.conversations.deleteMessages(convId, failedAttemptMessageIds);
@@ -3121,6 +3146,13 @@ export class Orchestrator extends TypedEventEmitter {
               'Cerebellum disconnected during active response. Restart it with: docker compose up -d cerebellum',
             );
             log.error('Cerebellum disconnected mid-stream', { error: err.message });
+            this.appendTurnJournalEntry('turn_error', err.message, {
+              retryCause,
+              stallRetryCount: this.streamNudgeCount,
+              completionRetryCount,
+              error: err.message,
+              aborted: true,
+            });
             this.emit({ type: 'error', error: err });
             if (failedAttemptMessageIds.length > 0) {
               this.conversations.deleteMessages(convId, failedAttemptMessageIds);

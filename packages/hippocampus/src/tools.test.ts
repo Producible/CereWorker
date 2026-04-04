@@ -80,7 +80,7 @@ describe('createMemoryTools', () => {
   describe('executeMemorySearch', () => {
     it('finds matching lines', async () => {
       const tools = setup();
-      writeFileSync(join(dir, 'notes.md'), 'TypeScript rocks\nPython too', 'utf-8');
+      writeFileSync(join(dir, 'session', 'notes.md'), 'TypeScript rocks\nPython too', 'utf-8');
       const result = await tools.executeMemorySearch({ query: 'TypeScript' });
       expect(result).toContain('notes.md');
       expect(result).toContain('TypeScript rocks');
@@ -88,7 +88,7 @@ describe('createMemoryTools', () => {
 
     it('returns no matches message', async () => {
       const tools = setup();
-      writeFileSync(join(dir, 'notes.md'), 'hello', 'utf-8');
+      writeFileSync(join(dir, 'session', 'notes.md'), 'hello', 'utf-8');
       const result = await tools.executeMemorySearch({ query: 'zzzzz' });
       expect(result).toContain('No matches found');
     });
