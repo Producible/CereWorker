@@ -1,15 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const { mockExecSync, mockSpawnSync, mockConfirm, mockLog } = vi.hoisted(() => ({
-  mockExecSync: vi.fn(),
-  mockSpawnSync: vi.fn(() => ({ status: 1 })),
+  mockExecSync: vi.fn<(cmd: string, opts?: object) => Buffer>(),
+  mockSpawnSync: vi.fn<(cmd: string, args?: string[], opts?: object) => { status: number }>(() => ({ status: 1 })),
   mockConfirm: vi.fn(),
   mockLog: { warn: vi.fn(), info: vi.fn(), step: vi.fn(), success: vi.fn() },
 }));
 
 vi.mock('node:child_process', () => ({
-  execSync: (...args: unknown[]) => mockExecSync(...args),
-  spawnSync: (...args: unknown[]) => mockSpawnSync(...args),
+  execSync: mockExecSync,
+  spawnSync: mockSpawnSync,
 }));
 
 vi.mock('../prompter.js', () => ({
@@ -90,7 +90,7 @@ describe('ensureGitForWhatsApp', () => {
       return Buffer.from('git version 2.43.0');
     });
     // Simulate apt-get being available
-    mockSpawnSync.mockImplementation((_cmd: string, args: string[]) => ({
+    mockSpawnSync.mockImplementation((_cmd: string, args?: string[]) => ({
       status: args?.[0] === 'apt-get' ? 0 : 1,
     }));
     mockConfirm.mockResolvedValue(true);
@@ -106,7 +106,7 @@ describe('ensureGitForWhatsApp', () => {
       throw new Error('command not found: git');
     });
     // Simulate apt-get being available
-    mockSpawnSync.mockImplementation((_cmd: string, args: string[]) => ({
+    mockSpawnSync.mockImplementation((_cmd: string, args?: string[]) => ({
       status: args?.[0] === 'apt-get' ? 0 : 1,
     }));
     mockConfirm.mockResolvedValue(true);
