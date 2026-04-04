@@ -1,4 +1,5 @@
 import { welcomeStep } from './steps/welcome.js';
+import { profileStep } from './steps/profile.js';
 import { cerebrumStep } from './steps/cerebrum.js';
 import { cerebellumStep } from './steps/cerebellum.js';
 import { channelsStep } from './steps/channels.js';
@@ -37,6 +38,10 @@ export async function runOnboardingWizard(): Promise<void> {
   const existingConfig = welcome.existingConfig;
   const existingRaw = welcome.existingRaw;
   const canReuseExisting = welcome.action === 'update' && existingConfig !== null && existingRaw !== null;
+
+  // Profile — ask on fresh install, skip if existing config already has one
+  const hasExistingProfile = canReuseExisting && existingRaw?.profile;
+  const profile = hasExistingProfile ? undefined : await profileStep();
 
   const cerebrum = canReuseExisting
     ? await (() => {
@@ -101,6 +106,7 @@ export async function runOnboardingWizard(): Promise<void> {
       : { mode: 'standalone' as const };
 
   await summaryStep({
+    profile,
     cerebrum,
     cerebellum,
     channels: channelsResult.channels,

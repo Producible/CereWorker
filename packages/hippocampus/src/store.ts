@@ -30,6 +30,14 @@ export class HippocampusStore {
     }
   }
 
+  /** Seed MEMORY.md with initial content if it doesn't exist yet. */
+  seedMemory(content: string): boolean {
+    const path = join(this.dir, MEMORY_FILE);
+    if (existsSync(path)) return false;
+    writeFileSync(path, content, 'utf-8');
+    return true;
+  }
+
   private ensureSubdir(subdir: string): void {
     const path = join(this.dir, subdir);
     if (!existsSync(path)) {

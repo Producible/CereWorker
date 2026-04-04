@@ -1,4 +1,5 @@
 import { GLOBAL_CONFIG, writeConfig } from '@cereworker/config';
+import { HippocampusStore } from '@cereworker/hippocampus';
 import { clack, guardCancel } from '../prompter.js';
 import { buildFinalConfig, type BuildConfigParams } from '../config-builder.js';
 
@@ -19,6 +20,32 @@ export function getChannelInstructions(channelId: string): string {
     default:
       return `${channelId}: See documentation for setup instructions`;
   }
+}
+
+function seedMemory(params: BuildConfigParams): void {
+  const store = new HippocampusStore();
+  const lines: string[] = ['# Memory', ''];
+
+  if (params.profile) {
+    lines.push(`## Profile`);
+    lines.push(`- Name: ${params.profile.name}`);
+    lines.push(`- Role: ${params.profile.role}`);
+    if (params.profile.traits.length > 0) {
+      lines.push(`- Traits: ${params.profile.traits.join(', ')}`);
+    }
+    lines.push('');
+  }
+
+  lines.push(`## Setup`);
+  lines.push(`- Provider: ${params.cerebrum.provider}`);
+  lines.push(`- Model: ${params.cerebrum.model}`);
+  lines.push(`- Cerebellum: ${params.cerebellum.enabled ? 'enabled' : 'disabled'}`);
+  if (params.channels.length > 0) {
+    lines.push(`- Channels: ${params.channels.map((c) => c.id).join(', ')}`);
+  }
+  lines.push('');
+
+  store.seedMemory(lines.join('\n'));
 }
 
 export async function summaryStep(params: BuildConfigParams): Promise<void> {
@@ -96,6 +123,9 @@ export async function summaryStep(params: BuildConfigParams): Promise<void> {
 
   const config = buildFinalConfig(params);
   writeConfig(config);
+
+  // Seed MEMORY.md with profile and setup info on first install
+  seedMemory(params);
 
   // Next steps guidance
   const nextSteps: string[] = [];

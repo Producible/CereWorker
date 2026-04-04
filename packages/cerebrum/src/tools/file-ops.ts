@@ -1,7 +1,15 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync, statSync, globSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { z } from 'zod';
+
+/** Expand leading ~ to home directory, then resolve to absolute path. */
+export function expandPath(p: string): string {
+  if (p === '~') return homedir();
+  if (p.startsWith('~/') || p.startsWith('~\\')) return join(homedir(), p.slice(2));
+  return resolve(p);
+}
 
 export const readFileParameters = z.object({
   path: z.string().describe('Absolute or relative path to the file to read'),
@@ -35,7 +43,7 @@ export const editFileParameters = z.object({
 });
 
 export async function executeReadFile(args: z.infer<typeof readFileParameters>): Promise<string> {
-  const filePath = resolve(args.path);
+  const filePath = expandPath(args.path);
   if (!existsSync(filePath)) {
     return `File not found: ${filePath}`;
   }
@@ -52,7 +60,7 @@ export async function executeReadFile(args: z.infer<typeof readFileParameters>):
 }
 
 export async function executeWriteFile(args: z.infer<typeof writeFileParameters>): Promise<string> {
-  const filePath = resolve(args.path);
+  const filePath = expandPath(args.path);
   try {
     writeFileSync(filePath, args.content, 'utf-8');
     return `File written: ${filePath}`;
@@ -62,7 +70,7 @@ export async function executeWriteFile(args: z.infer<typeof writeFileParameters>
 }
 
 export async function executeListDirectory(args: z.infer<typeof listDirectoryParameters>): Promise<string> {
-  const dirPath = resolve(args.path);
+  const dirPath = expandPath(args.path);
   if (!existsSync(dirPath)) {
     return `Directory not found: ${dirPath}`;
   }
@@ -86,7 +94,7 @@ export async function executeListDirectory(args: z.infer<typeof listDirectoryPar
 }
 
 export async function executeEditFile(args: z.infer<typeof editFileParameters>): Promise<string> {
-  const filePath = resolve(args.path);
+  const filePath = expandPath(args.path);
   if (!existsSync(filePath)) {
     return `File not found: ${filePath}`;
   }
@@ -108,7 +116,7 @@ export async function executeEditFile(args: z.infer<typeof editFileParameters>):
 }
 
 export async function executeGrep(args: z.infer<typeof grepParameters>): Promise<string> {
-  const searchPath = resolve(args.path);
+  const searchPath = expandPath(args.path);
   if (!existsSync(searchPath)) {
     return `Path not found: ${searchPath}`;
   }
@@ -180,7 +188,7 @@ function searchRecursive(dir: string, regex: RegExp, max: number, results: strin
 }
 
 export async function executeGlob(args: z.infer<typeof globParameters>): Promise<string> {
-  const cwd = resolve(args.cwd);
+  const cwd = expandPath(args.cwd);
   if (!existsSync(cwd)) {
     return `Directory not found: ${cwd}`;
   }

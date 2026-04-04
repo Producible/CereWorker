@@ -10,7 +10,6 @@ interface ChatViewProps {
   isStreaming: boolean;
   activeToolCall: string | null;
   version: string;
-  showActivity: boolean;
   debugMode: boolean;
   updateAvailable?: string | null;
 }
@@ -90,7 +89,6 @@ export function ChatView({
   isStreaming,
   activeToolCall,
   version,
-  showActivity,
   debugMode,
   updateAvailable,
 }: ChatViewProps) {
@@ -102,7 +100,7 @@ export function ChatView({
       {messages.map((msg) => (
         <MessageBlock key={msg.id} message={msg} debugMode={debugMode} />
       ))}
-      {showActivity && activeToolCall && (
+      {activeToolCall && (
         <Box marginLeft={2}>
           <Text color="yellow">Running tool: {activeToolCall}...</Text>
         </Box>
@@ -113,7 +111,7 @@ export function ChatView({
           <Text>{streamingContent}<Text color="green">|</Text></Text>
         </Box>
       )}
-      {showActivity && isStreaming && !streamingContent && !activeToolCall && (
+      {isStreaming && !streamingContent && !activeToolCall && (
         <Box>
           <Text color="gray">Thinking...</Text>
         </Box>

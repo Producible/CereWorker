@@ -184,8 +184,10 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
 
   // Load and inject skills
   const skillRegistry = new SkillRegistry();
+  const builtinSkillsDir = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills');
   const skillDirs = [
     ...config.skills.directories,
+    builtinSkillsDir,
     join(homeDir(), '.cereworker', 'skills'),
     join(process.cwd(), 'skills'),
   ];
