@@ -187,6 +187,11 @@ export type SessionEventType =
   | 'completion_signal_recorded'
   | 'recovery_assessed'
   | 'memory_updated'
+  | 'channel_ingress'
+  | 'channel_egress'
+  | 'node_tool_started'
+  | 'node_tool_finished'
+  | 'node_status'
   | 'turn_finished'
   | 'turn_failed';
 
@@ -247,6 +252,8 @@ export interface TrainingExample {
 
 export interface TransportEnvelope<T = Record<string, unknown>> {
   envelopeId: string;
+  protocolVersion: number;
+  senderId: string;
   instanceId?: string;
   sessionId: string;
   conversationId?: string;
@@ -254,6 +261,9 @@ export interface TransportEnvelope<T = Record<string, unknown>> {
   eventType: string;
   timestamp: number;
   payload: T;
+  sequence?: number;
+  ackedThrough?: number;
+  resumeFromSequence?: number;
   ackToken?: string;
 }
 

@@ -1,3 +1,5 @@
+import type { ToolResult, TransportEnvelope } from '@cereworker/core';
+
 export interface NodeStatus {
   healthy: boolean;
   uptime: number;
@@ -5,18 +7,86 @@ export interface NodeStatus {
   autoMode: boolean;
 }
 
-export type GatewayFrame =
-  | { type: 'connect'; nodeId: string; token: string; capabilities: string[] }
-  | { type: 'connected'; gatewayId: string }
-  | { type: 'error'; message: string }
-  | { type: 'invoke'; id: string; tool: string; args: Record<string, unknown> }
-  | { type: 'invoke-result'; id: string; output: string; isError: boolean }
-  | { type: 'ping' }
-  | { type: 'pong' }
-  | { type: 'status-request'; id: string }
-  | { type: 'status-response'; id: string; status: NodeStatus }
-  | { type: 'emergency-stop' }
-  | { type: 'disconnect'; reason: string };
+export interface SessionInvokeContext {
+  callId?: string;
+  requestedToolName?: string;
+  turnId?: string;
+  attempt?: number;
+  scopeKey?: string;
+}
+
+export interface SessionBusEnvelopeMap {
+  'transport.connect': {
+    nodeId: string;
+    token: string;
+    capabilities: string[];
+  };
+  'transport.connected': {
+    gatewayId: string;
+  };
+  'transport.error': {
+    message: string;
+  };
+  'transport.ack': {
+    message?: string;
+  };
+  'transport.ping': {
+    sentAt?: number;
+  };
+  'transport.pong': {
+    sentAt?: number;
+  };
+  'transport.disconnect': {
+    reason: string;
+  };
+  'transport.emergency-stop': {
+    reason?: string;
+  };
+  'node.status.request': {
+    requestId: string;
+  };
+  'node.status': {
+    requestId?: string;
+    status: NodeStatus;
+  };
+  'invoke.request': {
+    invocationId: string;
+    tool: string;
+    args: Record<string, unknown>;
+    context?: SessionInvokeContext;
+  };
+  'invoke.result': {
+    invocationId: string;
+    result: ToolResult;
+  };
+  'tool.started': {
+    invocationId: string;
+    tool: string;
+    args: Record<string, unknown>;
+    context?: SessionInvokeContext;
+    nodeId?: string;
+  };
+  'tool.finished': {
+    invocationId: string;
+    tool: string;
+    args: Record<string, unknown>;
+    result: ToolResult;
+    context?: SessionInvokeContext;
+    nodeId?: string;
+  };
+}
+
+export type SessionBusEventType = keyof SessionBusEnvelopeMap;
+
+export type GatewayFrame<K extends SessionBusEventType = SessionBusEventType> = TransportEnvelope<
+  SessionBusEnvelopeMap[K]
+> & {
+  eventType: K;
+};
+
+export type AnyGatewayFrame = {
+  [K in SessionBusEventType]: GatewayFrame<K>;
+}[SessionBusEventType];
 
 export interface NodeInfo {
   nodeId: string;
@@ -31,6 +101,8 @@ export interface GatewayServerConfig {
   token?: string;
   invokeTimeoutMs: number;
   pingIntervalMs: number;
+  stateDir?: string;
+  instanceId?: string;
 }
 
 export interface GatewayClientConfig {
@@ -38,4 +110,6 @@ export interface GatewayClientConfig {
   nodeId: string;
   token: string;
   capabilities: string[];
+  stateDir?: string;
+  instanceId?: string;
 }

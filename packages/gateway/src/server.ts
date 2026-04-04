@@ -1,20 +1,32 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { nanoid } from 'nanoid';
-import { createLogger } from '@cereworker/core';
-import type { GatewayFrame, GatewayServerConfig, NodeInfo } from './types.js';
+import { createLogger, type ToolResult } from '@cereworker/core';
+import type {
+  AnyGatewayFrame,
+  GatewayFrame,
+  GatewayServerConfig,
+  NodeInfo,
+  SessionBusEnvelopeMap,
+  SessionBusEventType,
+  SessionInvokeContext,
+} from './types.js';
+import { SessionBusState, buildBusStatePath } from './session-bus.js';
 
 const log = createLogger('gateway-server');
 
 interface ConnectedNode {
   ws: WebSocket;
   info: NodeInfo;
+  bus: SessionBusState;
 }
 
 interface PendingInvocation {
-  resolve: (output: string) => void;
+  resolve: (result: ToolResult) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+  nodeId: string;
+  tool: string;
 }
 
 export class GatewayServer {
@@ -28,6 +40,7 @@ export class GatewayServer {
 
   private onNodeConnected?: (nodeId: string, capabilities: string[]) => void;
   private onNodeDisconnected?: (nodeId: string, reason: string, capabilities: string[]) => void;
+  private onEnvelope?: (nodeId: string, frame: AnyGatewayFrame) => void;
 
   constructor(config: GatewayServerConfig) {
     this.config = config;
@@ -40,6 +53,10 @@ export class GatewayServer {
 
   setNodeDisconnectedHandler(handler: (nodeId: string, reason: string, capabilities: string[]) => void): void {
     this.onNodeDisconnected = handler;
+  }
+
+  setEnvelopeHandler(handler: (nodeId: string, frame: AnyGatewayFrame) => void): void {
+    this.onEnvelope = handler;
   }
 
   async start(): Promise<void> {
@@ -58,60 +75,96 @@ export class GatewayServer {
     this.wss.on('connection', (ws: WebSocket) => {
       let authenticated = false;
       let nodeId: string | null = null;
+      let nodeBus: SessionBusState | null = null;
 
       const authTimeout = setTimeout(() => {
         if (!authenticated) {
-          this.send(ws, { type: 'error', message: 'Authentication timeout' });
+          this.sendRaw(ws, this.createServerEnvelope('transport.error', {
+            sessionId: 'gateway',
+            source: 'gateway',
+            payload: { message: 'Authentication timeout' },
+          }));
           ws.close();
         }
       }, 10_000);
 
       ws.on('message', (data: Buffer) => {
-        let frame: GatewayFrame;
+        let frame: AnyGatewayFrame;
         try {
-          frame = JSON.parse(data.toString()) as GatewayFrame;
+          frame = JSON.parse(data.toString()) as AnyGatewayFrame;
         } catch {
-          this.send(ws, { type: 'error', message: 'Invalid JSON' });
+          this.sendRaw(ws, this.createServerEnvelope('transport.error', {
+            sessionId: 'gateway',
+            source: 'gateway',
+            payload: { message: 'Invalid JSON' },
+          }));
           return;
         }
 
         if (!authenticated) {
-          if (frame.type !== 'connect') {
-            this.send(ws, { type: 'error', message: 'Must authenticate first' });
+          if (frame.eventType !== 'transport.connect') {
+            this.sendRaw(ws, this.createServerEnvelope('transport.error', {
+              sessionId: 'gateway',
+              source: 'gateway',
+              payload: { message: 'Must authenticate first' },
+            }));
             ws.close();
             return;
           }
 
           clearTimeout(authTimeout);
 
-          if (this.config.token && frame.token !== this.config.token) {
-            this.send(ws, { type: 'error', message: 'Invalid token' });
+          const { nodeId: requestedNodeId, token, capabilities } = frame.payload;
+          if (this.config.token && token !== this.config.token) {
+            this.sendRaw(ws, this.createServerEnvelope('transport.error', {
+              sessionId: 'gateway',
+              source: 'gateway',
+              payload: { message: 'Invalid token' },
+            }));
             ws.close();
             return;
           }
 
-          if (this.nodes.has(frame.nodeId)) {
-            this.send(ws, { type: 'error', message: `Node "${frame.nodeId}" already connected` });
+          if (this.nodes.has(requestedNodeId)) {
+            this.sendRaw(ws, this.createServerEnvelope('transport.error', {
+              sessionId: 'gateway',
+              source: 'gateway',
+              payload: { message: `Node "${requestedNodeId}" already connected` },
+            }));
             ws.close();
             return;
           }
 
-          nodeId = frame.nodeId;
+          nodeId = requestedNodeId;
+          nodeBus = new SessionBusState(
+            buildBusStatePath(this.config.stateDir, `gateway-${requestedNodeId}`, requestedNodeId),
+          );
+          nodeBus.markReceived(frame);
           authenticated = true;
 
           const info: NodeInfo = {
-            nodeId: frame.nodeId,
-            capabilities: frame.capabilities,
+            nodeId: requestedNodeId,
+            capabilities,
             connectedAt: Date.now(),
             lastPingAt: Date.now(),
             status: 'connected',
           };
 
-          this.nodes.set(frame.nodeId, { ws, info });
-          this.send(ws, { type: 'connected', gatewayId: this.gatewayId });
+          this.nodes.set(requestedNodeId, { ws, info, bus: nodeBus });
+          this.sendEnvelope(this.nodes.get(requestedNodeId)!, 'transport.connected', {
+            sessionId: 'gateway',
+            source: 'gateway',
+            payload: { gatewayId: this.gatewayId },
+            resumeFromSequence: nodeBus.getHighestReceivedSequence(),
+          });
 
-          log.info('Node connected', { nodeId: frame.nodeId, capabilities: frame.capabilities });
-          this.onNodeConnected?.(frame.nodeId, frame.capabilities);
+          const replayFrom = frame.resumeFromSequence ?? 0;
+          for (const pending of nodeBus.replayAfter(replayFrom)) {
+            this.sendRaw(ws, pending);
+          }
+
+          log.info('Node connected', { nodeId: requestedNodeId, capabilities, replayFrom });
+          this.onNodeConnected?.(requestedNodeId, capabilities);
           return;
         }
 
@@ -149,21 +202,22 @@ export class GatewayServer {
       this.pingTimer = null;
     }
 
-    // Reject all pending invocations
     for (const [id, pending] of this.pendingInvocations) {
       clearTimeout(pending.timer);
       pending.reject(new Error('Gateway shutting down'));
+      this.pendingInvocations.delete(id);
     }
-    this.pendingInvocations.clear();
 
-    // Close all node connections
-    for (const [nodeId, node] of this.nodes) {
-      this.send(node.ws, { type: 'disconnect', reason: 'gateway shutting down' });
+    for (const [, node] of this.nodes) {
+      this.sendEnvelope(node, 'transport.disconnect', {
+        sessionId: 'gateway',
+        source: 'gateway',
+        payload: { reason: 'gateway shutting down' },
+      });
       node.ws.close();
     }
     this.nodes.clear();
 
-    // Close servers
     if (this.wss) {
       this.wss.close();
       this.wss = null;
@@ -181,30 +235,77 @@ export class GatewayServer {
     log.info('Gateway server stopped');
   }
 
-  async invoke(nodeId: string, tool: string, args: Record<string, unknown>, timeoutMs?: number): Promise<string> {
+  async invoke(
+    nodeId: string,
+    tool: string,
+    args: Record<string, unknown>,
+    options?: {
+      timeoutMs?: number;
+      conversationId?: string;
+      sessionId?: string;
+      turnId?: string;
+      attempt?: number;
+      callId?: string;
+      requestedToolName?: string;
+      scopeKey?: string;
+    },
+  ): Promise<ToolResult> {
     const node = this.nodes.get(nodeId);
     if (!node || node.info.status !== 'connected') {
       throw new Error(`Node "${nodeId}" is not connected`);
     }
 
-    const id = nanoid(12);
-    const timeout = timeoutMs ?? this.config.invokeTimeoutMs;
+    const invocationId = nanoid(12);
+    const timeout = options?.timeoutMs ?? this.config.invokeTimeoutMs;
+    const context: SessionInvokeContext = {
+      callId: options?.callId,
+      requestedToolName: options?.requestedToolName,
+      turnId: options?.turnId,
+      attempt: options?.attempt,
+      scopeKey: options?.scopeKey,
+    };
 
-    return new Promise<string>((resolve, reject) => {
+    return new Promise<ToolResult>((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.pendingInvocations.delete(id);
+        this.pendingInvocations.delete(invocationId);
         reject(new Error(`Invoke timeout: ${tool}@${nodeId} after ${timeout}ms`));
       }, timeout);
 
-      this.pendingInvocations.set(id, { resolve, reject, timer });
-      this.send(node.ws, { type: 'invoke', id, tool, args });
-      log.info('Invoke sent', { id, nodeId, tool });
+      this.pendingInvocations.set(invocationId, {
+        resolve,
+        reject,
+        timer,
+        nodeId,
+        tool,
+      });
+
+      this.sendEnvelope(node, 'invoke.request', {
+        sessionId: options?.sessionId ?? options?.turnId ?? `node:${nodeId}`,
+        conversationId: options?.conversationId,
+        source: 'gateway',
+        payload: {
+          invocationId,
+          tool,
+          args,
+          context,
+        },
+      });
+      log.info('Invoke sent', {
+        invocationId,
+        nodeId,
+        tool,
+        sessionId: options?.sessionId ?? options?.turnId ?? `node:${nodeId}`,
+      });
     });
   }
 
   emergencyStopAll(): void {
     for (const [nodeId, node] of this.nodes) {
-      this.send(node.ws, { type: 'emergency-stop' });
+      this.sendEnvelope(node, 'transport.emergency-stop', {
+        sessionId: 'gateway',
+        source: 'gateway',
+        payload: { reason: 'gateway emergency stop' },
+      });
       log.warn('Emergency stop sent to node', { nodeId });
     }
   }
@@ -225,42 +326,86 @@ export class GatewayServer {
     return this.config.port;
   }
 
-  private handleFrame(nodeId: string, frame: GatewayFrame): void {
+  private createServerEnvelope<K extends SessionBusEventType>(
+    eventType: K,
+    options: {
+      sessionId: string;
+      conversationId?: string;
+      source: GatewayFrame<K>['source'];
+      payload: SessionBusEnvelopeMap[K];
+      resumeFromSequence?: number;
+    },
+  ): GatewayFrame<K> {
+    const bus = new SessionBusState(null);
+    return bus.createEnvelope({
+      eventType,
+      senderId: this.gatewayId,
+      instanceId: this.config.instanceId,
+      sessionId: options.sessionId,
+      conversationId: options.conversationId,
+      source: options.source,
+      payload: options.payload,
+      resumeFromSequence: options.resumeFromSequence,
+    });
+  }
+
+  private handleFrame(nodeId: string, frame: AnyGatewayFrame): void {
     const node = this.nodes.get(nodeId);
     if (!node) return;
 
-    switch (frame.type) {
-      case 'invoke-result': {
-        const pending = this.pendingInvocations.get(frame.id);
+    const shouldProcess = node.bus.markReceived(frame);
+    if (frame.eventType !== 'transport.ack') {
+      this.sendEnvelope(node, 'transport.ack', {
+        sessionId: frame.sessionId,
+        conversationId: frame.conversationId,
+        source: 'gateway',
+        payload: { message: 'ack' },
+      });
+    }
+    if (!shouldProcess) return;
+
+    switch (frame.eventType) {
+      case 'invoke.result': {
+        const pending = this.pendingInvocations.get(frame.payload.invocationId);
         if (pending) {
           clearTimeout(pending.timer);
-          this.pendingInvocations.delete(frame.id);
-          if (frame.isError) {
-            pending.reject(new Error(frame.output));
+          this.pendingInvocations.delete(frame.payload.invocationId);
+          if (frame.payload.result.isError) {
+            pending.reject(new Error(frame.payload.result.output));
           } else {
-            pending.resolve(frame.output);
+            pending.resolve(frame.payload.result);
           }
-          log.info('Invoke result received', { id: frame.id, nodeId, isError: frame.isError });
+          log.info('Invoke result received', {
+            invocationId: frame.payload.invocationId,
+            nodeId,
+            isError: frame.payload.result.isError,
+          });
         }
+        this.onEnvelope?.(nodeId, frame);
         break;
       }
 
-      case 'pong':
+      case 'tool.started':
+      case 'tool.finished':
+      case 'node.status':
+        if (frame.eventType === 'node.status') {
+          node.info.lastPingAt = Date.now();
+          node.info.status = 'connected';
+        }
+        this.onEnvelope?.(nodeId, frame);
+        break;
+
+      case 'transport.pong':
         node.info.lastPingAt = Date.now();
         node.info.status = 'connected';
         break;
 
-      case 'status-response':
-        // Status responses are informational; log them
-        log.info('Node status', { nodeId, status: frame.status });
-        break;
-
-      case 'disconnect':
-        this.handleNodeDisconnect(nodeId, frame.reason);
+      case 'transport.disconnect':
+        this.handleNodeDisconnect(nodeId, frame.payload.reason);
         break;
 
       default:
-        log.warn('Unexpected frame from node', { nodeId, type: frame.type });
+        log.warn('Unexpected frame from node', { nodeId, eventType: frame.eventType });
     }
   }
 
@@ -289,16 +434,47 @@ export class GatewayServer {
           log.warn('Node timed out', { nodeId, elapsedMs: elapsed });
           this.handleNodeDisconnect(nodeId, 'ping timeout');
           node.ws.close();
-        } else if (elapsed > staleThreshold) {
+          continue;
+        }
+        if (elapsed > staleThreshold) {
           node.info.status = 'stale';
         }
 
-        this.send(node.ws, { type: 'ping' });
+        this.sendEnvelope(node, 'transport.ping', {
+          sessionId: 'gateway',
+          source: 'gateway',
+          payload: { sentAt: Date.now() },
+        });
       }
     }, this.config.pingIntervalMs);
   }
 
-  private send(ws: WebSocket, frame: GatewayFrame): void {
+  private sendEnvelope<K extends SessionBusEventType>(
+    node: ConnectedNode,
+    eventType: K,
+    options: {
+      sessionId: string;
+      conversationId?: string;
+      source: GatewayFrame<K>['source'];
+      payload: SessionBusEnvelopeMap[K];
+      resumeFromSequence?: number;
+    },
+  ): GatewayFrame<K> {
+    const envelope = node.bus.createEnvelope({
+      eventType,
+      senderId: this.gatewayId,
+      instanceId: this.config.instanceId,
+      sessionId: options.sessionId,
+      conversationId: options.conversationId,
+      source: options.source,
+      payload: options.payload,
+      resumeFromSequence: options.resumeFromSequence,
+    });
+    this.sendRaw(node.ws, envelope as AnyGatewayFrame);
+    return envelope;
+  }
+
+  private sendRaw(ws: WebSocket, frame: AnyGatewayFrame): void {
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(frame));
     }

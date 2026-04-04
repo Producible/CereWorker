@@ -32,8 +32,15 @@ import {
   memoryWriteParameters,
   memoryLogParameters,
   memorySearchParameters,
+  type TrainingCandidate,
 } from '@cereworker/hippocampus';
-import { GatewayServer, GatewayNodeClient, createProxyTools } from '@cereworker/gateway';
+import {
+  GatewayServer,
+  GatewayNodeClient,
+  createProxyTools,
+  type AnyGatewayFrame,
+  type RemoteToolExecutionContext,
+} from '@cereworker/gateway';
 import {
   buildCerebellumComposeCommand,
   buildCerebellumComposeEnv,
@@ -135,6 +142,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
     }
     needsDiscovery = true;
   }
+  const instanceId = instance.id;
 
   const orchestrator = new Orchestrator({
     conversationStore,
@@ -339,7 +347,6 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
   let finetuneScheduleHint = scheduleMap[config.cerebellum.finetune?.schedule ?? 'auto'] ?? 'when idle';
   let pendingFineTuneBatch: import('@cereworker/hippocampus').FineTuneQueuedBatch | null = null;
   const fineTuneRoundsByJob = new Map<string, string>();
-  const instanceId = instance?.id;
 
   if (config.cerebellum.finetune?.enabled) {
     const conversationExtractor = new ConversationExtractor(
@@ -431,6 +438,42 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
   });
 
   if (hippocampusStore) {
+    const appendTrainingCandidate = (candidate: TrainingCandidate) => {
+      hippocampusStore.appendTrainingCandidate({
+        ...candidate,
+        instanceId: candidate.instanceId ?? instance.id,
+      });
+    };
+
+    const maybeAppendDailyContinuity = (conversationId: string, sessionId: string, reply: string) => {
+      const session = orchestrator.getQuerySession(conversationId, sessionId);
+      if (!session) return;
+      const sessionEvents = orchestrator.getSessionEvents(conversationId, sessionId);
+      const hasQualifyingActivity =
+        session.source !== 'local' ||
+        sessionEvents.some((event) =>
+          [
+            'tool_finished',
+            'recovery_assessed',
+            'channel_ingress',
+            'channel_egress',
+            'node_tool_started',
+            'node_tool_finished',
+            'node_status',
+          ].includes(event.type),
+        );
+      if (!hasQualifyingActivity) return;
+
+      const boundarySummary = session.latestBoundary?.summary ?? 'No verified boundary recorded.';
+      hippocampusStore.appendDailyLog([
+        `Session ${sessionId} (${session.source})`,
+        `State: ${session.state}`,
+        `Outcome: ${session.lastOutcome ?? 'unknown'}`,
+        `Latest boundary: ${boundarySummary}`,
+        `Reply: ${reply.slice(0, 500)}`,
+      ].join('\n'));
+    };
+
     orchestrator.on('message:cerebrum:end', ({ conversationId, sessionId, message }) => {
       const messages = orchestrator.getMessages(conversationId);
       const latestUser = [...messages]
@@ -443,6 +486,71 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
         updatedAt: Date.now(),
         summary: 'Stored the latest user/assistant exchange in session memory.',
         excerpt: message.content.slice(0, 500),
+      });
+      maybeAppendDailyContinuity(conversationId, sessionId, message.content);
+      appendTrainingCandidate({
+        kind: 'session',
+        createdAt: Date.now(),
+        source: `session:${conversationId}`,
+        conversationId,
+        sessionId,
+        summary: 'Stored the completed session summary and reply trace.',
+        data: {
+          replyExcerpt: message.content.slice(0, 500),
+        },
+      });
+    });
+
+    orchestrator.on('cerebellum:recovery', (event) => {
+      appendTrainingCandidate({
+        kind: 'recovery',
+        createdAt: Date.now(),
+        source: `recovery:${event.cause}`,
+        conversationId: event.conversationId,
+        sessionId: event.turnId,
+        summary: event.diagnosis,
+        data: {
+          cause: event.cause,
+          action: event.action,
+          completedSteps: event.completedSteps,
+          nextStep: event.nextStep,
+          source: event.source,
+        },
+      });
+    });
+
+    orchestrator.on('cerebrum:completion', (event) => {
+      if (!['guard_triggered', 'retry_failed'].includes(event.stage)) return;
+      appendTrainingCandidate({
+        kind: 'completion',
+        createdAt: Date.now(),
+        source: `completion:${event.stage}`,
+        conversationId: event.conversationId,
+        sessionId: event.turnId,
+        summary: event.message,
+        data: {
+          stage: event.stage,
+          signal: event.signal,
+          attempt: event.attempt,
+        },
+      });
+    });
+
+    orchestrator.on('verification:end', ({ result, conversationId, sessionId }) => {
+      appendTrainingCandidate({
+        kind: 'verification',
+        createdAt: Date.now(),
+        source: `verification:${result.toolName}`,
+        conversationId,
+        sessionId,
+        summary: `Verification ${result.passed ? 'passed' : 'failed'} for ${result.toolName}.`,
+        data: {
+          toolName: result.toolName,
+          toolCallId: result.toolCallId,
+          passed: result.passed,
+          modelVerdict: result.modelVerdict,
+          checks: result.checks,
+        },
       });
     });
   }
@@ -547,14 +655,50 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
       const unsub = orchestrator.on('message:proactive', ({ content }) => {
         proactiveReply += (proactiveReply ? '\n\n' : '') + content;
       });
+      let activeSessionId = '';
+      const endUnsub = orchestrator.on('message:cerebrum:end', (event) => {
+        if (event.conversationId === conversationId) {
+          activeSessionId = event.sessionId;
+        }
+      });
 
-      await orchestrator.sendMessage(msg.text, conversationId, { source: 'channel' });
-
-      unsub();
+      try {
+        await orchestrator.sendMessage(msg.text, conversationId, {
+          source: 'channel',
+          ingress: {
+            channelId: msg.channelId,
+            senderId: msg.senderId,
+            senderName: msg.senderName,
+            threadId: msg.threadId,
+            replyToId: msg.replyToId,
+            timestamp: msg.timestamp,
+          },
+        });
+      } finally {
+        endUnsub();
+        unsub();
+      }
 
       const messages = orchestrator.getMessages(conversationId);
       const lastMsg = messages[messages.length - 1];
       const reply = lastMsg?.role === 'cerebrum' ? lastMsg.content : undefined;
+
+      if (reply && activeSessionId) {
+        orchestrator.recordSessionEvent(
+          conversationId,
+          activeSessionId,
+          'channel_egress',
+          `Sent channel reply to ${msg.senderName || msg.senderId || 'unknown recipient'}.`,
+          {
+            channelId: msg.channelId,
+            senderId: msg.senderId,
+            senderName: msg.senderName,
+            threadId: msg.threadId,
+            replyToId: msg.replyToId,
+            replyExcerpt: reply.slice(0, 500),
+          },
+        );
+      }
 
       if (proactiveReply) {
         return reply ? `${reply}\n\n${proactiveReply}` : proactiveReply;
@@ -1163,6 +1307,8 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
         token: config.gateway.token,
         invokeTimeoutMs: config.gateway.invokeTimeoutMs,
         pingIntervalMs: config.gateway.pingIntervalMs,
+        stateDir: join(dataDir, 'gateway'),
+        instanceId,
       });
 
       server.setNodeConnectedHandler((nodeId, capabilities) => {
@@ -1184,6 +1330,71 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
         callbacks?.onNodeDisconnected?.(nodeId, remainingNodes);
       });
 
+      server.setEnvelopeHandler((nodeId: string, frame: AnyGatewayFrame) => {
+        if (!frame.conversationId || !frame.sessionId) return;
+
+        if (frame.eventType === 'tool.started') {
+          orchestrator.recordSessionEvent(
+            frame.conversationId,
+            frame.sessionId,
+            'node_tool_started',
+            `Node ${nodeId} started ${frame.payload.tool}.`,
+            {
+              nodeId,
+              invocationId: frame.payload.invocationId,
+              tool: frame.payload.tool,
+              args: frame.payload.args,
+              context: frame.payload.context,
+            },
+          );
+          orchestrator.emit({
+            type: 'node:invoke',
+            nodeId,
+            tool: frame.payload.tool,
+            id: frame.payload.invocationId,
+          });
+          return;
+        }
+
+        if (frame.eventType === 'tool.finished') {
+          orchestrator.recordSessionEvent(
+            frame.conversationId,
+            frame.sessionId,
+            'node_tool_finished',
+            `Node ${nodeId} finished ${frame.payload.tool}.`,
+            {
+              nodeId,
+              invocationId: frame.payload.invocationId,
+              tool: frame.payload.tool,
+              args: frame.payload.args,
+              result: frame.payload.result,
+              context: frame.payload.context,
+            },
+          );
+          orchestrator.emit({
+            type: 'node:invoke-result',
+            nodeId,
+            id: frame.payload.invocationId,
+            isError: frame.payload.result.isError,
+          });
+          return;
+        }
+
+        if (frame.eventType === 'node.status') {
+          orchestrator.recordSessionEvent(
+            frame.conversationId,
+            frame.sessionId,
+            'node_status',
+            `Node ${nodeId} reported status ${frame.payload.status.healthy ? 'healthy' : 'unhealthy'}.`,
+            {
+              nodeId,
+              requestId: frame.payload.requestId,
+              status: frame.payload.status,
+            },
+          );
+        }
+      });
+
       orchestrator.setGatewayMode('gateway', { connectedNodes: 0 });
       await server.start();
       gatewayServer = server;
@@ -1203,13 +1414,23 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
           nodeId: config.gateway.nodeId,
           token: config.gateway.token ?? '',
           capabilities: config.gateway.capabilities,
+          stateDir: join(dataDir, 'gateway'),
+          instanceId,
         },
-        async (tool, args) => {
+        async (
+          tool: string,
+          args: Record<string, unknown>,
+          context?: RemoteToolExecutionContext,
+        ) => {
           const execution = await orchestrator.executeTool(tool, args, {
-            sessionKey: `gateway:node:${config.gateway.nodeId}`,
-            scopeKey: `gateway:node:${config.gateway.nodeId}`,
+            conversationId: context?.conversationId,
+            sessionKey: context?.sessionId ?? context?.turnId ?? `gateway:node:${config.gateway.nodeId}`,
+            scopeKey: context?.scopeKey ?? context?.conversationId ?? `gateway:node:${config.gateway.nodeId}`,
+            callId: context?.callId,
+            turnId: context?.turnId,
+            attempt: context?.attempt,
           });
-          return execution.result.output;
+          return execution.result;
         },
       );
 

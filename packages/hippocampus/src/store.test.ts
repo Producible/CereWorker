@@ -199,4 +199,26 @@ describe('HippocampusStore', () => {
       expect(existsSync(join(dir, 'session', 'conv-1.md'))).toBe(true);
     });
   });
+
+  describe('training candidates', () => {
+    it('appends structured training candidates as JSONL', () => {
+      dir = mkdtempSync(join(tmpdir(), 'cereworker-store-test-'));
+      const store = new HippocampusStore(dir);
+      store.appendTrainingCandidate({
+        kind: 'recovery',
+        createdAt: Date.now(),
+        source: 'recovery:completion',
+        summary: 'Retried from the last verified state.',
+        conversationId: 'conv-1',
+        sessionId: 'turn-1',
+        data: { action: 'retry' },
+      });
+
+      const candidates = store.readTrainingCandidates();
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0]?.kind).toBe('recovery');
+      expect(candidates[0]?.sessionId).toBe('turn-1');
+      expect(existsSync(join(dir, 'training', `${new Date().toISOString().slice(0, 10)}.jsonl`))).toBe(true);
+    });
+  });
 });

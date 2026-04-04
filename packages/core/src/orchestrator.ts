@@ -223,6 +223,14 @@ export interface OrchestratorOptions {
 
 export interface SendMessageOptions {
   source?: SessionSource;
+  ingress?: {
+    channelId?: string;
+    senderId?: string;
+    senderName?: string;
+    threadId?: string;
+    replyToId?: string;
+    timestamp?: number;
+  };
 }
 
 export class Orchestrator extends TypedEventEmitter {
@@ -631,6 +639,8 @@ export class Orchestrator extends TypedEventEmitter {
       sessionKey?: string;
       scopeKey?: string;
       callId?: string;
+      turnId?: string;
+      attempt?: number;
     },
   ): Promise<{ toolName: string; result: ToolResult }> {
     return this.toolRuntime.execute({
@@ -643,6 +653,8 @@ export class Orchestrator extends TypedEventEmitter {
       conversationId: options?.conversationId,
       sessionKey: options?.sessionKey,
       scopeKey: options?.scopeKey,
+      turnId: options?.turnId,
+      attempt: options?.attempt,
     });
   }
 
@@ -925,6 +937,44 @@ export class Orchestrator extends TypedEventEmitter {
 
   getQuerySession(conversationId: string, sessionId: string): QuerySession | undefined {
     return this.conversations.getQuerySession(conversationId, sessionId);
+  }
+
+  getSessionEvents(conversationId: string, sessionId: string): SessionEvent[] {
+    return this.conversations.getSessionEvents(conversationId, sessionId);
+  }
+
+  recordSessionEvent(
+    conversationId: string,
+    sessionId: string,
+    type: SessionEventType,
+    summary: string,
+    data?: Record<string, unknown>,
+  ): void {
+    const session = this.conversations.getQuerySession(conversationId, sessionId);
+    if (!session) return;
+
+    const updatedAt = Date.now();
+    const updatedSession: QuerySession = {
+      ...session,
+      updatedAt,
+      summary: this.truncateResumeText(summary, 500),
+    };
+    this.conversations.saveQuerySession(conversationId, updatedSession);
+
+    const event: SessionEvent = {
+      sessionId,
+      conversationId,
+      turnId: session.turnId,
+      attempt: session.attempt,
+      timestamp: updatedAt,
+      type,
+      state: updatedSession.state,
+      summary: this.truncateResumeText(summary, 500),
+      instanceId: updatedSession.instanceId,
+      checkpointPath: updatedSession.checkpointPath ?? null,
+      data,
+    };
+    this.conversations.appendSessionEvent(conversationId, sessionId, event);
   }
 
   recordSessionMemoryUpdate(
@@ -2478,6 +2528,22 @@ export class Orchestrator extends TypedEventEmitter {
           priorSession,
         );
         this.saveCurrentQuerySession();
+        if (attemptNumber === 1 && sessionSource === 'channel' && options?.ingress) {
+          this.recordSessionEvent(
+            convId,
+            turnId,
+            'channel_ingress',
+            `Received channel message from ${options.ingress.senderName || options.ingress.senderId || 'unknown sender'}.`,
+            {
+              channelId: options.ingress.channelId,
+              senderId: options.ingress.senderId,
+              senderName: options.ingress.senderName,
+              threadId: options.ingress.threadId,
+              replyToId: options.ingress.replyToId,
+              timestamp: options.ingress.timestamp,
+            },
+          );
+        }
         this.currentPartialContent = '';
         this.currentLastContentKind = 'empty';
         this.currentJournaledContentLength = 0;
@@ -2642,8 +2708,10 @@ export class Orchestrator extends TypedEventEmitter {
                   toolCall,
                   tools: allTools,
                   conversationId: convId,
-                  sessionKey: 'agent:main',
+                  sessionKey: turnId,
                   scopeKey: convId,
+                  turnId,
+                  attempt: attemptNumber,
                   abortSignal: abortController.signal,
                 });
                 this.logStreamDebug(
@@ -2710,6 +2778,16 @@ export class Orchestrator extends TypedEventEmitter {
                     }
 
                     if (verification) {
+                      result.metadata = {
+                        ...(result.metadata ?? {}),
+                        verification: {
+                          passed: verification.passed,
+                          modelVerdict: verification.modelVerdict,
+                          failedChecks: verification.checks
+                            .filter((check) => !check.passed)
+                            .map((check) => check.description),
+                        },
+                      };
                       const vResult: VerificationResult = {
                         passed: verification.passed,
                         checks: verification.checks,
@@ -2717,7 +2795,12 @@ export class Orchestrator extends TypedEventEmitter {
                         toolCallId: toolCall.id,
                         toolName,
                       };
-                      this.emit({ type: 'verification:end', result: vResult });
+                      this.emit({
+                        type: 'verification:end',
+                        result: vResult,
+                        conversationId: convId,
+                        sessionId: turnId,
+                      });
                     }
                   } catch {
                     // Verification failure should never block tool execution

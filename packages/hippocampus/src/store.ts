@@ -9,7 +9,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
-import type { MemoryEntry } from './types.js';
+import type { MemoryEntry, TrainingCandidate } from './types.js';
 
 const DEFAULT_MEMORY_DIR = join(homedir(), '.cereworker', 'memory');
 const MEMORY_FILE = 'MEMORY.md';
@@ -241,6 +241,22 @@ export class HippocampusStore {
       `**User**\n${user.trim()}\n\n` +
       `**Assistant**\n${assistant.trim()}\n`;
     appendFileSync(path, entry, 'utf-8');
+  }
+
+  appendTrainingCandidate(candidate: TrainingCandidate): void {
+    const path = join(this.trainingDir, `${this.todayDate()}.jsonl`);
+    appendFileSync(path, JSON.stringify(candidate) + '\n', 'utf-8');
+  }
+
+  readTrainingCandidates(date?: string): TrainingCandidate[] {
+    const target = date ? `${date}.jsonl` : `${this.todayDate()}.jsonl`;
+    const path = join(this.trainingDir, target);
+    if (!existsSync(path)) return [];
+    return readFileSync(path, 'utf-8')
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line) as TrainingCandidate);
   }
 
   private todayDate(): string {

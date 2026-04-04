@@ -34,3 +34,14 @@ export interface SessionTurnEntry {
   user: string;
   assistant: string;
 }
+
+export interface TrainingCandidate {
+  kind: 'recovery' | 'completion' | 'verification' | 'session';
+  createdAt: number;
+  summary: string;
+  source: string;
+  instanceId?: string;
+  conversationId?: string;
+  sessionId?: string;
+  data?: Record<string, unknown>;
+}

@@ -253,6 +253,27 @@ describe('createService integration', () => {
       'Stored the latest user/assistant exchange in session memory.',
     );
 
+    const trainingPath = join(
+      homeDir,
+      '.cereworker',
+      'memory',
+      'training',
+      `${new Date().toISOString().slice(0, 10)}.jsonl`,
+    );
+    expect(existsSync(trainingPath)).toBe(true);
+    const trainingContent = readFileSync(trainingPath, 'utf-8');
+    expect(trainingContent).toContain('"kind":"session"');
+    expect(trainingContent).toContain(`"conversationId":"${conversationId}"`);
+
+    const dailyPath = join(
+      homeDir,
+      '.cereworker',
+      'memory',
+      'daily',
+      `${new Date().toISOString().slice(0, 10)}.md`,
+    );
+    expect(existsSync(dailyPath)).toBe(false);
+
     await service.shutdown();
   });
 

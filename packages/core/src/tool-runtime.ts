@@ -35,6 +35,8 @@ export interface ToolExecutionContext {
   conversationId?: string;
   sessionKey?: string;
   scopeKey?: string;
+  turnId?: string;
+  attempt?: number;
   runtimeEngine: ToolRuntimeEngine;
   abortSignal?: AbortSignal;
 }
@@ -120,6 +122,8 @@ export class ToolRuntime {
     conversationId?: string;
     sessionKey?: string;
     scopeKey?: string;
+    turnId?: string;
+    attempt?: number;
     abortSignal?: AbortSignal;
   }): Promise<ToolRuntimeExecution> {
     const normalizedToolName = normalizeToolName(params.toolCall.name);
@@ -132,6 +136,8 @@ export class ToolRuntime {
       conversationId: params.conversationId,
       sessionKey: params.sessionKey,
       scopeKey: executionScope,
+      turnId: params.turnId,
+      attempt: params.attempt,
       runtimeEngine: this.config.engine,
       abortSignal: params.abortSignal,
     };

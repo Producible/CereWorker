@@ -1,4 +1,4 @@
-import type { ToolDefinition } from '@cereworker/core';
+import type { ToolDefinition, ToolExecutionContext } from '@cereworker/core';
 import type { GatewayServer } from './server.js';
 
 export function createProxyTools(
@@ -13,8 +13,16 @@ export function createProxyTools(
     tools[toolName] = {
       description: `Execute "${cap}" on remote node "${nodeId}"`,
       parameters: {},
-      execute: async (args) => {
-        return server.invoke(nodeId, cap, args);
+      execute: async (args, context?: ToolExecutionContext) => {
+        return server.invoke(nodeId, cap, args, {
+          conversationId: context?.conversationId,
+          sessionId: context?.sessionKey ?? context?.turnId,
+          turnId: context?.turnId,
+          attempt: context?.attempt,
+          callId: context?.callId,
+          requestedToolName: context?.toolName,
+          scopeKey: context?.scopeKey,
+        });
       },
     };
   }

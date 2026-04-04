@@ -1,18 +1,49 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { WebSocketServer, WebSocket } from 'ws';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { GatewayNodeClient } from './client.js';
-import type { GatewayFrame } from './types.js';
+import type { AnyGatewayFrame } from './types.js';
+import { TRANSPORT_PROTOCOL_VERSION } from './session-bus.js';
 
-function sendFrame(ws: WebSocket, frame: GatewayFrame): void {
+function makeFrame(
+  eventType: AnyGatewayFrame['eventType'],
+  payload: AnyGatewayFrame['payload'],
+  overrides: Partial<AnyGatewayFrame> = {},
+): AnyGatewayFrame {
+  return {
+    envelopeId: overrides.envelopeId ?? `${eventType}-${Math.random()}`,
+    protocolVersion: TRANSPORT_PROTOCOL_VERSION,
+    senderId: overrides.senderId ?? 'gateway-1',
+    sessionId: overrides.sessionId ?? 'session-1',
+    conversationId: overrides.conversationId,
+    source: overrides.source ?? 'gateway',
+    eventType,
+    timestamp: overrides.timestamp ?? Date.now(),
+    payload,
+    ...(overrides.sequence !== undefined ? { sequence: overrides.sequence } : {}),
+    ...(overrides.ackedThrough !== undefined ? { ackedThrough: overrides.ackedThrough } : {}),
+    ...(overrides.resumeFromSequence !== undefined
+      ? { resumeFromSequence: overrides.resumeFromSequence }
+      : {}),
+  } as AnyGatewayFrame;
+}
+
+function sendFrame(ws: WebSocket, frame: AnyGatewayFrame): void {
   ws.send(JSON.stringify(frame));
 }
 
-function waitForFrame(ws: WebSocket, type?: string): Promise<GatewayFrame> {
+function waitForFrame(
+  ws: WebSocket,
+  eventType?: AnyGatewayFrame['eventType'],
+  predicate?: (frame: AnyGatewayFrame) => boolean,
+): Promise<AnyGatewayFrame> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => reject(new Error('Timeout waiting for frame')), 5000);
     ws.on('message', function handler(data: Buffer) {
-      const frame = JSON.parse(data.toString()) as GatewayFrame;
-      if (!type || frame.type === type) {
+      const frame = JSON.parse(data.toString()) as AnyGatewayFrame;
+      if ((!eventType || frame.eventType === eventType) && (!predicate || predicate(frame))) {
         clearTimeout(timeout);
         ws.removeListener('message', handler);
         resolve(frame);
@@ -21,136 +52,209 @@ function waitForFrame(ws: WebSocket, type?: string): Promise<GatewayFrame> {
   });
 }
 
+async function waitForCondition(check: () => boolean, timeoutMs = 5000): Promise<void> {
+  const started = Date.now();
+  while (!check()) {
+    if (Date.now() - started > timeoutMs) {
+      throw new Error('Timeout waiting for condition');
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+}
+
 describe('GatewayNodeClient', () => {
   let wss: WebSocketServer;
+  let stateDir: string;
+  let activeClient: GatewayNodeClient | null = null;
   const port = 19000 + Math.floor(Math.random() * 100);
 
   beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), 'gateway-client-state-'));
     wss = new WebSocketServer({ port });
   });
 
   afterEach(async () => {
+    if (activeClient) {
+      await activeClient.disconnect();
+      activeClient = null;
+    }
     await new Promise<void>((resolve) => wss.close(() => resolve()));
+    rmSync(stateDir, { recursive: true, force: true });
   });
 
   it('connects and sends handshake', async () => {
-    const handshakePromise = new Promise<GatewayFrame>((resolve) => {
+    const handshakePromise = new Promise<AnyGatewayFrame>((resolve) => {
       wss.on('connection', (ws) => {
-        waitForFrame(ws, 'connect').then((frame) => {
-          sendFrame(ws, { type: 'connected', gatewayId: 'gw-1' });
+        waitForFrame(ws, 'transport.connect').then((frame) => {
+          sendFrame(ws, makeFrame('transport.connected', { gatewayId: 'gw-1' }, {
+            sequence: 1,
+            resumeFromSequence: 0,
+          }));
           resolve(frame);
         });
       });
     });
 
     const client = new GatewayNodeClient(
-      { gatewayUrl: `ws://localhost:${port}`, nodeId: 'node-1', token: 'secret', capabilities: ['shell'] },
+      {
+        gatewayUrl: `ws://localhost:${port}`,
+        nodeId: 'node-1',
+        token: 'secret',
+        capabilities: ['shell'],
+        stateDir,
+      },
       async () => '',
     );
+    activeClient = client;
     await client.connect();
 
     const frame = await handshakePromise;
-    expect(frame.type).toBe('connect');
-    expect((frame as any).nodeId).toBe('node-1');
-    expect((frame as any).token).toBe('secret');
-    expect((frame as any).capabilities).toEqual(['shell']);
+    expect(frame.eventType).toBe('transport.connect');
+    expect(frame.payload).toMatchObject({
+      nodeId: 'node-1',
+      token: 'secret',
+      capabilities: ['shell'],
+    });
     expect(client.isConnected()).toBe(true);
-
-    await client.disconnect();
   });
 
-  it('handles invoke from gateway', async () => {
+  it('handles invoke request and emits node tool lifecycle + result', async () => {
     let serverWs: WebSocket;
 
     wss.on('connection', (ws) => {
       serverWs = ws;
       ws.on('message', (data: Buffer) => {
-        const frame = JSON.parse(data.toString()) as GatewayFrame;
-        if (frame.type === 'connect') {
-          sendFrame(ws, { type: 'connected', gatewayId: 'gw-1' });
+        const frame = JSON.parse(data.toString()) as AnyGatewayFrame;
+        if (frame.eventType === 'transport.connect') {
+          sendFrame(ws, makeFrame('transport.connected', { gatewayId: 'gw-1' }, {
+            sequence: 1,
+            resumeFromSequence: 0,
+          }));
         }
       });
     });
 
     const client = new GatewayNodeClient(
-      { gatewayUrl: `ws://localhost:${port}`, nodeId: 'node-2', token: 'secret', capabilities: ['shell'] },
-      async (tool, args) => {
+      {
+        gatewayUrl: `ws://localhost:${port}`,
+        nodeId: 'node-2',
+        token: 'secret',
+        capabilities: ['shell'],
+        stateDir,
+      },
+      async (tool, args, context) => {
         expect(tool).toBe('shell');
         expect(args).toEqual({ command: 'ls' });
-        return 'file1\nfile2';
+        expect(context?.conversationId).toBe('conv-1');
+        expect(context?.sessionId).toBe('turn-1');
+        return {
+          callId: context?.callId ?? 'call-1',
+          output: 'file1\nfile2',
+          isError: false,
+        };
       },
     );
+    activeClient = client;
     await client.connect();
-
-    // Wait for server to have the ws reference
     await new Promise((r) => setTimeout(r, 50));
 
-    // Send invoke from "gateway"
-    sendFrame(serverWs!, { type: 'invoke', id: 'inv-1', tool: 'shell', args: { command: 'ls' } });
-    const result = await waitForFrame(serverWs!, 'invoke-result');
-    expect(result.type).toBe('invoke-result');
-    expect((result as any).id).toBe('inv-1');
-    expect((result as any).output).toBe('file1\nfile2');
-    expect((result as any).isError).toBe(false);
+    const startedPromise = waitForFrame(serverWs!, 'tool.started');
+    const finishedPromise = waitForFrame(serverWs!, 'tool.finished');
+    const resultPromise = waitForFrame(serverWs!, 'invoke.result');
+    sendFrame(serverWs!, makeFrame('invoke.request', {
+      invocationId: 'inv-1',
+      tool: 'shell',
+      args: { command: 'ls' },
+      context: {
+        callId: 'remote-call',
+        turnId: 'turn-1',
+        attempt: 1,
+      },
+    }, {
+      sessionId: 'turn-1',
+      conversationId: 'conv-1',
+      source: 'gateway',
+      sequence: 2,
+    }));
 
-    await client.disconnect();
+    const started = await startedPromise;
+    expect(started.payload.invocationId).toBe('inv-1');
+    const finished = await finishedPromise;
+    expect(finished.payload.result.output).toBe('file1\nfile2');
+    const result = await resultPromise;
+    expect(result.payload.result.isError).toBe(false);
+    expect(result.payload.result.callId).toBe('remote-call');
   });
 
-  it('handles invoke error', async () => {
-    let serverWs: WebSocket;
+  it('replays unacked node envelopes after reconnect', async () => {
+    const connectionFrames: AnyGatewayFrame[][] = [];
+    let connectionCount = 0;
 
     wss.on('connection', (ws) => {
-      serverWs = ws;
+      const frames: AnyGatewayFrame[] = [];
+      connectionFrames.push(frames);
+      connectionCount++;
       ws.on('message', (data: Buffer) => {
-        const frame = JSON.parse(data.toString()) as GatewayFrame;
-        if (frame.type === 'connect') {
-          sendFrame(ws, { type: 'connected', gatewayId: 'gw-1' });
+        const frame = JSON.parse(data.toString()) as AnyGatewayFrame;
+        frames.push(frame);
+        if (frame.eventType === 'transport.connect') {
+          sendFrame(ws, makeFrame('transport.connected', { gatewayId: 'gw-1' }, {
+            sequence: 1,
+            resumeFromSequence: 0,
+          }));
+          if (connectionCount === 1) {
+            sendFrame(ws, makeFrame('invoke.request', {
+              invocationId: 'inv-2',
+              tool: 'shell',
+              args: { command: 'pwd' },
+              context: {
+                callId: 'remote-call-2',
+                turnId: 'turn-2',
+                attempt: 1,
+              },
+            }, {
+              sessionId: 'turn-2',
+              conversationId: 'conv-2',
+              source: 'gateway',
+              sequence: 2,
+            }));
+          }
         }
       });
     });
 
     const client = new GatewayNodeClient(
-      { gatewayUrl: `ws://localhost:${port}`, nodeId: 'node-3', token: 'secret', capabilities: ['shell'] },
-      async () => {
-        throw new Error('exec failed');
+      {
+        gatewayUrl: `ws://localhost:${port}`,
+        nodeId: 'node-3',
+        token: 'secret',
+        capabilities: ['shell'],
+        stateDir,
       },
+      async () => ({
+        callId: 'remote-call-2',
+        output: '/tmp',
+        isError: false,
+      }),
     );
+    activeClient = client;
+
     await client.connect();
-    await new Promise((r) => setTimeout(r, 50));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    wss.clients.forEach((ws) => ws.close());
+    await waitForCondition(() => connectionFrames.length >= 2, 5000);
+    await waitForCondition(() => {
+      const replayedFrames = connectionFrames[1] ?? [];
+      return replayedFrames.some((frame) => frame.eventType === 'tool.started')
+        && replayedFrames.some((frame) => frame.eventType === 'invoke.result');
+    }, 5000);
 
-    sendFrame(serverWs!, { type: 'invoke', id: 'inv-2', tool: 'shell', args: {} });
-    const result = await waitForFrame(serverWs!, 'invoke-result');
-    expect((result as any).isError).toBe(true);
-    expect((result as any).output).toBe('exec failed');
-
-    await client.disconnect();
-  });
-
-  it('responds to ping with pong', async () => {
-    let serverWs: WebSocket;
-
-    wss.on('connection', (ws) => {
-      serverWs = ws;
-      ws.on('message', (data: Buffer) => {
-        const frame = JSON.parse(data.toString()) as GatewayFrame;
-        if (frame.type === 'connect') {
-          sendFrame(ws, { type: 'connected', gatewayId: 'gw-1' });
-        }
-      });
-    });
-
-    const client = new GatewayNodeClient(
-      { gatewayUrl: `ws://localhost:${port}`, nodeId: 'node-4', token: 'secret', capabilities: [] },
-      async () => '',
+    const replayed = connectionFrames.at(-1)?.filter((frame) =>
+      ['tool.started', 'tool.finished', 'invoke.result'].includes(frame.eventType),
     );
-    await client.connect();
-    await new Promise((r) => setTimeout(r, 50));
+    expect(replayed?.some((frame) => frame.eventType === 'tool.started')).toBe(true);
+    expect(replayed?.some((frame) => frame.eventType === 'invoke.result')).toBe(true);
 
-    sendFrame(serverWs!, { type: 'ping' });
-    const pong = await waitForFrame(serverWs!, 'pong');
-    expect(pong.type).toBe('pong');
-
-    await client.disconnect();
   });
 
   it('calls emergency stop handler', async () => {
@@ -160,27 +264,37 @@ describe('GatewayNodeClient', () => {
     wss.on('connection', (ws) => {
       serverWs = ws;
       ws.on('message', (data: Buffer) => {
-        const frame = JSON.parse(data.toString()) as GatewayFrame;
-        if (frame.type === 'connect') {
-          sendFrame(ws, { type: 'connected', gatewayId: 'gw-1' });
+        const frame = JSON.parse(data.toString()) as AnyGatewayFrame;
+        if (frame.eventType === 'transport.connect') {
+          sendFrame(ws, makeFrame('transport.connected', { gatewayId: 'gw-1' }, {
+            sequence: 1,
+            resumeFromSequence: 0,
+          }));
         }
       });
     });
 
     const client = new GatewayNodeClient(
-      { gatewayUrl: `ws://localhost:${port}`, nodeId: 'node-5', token: 'secret', capabilities: [] },
+      {
+        gatewayUrl: `ws://localhost:${port}`,
+        nodeId: 'node-4',
+        token: 'secret',
+        capabilities: [],
+        stateDir,
+      },
       async () => '',
     );
+    activeClient = client;
     client.setEmergencyStopHandler(() => {
       emergencyCalled = true;
     });
     await client.connect();
     await new Promise((r) => setTimeout(r, 50));
 
-    sendFrame(serverWs!, { type: 'emergency-stop' });
+    sendFrame(serverWs!, makeFrame('transport.emergency-stop', { reason: 'test' }, {
+      sequence: 2,
+    }));
     await new Promise((r) => setTimeout(r, 50));
     expect(emergencyCalled).toBe(true);
-
-    await client.disconnect();
   });
 });

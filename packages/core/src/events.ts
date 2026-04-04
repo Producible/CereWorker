@@ -66,7 +66,7 @@ export type OrchestratorEvent =
   | { type: 'tool:start'; callId: string; name: string; requestedName?: string; args: Record<string, unknown> }
   | { type: 'tool:end'; callId: string; name: string; requestedName?: string; args: Record<string, unknown>; result: ToolResult }
   | { type: 'verification:start'; callId: string; toolName: string }
-  | { type: 'verification:end'; result: VerificationResult }
+  | { type: 'verification:end'; result: VerificationResult; conversationId: string; sessionId: string }
   | { type: 'heartbeat:tick'; actions: TaskAction[] }
   | { type: 'cerebellum:loading'; phase: string; attempt?: number; maxAttempts?: number }
   | { type: 'cerebellum:status'; status: CerebellumStatus }

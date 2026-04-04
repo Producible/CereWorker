@@ -865,6 +865,44 @@ describe('Orchestrator', () => {
       }
     });
 
+    it('records channel ingress events into the persisted session ledger', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'orchestrator-channel-ingress-'));
+      const localOrch = new Orchestrator({
+        conversationStore: new ConversationStore(dir),
+      });
+      try {
+        localOrch.setCerebrum(createMockCerebrum());
+        const conversationId = localOrch.startConversation();
+
+        let endedSessionId = '';
+        localOrch.on('message:cerebrum:end', ({ sessionId }) => {
+          endedSessionId = sessionId;
+        });
+
+        await localOrch.sendMessage('status update', conversationId, {
+          source: 'channel',
+          ingress: {
+            channelId: 'telegram',
+            senderId: 'boss-1',
+            senderName: 'Boss',
+            timestamp: Date.now(),
+          },
+        });
+
+        const sessionEvents = localOrch.getSessionEvents(conversationId, endedSessionId);
+        expect(
+          sessionEvents.some(
+            (event) =>
+              event.type === 'channel_ingress' &&
+              event.summary.includes('Received channel message from Boss.'),
+          ),
+        ).toBe(true);
+      } finally {
+        await localOrch.stop();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
     it('prunes older turn journals after successful turn completion', async () => {
       const dir = mkdtempSync(join(tmpdir(), 'orchestrator-prune-success-'));
       const localOrch = new Orchestrator({
