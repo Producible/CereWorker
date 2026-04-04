@@ -2,7 +2,7 @@ import { execSync, spawnSync } from 'node:child_process';
 import { platform } from 'node:os';
 import { clack, guardCancel } from '../prompter.js';
 
-function hasGit(): boolean {
+export function hasGit(): boolean {
   try {
     execSync('git --version', { stdio: 'pipe' });
     return true;
@@ -11,8 +11,8 @@ function hasGit(): boolean {
   }
 }
 
-async function ensureGitForWhatsApp(): Promise<void> {
-  if (hasGit()) return;
+export async function ensureGitForWhatsApp(): Promise<boolean> {
+  if (hasGit()) return true;
 
   clack.log.warn('WhatsApp requires git (the SDK has a git-hosted dependency).');
 
@@ -50,7 +50,7 @@ async function ensureGitForWhatsApp(): Promise<void> {
       execSync(autoInstallCmd, { stdio: 'inherit', timeout: 120_000 });
       if (hasGit()) {
         clack.log.success('git installed.');
-        return;
+        return true;
       }
     } catch {
       clack.log.warn('git installation failed.');
@@ -60,7 +60,10 @@ async function ensureGitForWhatsApp(): Promise<void> {
   if (!hasGit()) {
     clack.log.warn(`Install git and re-run onboarding. Hint: ${installHint}`);
     clack.log.info('Skipping WhatsApp for now — you can add it later in config.yaml.');
+    return false;
   }
+
+  return true;
 }
 
 export interface ChannelSetup {
@@ -429,7 +432,8 @@ export async function channelsStep(): Promise<ChannelsResult> {
 
     // WhatsApp requires git (baileys has a git-hosted dependency)
     if (channelId === 'whatsapp') {
-      await ensureGitForWhatsApp();
+      const gitReady = await ensureGitForWhatsApp();
+      if (!gitReady) continue;
     }
 
     // Show setup guide before asking for credentials
