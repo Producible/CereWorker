@@ -1,10 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockExecSync, mockSpawnSync, mockConfirm, mockLog } = vi.hoisted(() => ({
+const { mockExecSync, mockSpawnSync, mockConfirm, mockMultiselect, mockSelect, mockLog, mockNote, mockSpinner } = vi.hoisted(() => ({
   mockExecSync: vi.fn<(cmd: string, opts?: object) => Buffer>(),
   mockSpawnSync: vi.fn<(cmd: string, args?: string[], opts?: object) => { status: number }>(() => ({ status: 1 })),
   mockConfirm: vi.fn(),
+  mockMultiselect: vi.fn(),
+  mockSelect: vi.fn(),
   mockLog: { warn: vi.fn(), info: vi.fn(), step: vi.fn(), success: vi.fn() },
+  mockNote: vi.fn(),
+  mockSpinner: vi.fn(() => ({ start: vi.fn(), stop: vi.fn() })),
 }));
 
 vi.mock('node:child_process', () => ({
@@ -15,12 +19,16 @@ vi.mock('node:child_process', () => ({
 vi.mock('../prompter.js', () => ({
   clack: {
     confirm: mockConfirm,
+    multiselect: mockMultiselect,
+    select: mockSelect,
     log: mockLog,
+    note: mockNote,
+    spinner: mockSpinner,
   },
   guardCancel: <T>(v: T) => v,
 }));
 
-import { hasGit, ensureGitForWhatsApp } from './channels.js';
+import { hasGit, ensureGitForWhatsApp, channelsStep } from './channels.js';
 
 describe('hasGit', () => {
   beforeEach(() => vi.clearAllMocks());
@@ -48,31 +56,36 @@ describe('ensureGitForWhatsApp', () => {
     expect(mockConfirm).not.toHaveBeenCalled();
   });
 
-  it('returns false when git is missing and user declines install', async () => {
+  it('returns false without prompting when no auto-install is available', async () => {
+    // No git, no package manager (spawnSync returns status 1 for all)
     mockExecSync.mockImplementation(() => {
       throw new Error('command not found: git');
     });
-    mockConfirm.mockResolvedValue(false);
 
     const result = await ensureGitForWhatsApp();
 
     expect(result).toBe(false);
-    expect(mockLog.warn).toHaveBeenCalled();
+    // Should not ask "Install git now?" when there's no auto-install command
+    expect(mockConfirm).not.toHaveBeenCalled();
     expect(mockLog.info).toHaveBeenCalledWith(
       expect.stringContaining('Skipping WhatsApp'),
     );
   });
 
-  it('returns false when auto-install is unavailable and git still missing', async () => {
-    // No package manager found (spawnSync returns status 1 for all)
+  it('returns false when user declines auto-install', async () => {
     mockExecSync.mockImplementation(() => {
       throw new Error('command not found: git');
     });
-    mockConfirm.mockResolvedValue(true);
+    // Simulate apt-get being available so the prompt is shown
+    mockSpawnSync.mockImplementation((_cmd: string, args?: string[]) => ({
+      status: args?.[0] === 'apt-get' ? 0 : 1,
+    }));
+    mockConfirm.mockResolvedValue(false);
 
     const result = await ensureGitForWhatsApp();
 
     expect(result).toBe(false);
+    expect(mockConfirm).toHaveBeenCalled();
     expect(mockLog.info).toHaveBeenCalledWith(
       expect.stringContaining('Skipping WhatsApp'),
     );
@@ -82,14 +95,10 @@ describe('ensureGitForWhatsApp', () => {
     let callCount = 0;
     mockExecSync.mockImplementation(() => {
       callCount++;
-      // 1st: hasGit() at top — no git
       if (callCount === 1) throw new Error('command not found: git');
-      // 2nd: the apt-get install command — succeeds
       if (callCount === 2) return Buffer.from('');
-      // 3rd: hasGit() re-check after install — git now available
       return Buffer.from('git version 2.43.0');
     });
-    // Simulate apt-get being available
     mockSpawnSync.mockImplementation((_cmd: string, args?: string[]) => ({
       status: args?.[0] === 'apt-get' ? 0 : 1,
     }));
@@ -105,7 +114,6 @@ describe('ensureGitForWhatsApp', () => {
     mockExecSync.mockImplementation(() => {
       throw new Error('command not found: git');
     });
-    // Simulate apt-get being available
     mockSpawnSync.mockImplementation((_cmd: string, args?: string[]) => ({
       status: args?.[0] === 'apt-get' ? 0 : 1,
     }));
@@ -115,5 +123,40 @@ describe('ensureGitForWhatsApp', () => {
 
     expect(result).toBe(false);
     expect(mockLog.warn).toHaveBeenCalledWith('git installation failed.');
+  });
+});
+
+describe('channelsStep — WhatsApp/git end-to-end', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('excludes WhatsApp from returned channels when git is missing', async () => {
+    // User selects only WhatsApp
+    mockMultiselect.mockResolvedValue(['whatsapp']);
+    // DM policy prompt
+    mockSelect.mockResolvedValue('pairing');
+    // git is not available, no package manager
+    mockExecSync.mockImplementation(() => {
+      throw new Error('command not found: git');
+    });
+
+    const result = await channelsStep();
+
+    expect(result.channels).toEqual([]);
+    expect(result.dmPolicy).toBe('pairing');
+  });
+
+  it('includes WhatsApp in returned channels when git is available', async () => {
+    // User selects only WhatsApp
+    mockMultiselect.mockResolvedValue(['whatsapp']);
+    mockSelect.mockResolvedValue('pairing');
+    // git is available
+    mockExecSync.mockReturnValue(Buffer.from('git version 2.43.0'));
+    // No allowlist
+    mockConfirm.mockResolvedValue(false);
+
+    const result = await channelsStep();
+
+    expect(result.channels).toHaveLength(1);
+    expect(result.channels[0].id).toBe('whatsapp');
   });
 });

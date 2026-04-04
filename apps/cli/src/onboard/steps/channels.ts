@@ -33,18 +33,29 @@ export async function ensureGitForWhatsApp(): Promise<boolean> {
       autoInstallCmd = 'sudo pacman -S --noconfirm git';
     }
   } else if (os === 'darwin') {
-    installHint = 'xcode-select --install  (or: brew install git)';
+    if (spawnSync('which', ['brew'], { stdio: 'pipe' }).status === 0) {
+      installHint = 'brew install git';
+      autoInstallCmd = 'brew install git';
+    } else {
+      installHint = 'xcode-select --install  (or: brew install git)';
+    }
+  }
+
+  if (!autoInstallCmd) {
+    clack.log.warn(`Install git and re-run onboarding. Hint: ${installHint}`);
+    clack.log.info('Skipping WhatsApp for now — you can add it later in config.yaml.');
+    return false;
   }
 
   const install = guardCancel(
     await clack.confirm({
-      message: `Install git now? (${installHint})`,
+      message: `Install git now? (${autoInstallCmd})`,
       active: 'Yes',
       inactive: 'No, I\'ll install it myself',
     }),
   );
 
-  if (install && autoInstallCmd) {
+  if (install) {
     clack.log.step(`Running: ${autoInstallCmd}`);
     try {
       execSync(autoInstallCmd, { stdio: 'inherit', timeout: 120_000 });
