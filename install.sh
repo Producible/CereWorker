@@ -115,28 +115,6 @@ install_node_macos() {
   fi
 }
 
-ensure_git() {
-  if command -v git >/dev/null 2>&1; then
-    return
-  fi
-  info "Installing git..."
-  case "$OS" in
-    linux)
-      case "$DISTRO" in
-        debian)  $SUDO apt-get install -y git ;;
-        fedora)  $SUDO dnf install -y git ;;
-        arch)    $SUDO pacman -S --noconfirm --needed git ;;
-        suse)    $SUDO zypper install -y git ;;
-        *)       warn "Install git manually — npm needs it for some packages." ;;
-      esac
-      ;;
-    macos)
-      # macOS ships with git via Xcode CLT; if missing, xcode-select triggers install
-      xcode-select --install 2>/dev/null || true
-      ;;
-  esac
-}
-
 ensure_node() {
   local ver
   ver=$(node_version)
@@ -245,7 +223,6 @@ main() {
   printf "\n${BOLD}CereWorker Installer${RESET}\n"
   printf "OS: %s  Distro: %s\n\n" "$OS" "$DISTRO"
 
-  ensure_git
   ensure_node
   install_cereworker
   ensure_docker
