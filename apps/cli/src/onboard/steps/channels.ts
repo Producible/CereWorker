@@ -1,5 +1,67 @@
-import { execSync } from 'node:child_process';
+import { execSync, spawnSync } from 'node:child_process';
+import { platform } from 'node:os';
 import { clack, guardCancel } from '../prompter.js';
+
+function hasGit(): boolean {
+  try {
+    execSync('git --version', { stdio: 'pipe' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function ensureGitForWhatsApp(): Promise<void> {
+  if (hasGit()) return;
+
+  clack.log.warn('WhatsApp requires git (the SDK has a git-hosted dependency).');
+
+  const os = platform();
+  let installHint = 'Install git manually: https://git-scm.com/downloads';
+  let autoInstallCmd: string | null = null;
+
+  if (os === 'linux') {
+    // Detect package manager
+    if (spawnSync('which', ['apt-get'], { stdio: 'pipe' }).status === 0) {
+      installHint = 'sudo apt-get install -y git';
+      autoInstallCmd = 'sudo apt-get install -y git';
+    } else if (spawnSync('which', ['dnf'], { stdio: 'pipe' }).status === 0) {
+      installHint = 'sudo dnf install -y git';
+      autoInstallCmd = 'sudo dnf install -y git';
+    } else if (spawnSync('which', ['pacman'], { stdio: 'pipe' }).status === 0) {
+      installHint = 'sudo pacman -S --noconfirm git';
+      autoInstallCmd = 'sudo pacman -S --noconfirm git';
+    }
+  } else if (os === 'darwin') {
+    installHint = 'xcode-select --install  (or: brew install git)';
+  }
+
+  const install = guardCancel(
+    await clack.confirm({
+      message: `Install git now? (${installHint})`,
+      active: 'Yes',
+      inactive: 'No, I\'ll install it myself',
+    }),
+  );
+
+  if (install && autoInstallCmd) {
+    clack.log.step(`Running: ${autoInstallCmd}`);
+    try {
+      execSync(autoInstallCmd, { stdio: 'inherit', timeout: 120_000 });
+      if (hasGit()) {
+        clack.log.success('git installed.');
+        return;
+      }
+    } catch {
+      clack.log.warn('git installation failed.');
+    }
+  }
+
+  if (!hasGit()) {
+    clack.log.warn(`Install git and re-run onboarding. Hint: ${installHint}`);
+    clack.log.info('Skipping WhatsApp for now — you can add it later in config.yaml.');
+  }
+}
 
 export interface ChannelSetup {
   id: string;
@@ -139,6 +201,8 @@ const SETUP_GUIDES: Record<string, string> = {
     'On first run, a QR code will be printed to the terminal.',
     'Scan it with your WhatsApp app to pair.',
     'Credentials are saved to ~/.cereworker/whatsapp-auth/',
+    '',
+    'Requires: git (the WhatsApp SDK has a git-hosted dependency).',
   ].join('\n'),
 
   signal: [
@@ -362,6 +426,11 @@ export async function channelsStep(): Promise<ChannelsResult> {
 
   for (const channelId of selected) {
     const def = CHANNEL_DEFS.find((d) => d.id === channelId)!;
+
+    // WhatsApp requires git (baileys has a git-hosted dependency)
+    if (channelId === 'whatsapp') {
+      await ensureGitForWhatsApp();
+    }
 
     // Show setup guide before asking for credentials
     const guide = SETUP_GUIDES[channelId];
