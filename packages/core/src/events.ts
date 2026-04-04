@@ -2,6 +2,8 @@ import type {
   AgentHealthAction,
   CerebellumStatus,
   Message,
+  SessionMemorySnapshot,
+  SessionSource,
   RecoveryAction,
   RecoveryCause,
   StreamPhase,
@@ -38,9 +40,28 @@ export type CompletionStage =
 export type OrchestratorEvent =
   | { type: 'message:user'; message: Message }
   | { type: 'message:system'; message: Message }
-  | { type: 'message:cerebrum:start'; conversationId: string }
+  | {
+      type: 'message:cerebrum:start';
+      conversationId: string;
+      turnId: string;
+      sessionId: string;
+      source: SessionSource;
+    }
   | { type: 'message:cerebrum:chunk'; chunk: string }
-  | { type: 'message:cerebrum:end'; message: Message }
+  | {
+      type: 'message:cerebrum:end';
+      conversationId: string;
+      turnId: string;
+      sessionId: string;
+      source: SessionSource;
+      message: Message;
+    }
+  | {
+      type: 'session:memory-updated';
+      conversationId: string;
+      sessionId: string;
+      snapshot: SessionMemorySnapshot;
+    }
   | { type: 'message:cerebrum:toolcall'; toolCall: ToolCall }
   | { type: 'tool:start'; callId: string; name: string; requestedName?: string; args: Record<string, unknown> }
   | { type: 'tool:end'; callId: string; name: string; requestedName?: string; args: Record<string, unknown>; result: ToolResult }

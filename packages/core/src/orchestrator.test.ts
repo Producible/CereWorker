@@ -287,7 +287,10 @@ describe('Orchestrator', () => {
 
       expect(startHandler).toHaveBeenCalledOnce();
       expect(endHandler).toHaveBeenCalledOnce();
+      expect(startHandler.mock.calls[0][0].source).toBe('local');
+      expect(startHandler.mock.calls[0][0].sessionId).toBeTruthy();
       expect(endHandler.mock.calls[0][0].message.content).toBe('hello');
+      expect(endHandler.mock.calls[0][0].sessionId).toBe(startHandler.mock.calls[0][0].sessionId);
     });
 
     it('stores messages in conversation', async () => {
@@ -773,7 +776,25 @@ describe('Orchestrator', () => {
         const journal = localOrch
           .getConversationStore()
           .getTurnJournal(conversationId, recoveryRequests[0]!.turnId);
+        const sessionEvents = localOrch
+          .getConversationStore()
+          .getSessionEvents(conversationId, recoveryRequests[0]!.turnId);
+        const querySession = localOrch.getQuerySession(conversationId, recoveryRequests[0]!.turnId);
         expect(journal.some((entry) => entry.type === 'turn_started')).toBe(true);
+        expect(
+          sessionEvents.some(
+            (event) =>
+              event.type === 'tool_finished' &&
+              event.summary.includes('Opened the CereWorkerX profile on X.'),
+          ),
+        ).toBe(true);
+        expect(
+          sessionEvents.some(
+            (event) =>
+              event.type === 'boundary_committed' &&
+              event.instanceId === undefined,
+          ),
+        ).toBe(true);
         expect(
           journal.some(
             (entry) =>
@@ -789,6 +810,55 @@ describe('Orchestrator', () => {
           ),
         ).toBe(true);
         expect(journal.some((entry) => entry.type === 'recovery')).toBe(true);
+        expect(querySession).toMatchObject({
+          id: recoveryRequests[0]!.turnId,
+          source: 'local',
+          state: 'completed',
+        });
+        expect(
+          sessionEvents.some(
+            (event) =>
+              event.type === 'boundary_committed' &&
+              event.summary.includes('Opened the CereWorkerX profile on X.'),
+          ),
+        ).toBe(true);
+      } finally {
+        await localOrch.stop();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it('records session memory updates against the persisted query session', async () => {
+      const dir = mkdtempSync(join(tmpdir(), 'orchestrator-session-memory-'));
+      const localOrch = new Orchestrator({
+        conversationStore: new ConversationStore(dir),
+      });
+      try {
+        localOrch.setCerebrum(createMockCerebrum());
+        const conversationId = localOrch.startConversation();
+
+        let endedSessionId = '';
+        localOrch.on('message:cerebrum:end', ({ sessionId }) => {
+          endedSessionId = sessionId;
+        });
+
+        await localOrch.sendMessage('hi');
+        localOrch.recordSessionMemoryUpdate(conversationId, endedSessionId, {
+          sessionId: endedSessionId,
+          summary: 'Stored the latest exchange in session memory.',
+          excerpt: 'hello',
+          updatedAt: Date.now(),
+        });
+
+        const querySession = localOrch.getQuerySession(conversationId, endedSessionId);
+        const sessionEvents = localOrch
+          .getConversationStore()
+          .getSessionEvents(conversationId, endedSessionId);
+
+        expect(querySession?.memory?.summary).toBe('Stored the latest exchange in session memory.');
+        expect(
+          sessionEvents.some((event) => event.type === 'memory_updated'),
+        ).toBe(true);
       } finally {
         await localOrch.stop();
         rmSync(dir, { recursive: true, force: true });

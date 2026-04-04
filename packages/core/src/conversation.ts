@@ -2,7 +2,14 @@ import { nanoid } from 'nanoid';
 import { existsSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { homedir } from 'node:os';
-import type { Conversation, Message, MessageRole, TurnJournalEntry } from './types.js';
+import type {
+  Conversation,
+  Message,
+  MessageRole,
+  QuerySession,
+  SessionEvent,
+  TurnJournalEntry,
+} from './types.js';
 import { createLogger } from './logger.js';
 import {
   appendJsonLine,
@@ -42,6 +49,7 @@ export class ConversationStore {
   private readonly baseDir: string | null;
   private readonly conversationsDir: string | null;
   private readonly memoryConversations = new Map<string, Conversation>();
+  private readonly memorySessions = new Map<string, Map<string, QuerySession>>();
 
   constructor(dbPath?: string) {
     this.inMemory = dbPath === ':memory:';
@@ -233,6 +241,53 @@ export class ConversationStore {
     return readJsonLines<TurnJournalEntry>(this.getTurnJournalPath(conversationId, turnId));
   }
 
+  appendSessionEvent(conversationId: string, sessionId: string, event: SessionEvent): void {
+    if (this.inMemory) return;
+
+    withTextStoreLock(this.getConversationDir(conversationId), () => {
+      const meta = this.readConversationMeta(conversationId);
+      if (!meta) throw new Error(`Conversation ${conversationId} not found`);
+
+      ensureDir(this.getSessionsDir(conversationId));
+      appendJsonLine(this.getSessionLedgerPath(conversationId, sessionId), event);
+    });
+  }
+
+  getSessionEvents(conversationId: string, sessionId: string): SessionEvent[] {
+    if (this.inMemory) return [];
+    return readJsonLines<SessionEvent>(this.getSessionLedgerPath(conversationId, sessionId));
+  }
+
+  saveQuerySession(conversationId: string, session: QuerySession): void {
+    if (this.inMemory) {
+      let sessions = this.memorySessions.get(conversationId);
+      if (!sessions) {
+        sessions = new Map<string, QuerySession>();
+        this.memorySessions.set(conversationId, sessions);
+      }
+      sessions.set(session.id, { ...session });
+      return;
+    }
+
+    withTextStoreLock(this.getConversationDir(conversationId), () => {
+      const meta = this.readConversationMeta(conversationId);
+      if (!meta) throw new Error(`Conversation ${conversationId} not found`);
+
+      ensureDir(this.getSessionsDir(conversationId));
+      writeJsonFileAtomic(this.getSessionSnapshotPath(conversationId, session.id), session);
+    });
+  }
+
+  getQuerySession(conversationId: string, sessionId: string): QuerySession | undefined {
+    if (this.inMemory) {
+      return this.memorySessions.get(conversationId)?.get(sessionId);
+    }
+    return readJsonFile<QuerySession | null>(
+      this.getSessionSnapshotPath(conversationId, sessionId),
+      null,
+    ) ?? undefined;
+  }
+
   pruneTurnJournals(
     conversationId: string,
     policy: TurnJournalRetentionPolicy,
@@ -317,6 +372,7 @@ export class ConversationStore {
   delete(id: string): boolean {
     if (this.inMemory) {
       const deleted = this.memoryConversations.delete(id);
+      this.memorySessions.delete(id);
       log.debug('Deleted conversation', { id, deleted });
       return deleted;
     }
@@ -357,6 +413,18 @@ export class ConversationStore {
 
   private getTurnJournalPath(id: string, turnId: string): string {
     return join(this.getTurnsDir(id), `${turnId}.jsonl`);
+  }
+
+  private getSessionsDir(id: string): string {
+    return join(this.getConversationDir(id), 'sessions');
+  }
+
+  private getSessionLedgerPath(id: string, sessionId: string): string {
+    return join(this.getSessionsDir(id), `${sessionId}.jsonl`);
+  }
+
+  private getSessionSnapshotPath(id: string, sessionId: string): string {
+    return join(this.getSessionsDir(id), `${sessionId}.json`);
   }
 
   private listTurnJournalFiles(id: string): TurnJournalFileInfo[] {

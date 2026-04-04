@@ -93,9 +93,11 @@ The **Cerebrum** wraps Vercel AI SDK 6 to provide a unified interface across pro
 
 The **Cerebellum** runs as a Python gRPC service inside a Docker container with a configurable small LLM (Qwen3 0.6B/1.7B, SmolLM2, Phi-4 Mini, or a custom model). The TypeScript side communicates with it via streaming RPCs defined in `proto/cerebellum.proto`. The container manages its own model weights and supports fine-tuning via LoRA, QLoRA, or full methods on a configurable schedule. After fine-tuning, the container can be hot-swapped with updated weights without interrupting the main process.
 
-The **Hippocampus** is CereWorker's temporary memory layer, inspired by the brain structure that consolidates short-term memory into long-term storage. It stores session notes, decisions, and observations in `~/.cereworker/memory/` as markdown files (`MEMORY.md` for curated knowledge, `YYYY-MM-DD.md` for daily logs). The Cerebrum reads and writes to the Hippocampus during normal conversation via memory tools. Periodically, a curator process reviews the Hippocampus and selects memories worth permanently learning -- these are extracted as training pairs and fed into the Cerebellum's fine-tuning pipeline. This is how ephemeral context becomes permanent knowledge without consuming context window.
+The **Hippocampus** is CereWorker's temporary memory layer, inspired by the brain structure that consolidates short-term memory into long-term storage. It is organized around the single learned instance: `project/` for durable curated knowledge, `daily/` for continuity logs, `session/` for per-conversation working memory, and `training/` / `finetune/` for inspectable learning artifacts. The Cerebrum reads and writes to the Hippocampus during normal conversation via memory tools. Periodically, a curator process reviews the Hippocampus and selects memories worth permanently learning -- these are extracted as structured training pairs and fed into the Cerebellum's fine-tuning pipeline. This is how ephemeral context becomes permanent knowledge without consuming context window.
 
 The **SubAgentManager** enables the Cerebrum to spawn independent workers for parallel tasks. Each sub-agent gets its own isolated conversation, session (`session.json` + `transcript.jsonl`), and memory directory (`~/.cereworker/agents/<id>/memory/`). Sub-agents share the same Cerebrum provider and tool registry but cannot spawn sub-sub-agents (preventing infinite recursion). The Cerebellum monitors sub-agent health via the `ReportAgentStates` RPC -- deterministic checks detect stalls and timeouts, and the model answers "should we retry this stalled agent? yes/no" for ambiguous cases. The Cerebrum manages sub-agents through three tools: `spawn_agent`, `query_agents`, and `cancel_agent`.
+
+Every conversation also carries a plain-text session ledger under `~/.cereworker/conversations/<conversationId>/sessions/`, so retries, recovery boundaries, and later inspection all stay attached to the same single-instance history instead of being reconstructed only from prompts.
 
 **Channels** are pluggable IM adapters. Each implements a simple interface: `start(handler)`, `stop()`, `send(msg)`, `isAllowed(senderId)`. The channel manager starts all enabled channels and routes inbound messages through the orchestrator, so the agent can be reached via Slack, Discord, Telegram, Matrix, Feishu, WeChat, WhatsApp, Signal, or IRC simultaneously.
 
@@ -651,13 +653,22 @@ The Hippocampus is CereWorker's temporary memory layer that bridges conversation
 
 ```
 ~/.cereworker/memory/
-  MEMORY.md              # Curated long-term notes (always loaded)
-  2026-03-08.md           # Today's session log
-  2026-03-07.md           # Yesterday's log
+  project/
+    MEMORY.md            # Curated long-term notes (always loaded)
+  daily/
+    2026-03-08.md        # Today's continuity log
+    2026-03-07.md        # Yesterday's log
+  session/
+    <conversation-id>.md # Per-session working memory transcript
+  training/              # Human-readable derived training artifacts
 ~/.cereworker/conversations/
   <conversation-id>/
     meta.json
     messages.jsonl
+    sessions/
+      <session-id>.jsonl # Session ledger / recovery events
+    turns/
+      <turn-id>.jsonl    # Per-turn journal entries
 ~/.cereworker/pairing/
   requests.jsonl
   approved-users.jsonl
@@ -678,9 +689,9 @@ The Hippocampus is CereWorker's temporary memory layer that bridges conversation
         curated-memory.jsonl
 ```
 
-The Cerebrum reads and writes memory through four tools: `memory_read`, `memory_write`, `memory_log`, and `memory_search`. Periodically, a **curator** reviews the Hippocampus and asks the Cerebrum: "Which of these memories contain durable knowledge worth permanently learning?" The answer is extracted as instruction/response training pairs and queued for the Cerebellum's fine-tuning pipeline.
+The Cerebrum reads and writes memory through four tools: `memory_read`, `memory_write`, `memory_log`, and `memory_search`. During normal operation, completed turns can also append a short per-session markdown trace under `memory/session/` so the instance keeps a working memory lane separate from curated project knowledge. Periodically, a **curator** reviews the Hippocampus and asks the Cerebrum: "Which of these memories contain durable knowledge worth permanently learning?" The answer is extracted as structured instruction/response pairs and queued for the Cerebellum's fine-tuning pipeline together with instance/session metadata.
 
-This creates a natural flow: conversation --> Hippocampus (files) --> curation (Cerebrum) --> fine-tuning queue --> per-round archive --> permanent knowledge (model weights).
+This creates a natural flow: conversation --> session ledger + Hippocampus files --> curation (Cerebrum) --> fine-tuning queue --> per-round archive --> permanent knowledge (model weights).
 
 On first start after upgrading from the old SQLite-backed layout, CereWorker exports legacy `conversations.db` data into the text layout above and keeps the original file as `conversations.db.bak`.
 

@@ -21,13 +21,16 @@ export interface FineTuneQueuedBatch {
 export interface FineTuneRoundManifest {
   roundId: string;
   jobId: string;
+  instanceId?: string;
   status: 'running' | 'completed' | 'failed';
   createdAt: string;
   startedAt: string;
   completedAt?: string;
   requestedMethod?: string;
+  activeCheckpointBefore?: string | null;
   totalPairs: number;
   sourceCounts: Record<FineTuneQueueSource, number>;
+  exampleClassCounts?: Record<string, number>;
   checkpointPath?: string;
   loss?: number;
   error?: string;
@@ -50,11 +53,21 @@ function serializePair(pair: TrainingPair): string {
     response: pair.response,
     source: pair.source,
     createdAt: pair.createdAt,
+    instanceId: pair.instanceId,
+    sessionId: pair.sessionId,
+    exampleClass: pair.exampleClass,
   });
 }
 
 function pairIdentity(pair: TrainingPair): string {
-  return `${pair.instruction}\u0000${pair.response}\u0000${pair.source}`;
+  return [
+    pair.instruction,
+    pair.response,
+    pair.source,
+    pair.instanceId ?? '',
+    pair.sessionId ?? '',
+    pair.exampleClass ?? '',
+  ].join('\u0000');
 }
 
 function readPairs(path: string): TrainingPair[] {
@@ -182,26 +195,37 @@ export class FineTuneArchiveStore {
     });
   }
 
-  createRound(batch: FineTuneQueuedBatch, options: { jobId: string; requestedMethod?: string }): FineTuneRoundManifest {
+  createRound(
+    batch: FineTuneQueuedBatch,
+    options: { jobId: string; requestedMethod?: string; instanceId?: string; activeCheckpointBefore?: string | null },
+  ): FineTuneRoundManifest {
     const roundId = options.jobId || `round-${randomUUID()}`;
     const roundDir = join(this.roundsDir, roundId);
     return withTextStoreLock(roundDir, () => {
       const sourcesDir = join(roundDir, 'sources');
       ensureDir(sourcesDir);
+      const exampleClassCounts = batch.pairs.reduce<Record<string, number>>((counts, pair) => {
+        const key = pair.exampleClass ?? 'unspecified';
+        counts[key] = (counts[key] ?? 0) + 1;
+        return counts;
+      }, {});
 
       const manifest: FineTuneRoundManifest = {
         roundId,
         jobId: options.jobId,
+        instanceId: options.instanceId,
         status: 'running',
         createdAt: new Date().toISOString(),
         startedAt: new Date().toISOString(),
         requestedMethod: options.requestedMethod,
+        activeCheckpointBefore: options.activeCheckpointBefore,
         totalPairs: batch.pairs.length,
         sourceCounts: {
           discovery: batch.bySource.discovery.length,
           conversations: batch.bySource.conversations.length,
           'curated-memory': batch.bySource['curated-memory'].length,
         },
+        exampleClassCounts,
       };
 
       writePairs(join(roundDir, 'training.jsonl'), batch.pairs);

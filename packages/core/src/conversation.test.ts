@@ -203,6 +203,81 @@ describe('ConversationStore', () => {
     }
   });
 
+  it('stores per-session ledger events alongside turn journals', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'conversation-session-ledger-'));
+    try {
+      const fileStore = new ConversationStore(dir);
+      const conversation = fileStore.create();
+      fileStore.appendSessionEvent(conversation.id, 'session-1', {
+        sessionId: 'session-1',
+        conversationId: conversation.id,
+        turnId: 'turn-1',
+        attempt: 1,
+        timestamp: 123,
+        type: 'turn_started',
+        state: 'ready',
+        summary: 'Turn attempt 1 started.',
+        instanceId: 'instance-1',
+        checkpointPath: null,
+      });
+
+      expect(fileStore.getSessionEvents(conversation.id, 'session-1')).toEqual([
+        expect.objectContaining({
+          type: 'turn_started',
+          state: 'ready',
+          summary: 'Turn attempt 1 started.',
+          instanceId: 'instance-1',
+        }),
+      ]);
+      expect(
+        existsSync(join(dir, 'conversations', conversation.id, 'sessions', 'session-1.jsonl')),
+      ).toBe(true);
+      fileStore.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('stores query session snapshots alongside the session ledger', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'conversation-session-snapshot-'));
+    try {
+      const fileStore = new ConversationStore(dir);
+      const conversation = fileStore.create();
+      fileStore.saveQuerySession(conversation.id, {
+        id: 'session-1',
+        conversationId: conversation.id,
+        turnId: 'turn-1',
+        attempt: 1,
+        source: 'local',
+        state: 'waiting_followup',
+        startedAt: 100,
+        updatedAt: 200,
+        summary: 'Profile continuity check completed.',
+        latestUserMessage: 'Continue today’s X task.',
+        latestAssistantMessage: 'Reviewed the profile and timeline.',
+        stallRetryCount: 0,
+        completionRetryCount: 0,
+        instanceId: 'instance-1',
+        checkpointPath: '/checkpoints/base',
+      });
+
+      expect(fileStore.getQuerySession(conversation.id, 'session-1')).toEqual(
+        expect.objectContaining({
+          id: 'session-1',
+          state: 'waiting_followup',
+          summary: 'Profile continuity check completed.',
+          instanceId: 'instance-1',
+        }),
+      );
+      expect(
+        existsSync(join(dir, 'conversations', conversation.id, 'sessions', 'session-1.json')),
+      ).toBe(true);
+      fileStore.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('prunes turn journals by age before enforcing max files per conversation', () => {
     const dir = mkdtempSync(join(tmpdir(), 'conversation-journal-prune-'));
     try {

@@ -339,11 +339,13 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
   let finetuneScheduleHint = scheduleMap[config.cerebellum.finetune?.schedule ?? 'auto'] ?? 'when idle';
   let pendingFineTuneBatch: import('@cereworker/hippocampus').FineTuneQueuedBatch | null = null;
   const fineTuneRoundsByJob = new Map<string, string>();
+  const instanceId = instance?.id;
 
   if (config.cerebellum.finetune?.enabled) {
     const conversationExtractor = new ConversationExtractor(
       conversationStore,
       fineTuneArchive.getConversationExtractorStatePath(),
+      instanceId,
     );
 
     // Memory-based curator (requires hippocampus)
@@ -351,6 +353,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
       ? new HippocampusCurator(
           hippocampusStore!,
           { generate: (prompt: string) => cerebrum.generate(prompt) },
+          instanceId,
         )
       : null;
 
@@ -378,6 +381,8 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
       const manifest = fineTuneArchive.createRound(pendingFineTuneBatch, {
         jobId,
         requestedMethod: config.cerebellum.finetune?.method,
+        instanceId,
+        activeCheckpointBefore: instanceStore.get()?.activeCheckpoint ?? null,
       });
       fineTuneArchive.clearBatch(pendingFineTuneBatch);
       fineTuneRoundsByJob.set(jobId, manifest.roundId);
@@ -424,6 +429,23 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
     });
     fineTuneRoundsByJob.delete(jobId);
   });
+
+  if (hippocampusStore) {
+    orchestrator.on('message:cerebrum:end', ({ conversationId, sessionId, message }) => {
+      const messages = orchestrator.getMessages(conversationId);
+      const latestUser = [...messages]
+        .reverse()
+        .find((candidate) => candidate.role === 'user');
+      if (!latestUser) return;
+      hippocampusStore.appendSessionTurn(conversationId, latestUser.content, message.content);
+      orchestrator.recordSessionMemoryUpdate(conversationId, sessionId, {
+        sessionId,
+        updatedAt: Date.now(),
+        summary: 'Stored the latest user/assistant exchange in session memory.',
+        excerpt: message.content.slice(0, 500),
+      });
+    });
+  }
 
   // Setup sub-agents
   if (config.subAgents.enabled) {
@@ -526,7 +548,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
         proactiveReply += (proactiveReply ? '\n\n' : '') + content;
       });
 
-      await orchestrator.sendMessage(msg.text, conversationId);
+      await orchestrator.sendMessage(msg.text, conversationId, { source: 'channel' });
 
       unsub();
 
@@ -567,6 +589,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
       try {
         const discoveryPairs: import('@cereworker/hippocampus').TrainingPair[] = [];
         const messages = orchestrator.getMessages();
+        const discoverySessionId = orchestrator.getActiveConversationId() ?? undefined;
         for (let i = 0; i < messages.length - 1; i++) {
           if (messages[i].role === 'user' && messages[i + 1].role === 'cerebrum') {
             discoveryPairs.push({
@@ -574,6 +597,9 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
               response: messages[i + 1].content,
               source: 'discovery',
               createdAt: messages[i + 1].timestamp,
+              instanceId: instanceStore.get()?.id,
+              sessionId: discoverySessionId,
+              exampleClass: 'discovery',
             });
           }
         }

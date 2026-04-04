@@ -1,4 +1,5 @@
 export type MessageRole = 'user' | 'cerebrum' | 'cerebellum' | 'tool' | 'system';
+export type SessionSource = 'local' | 'channel' | 'gateway' | 'node';
 
 export interface ToolCall {
   id: string;
@@ -164,6 +165,96 @@ export interface TurnJournalEntry {
   type: TurnJournalEntryType;
   summary: string;
   data?: Record<string, unknown>;
+}
+
+export type QuerySessionState =
+  | 'ready'
+  | 'sampling'
+  | 'tool_execution'
+  | 'waiting_followup'
+  | 'completed'
+  | 'stalled'
+  | 'aborted'
+  | 'failed';
+
+export type SessionEventType =
+  | 'turn_started'
+  | 'partial_text'
+  | 'tool_started'
+  | 'tool_finished'
+  | 'checkpoint_recorded'
+  | 'boundary_committed'
+  | 'completion_signal_recorded'
+  | 'recovery_assessed'
+  | 'memory_updated'
+  | 'turn_finished'
+  | 'turn_failed';
+
+export interface SessionMemorySnapshot {
+  sessionId: string;
+  summary: string;
+  excerpt?: string;
+  updatedAt: number;
+}
+
+export interface QuerySession {
+  id: string;
+  conversationId: string;
+  turnId: string;
+  attempt: number;
+  source: SessionSource;
+  state: QuerySessionState;
+  startedAt: number;
+  updatedAt: number;
+  summary: string;
+  latestUserMessage?: string;
+  latestAssistantMessage?: string;
+  latestBoundary?: TurnBoundarySummary;
+  lastOutcome?: TurnOutcome;
+  activeToolName?: string;
+  activeToolCallId?: string;
+  stallRetryCount: number;
+  completionRetryCount: number;
+  instanceId?: string;
+  checkpointPath?: string | null;
+  memory?: SessionMemorySnapshot;
+  lastError?: string;
+}
+
+export interface SessionEvent {
+  sessionId: string;
+  conversationId: string;
+  turnId: string;
+  attempt: number;
+  timestamp: number;
+  type: SessionEventType;
+  state: QuerySessionState;
+  summary: string;
+  instanceId?: string;
+  checkpointPath?: string | null;
+  data?: Record<string, unknown>;
+}
+
+export interface TrainingExample {
+  instruction: string;
+  response: string;
+  source: string;
+  createdAt: number;
+  instanceId?: string;
+  sessionId?: string;
+  exampleClass?: string;
+}
+
+export interface TransportEnvelope<T = Record<string, unknown>> {
+  envelopeId: string;
+  instanceId?: string;
+  sessionId: string;
+  conversationId?: string;
+  source: SessionSource;
+  eventType: string;
+  timestamp: number;
+  payload: T;
+  ackToken?: string;
 }
 
 export type RecoveryCause = 'stall' | 'completion';

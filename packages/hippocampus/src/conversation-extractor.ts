@@ -15,10 +15,12 @@ export class ConversationExtractor {
   private lastExtractedAt = 0;
   private processedIds = new Set<string>();
   private readonly statePath?: string;
+  private readonly instanceId?: string;
 
-  constructor(source: ConversationSource, statePath?: string) {
+  constructor(source: ConversationSource, statePath?: string, instanceId?: string) {
     this.source = source;
     this.statePath = statePath;
+    this.instanceId = instanceId;
     this.loadState();
   }
 
@@ -58,6 +60,9 @@ export class ConversationExtractor {
           response,
           source: `conversation:${conv.id}`,
           createdAt: now,
+          instanceId: this.instanceId,
+          sessionId: conv.id,
+          exampleClass: 'conversation',
         });
       }
 

@@ -25,6 +25,9 @@ describe('FineTuneArchiveStore', () => {
       response: `${instruction} response`,
       source,
       createdAt: 1,
+      instanceId: 'instance-1',
+      sessionId: 'session-1',
+      exampleClass: 'conversation',
     };
   }
 
@@ -46,10 +49,18 @@ describe('FineTuneArchiveStore', () => {
     store.enqueue('conversations', [makePair('conversation:abc', 'conv fact')]);
 
     const batch = store.getQueuedBatch();
-    const manifest = store.createRound(batch, { jobId: 'ft-123', requestedMethod: 'auto' });
+    const manifest = store.createRound(batch, {
+      jobId: 'ft-123',
+      requestedMethod: 'auto',
+      instanceId: 'instance-1',
+      activeCheckpointBefore: '/checkpoints/base',
+    });
     store.clearBatch(batch);
 
     expect(manifest.totalPairs).toBe(2);
+    expect(manifest.instanceId).toBe('instance-1');
+    expect(manifest.activeCheckpointBefore).toBe('/checkpoints/base');
+    expect(manifest.exampleClassCounts?.conversation).toBe(2);
     expect(readFileSync(join(dir, 'rounds', 'ft-123', 'training.jsonl'), 'utf-8')).toContain('curated fact');
     expect(readFileSync(join(dir, 'rounds', 'ft-123', 'sources', 'curated-memory.jsonl'), 'utf-8')).toContain('curated fact');
     expect(store.getQueuedBatch().pairs).toHaveLength(0);
@@ -59,7 +70,7 @@ describe('FineTuneArchiveStore', () => {
     const store = makeStore();
     store.enqueue('discovery', [makePair('discovery', 'seed')]);
     const batch = store.getQueuedBatch();
-    store.createRound(batch, { jobId: 'ft-456', requestedMethod: 'lora' });
+    store.createRound(batch, { jobId: 'ft-456', requestedMethod: 'lora', instanceId: 'instance-1' });
     const updated = store.updateRoundStatus('ft-456', {
       status: 'completed',
       completedAt: '2026-03-30T00:00:00.000Z',

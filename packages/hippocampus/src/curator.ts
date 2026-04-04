@@ -58,10 +58,12 @@ export interface TextGenerator {
 export class HippocampusCurator {
   private store: HippocampusStore;
   private generator: TextGenerator;
+  private readonly instanceId?: string;
 
-  constructor(store: HippocampusStore, generator: TextGenerator) {
+  constructor(store: HippocampusStore, generator: TextGenerator, instanceId?: string) {
     this.store = store;
     this.generator = generator;
+    this.instanceId = instanceId;
   }
 
   /**
@@ -199,6 +201,8 @@ export class HippocampusCurator {
           response: item.response as string,
           source: (item.source as string) ?? 'unknown',
           createdAt: now,
+          instanceId: this.instanceId,
+          exampleClass: 'curated-memory' as const,
         }));
     } catch (err) {
       errors.push(`Failed to parse Cerebrum response: ${err instanceof Error ? err.message : String(err)}`);

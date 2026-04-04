@@ -11,9 +11,15 @@ import type {
   Message,
   AgentHealthAction,
   ProgressEntry,
+  QuerySession,
   RecoveryAction,
   RecoveryCause,
+  SessionMemorySnapshot,
+  SessionSource,
   StreamContentKind,
+  SessionEvent,
+  SessionEventType,
+  QuerySessionState,
   TaskCheckpoint,
   TaskCheckpointStatus,
   ToolCall,
@@ -215,6 +221,10 @@ export interface OrchestratorOptions {
   turnJournalRetention?: TurnJournalRetentionPolicy;
 }
 
+export interface SendMessageOptions {
+  source?: SessionSource;
+}
+
 export class Orchestrator extends TypedEventEmitter {
   private conversations: ConversationStore;
   private cerebrum: CerebrumAdapter | null = null;
@@ -275,8 +285,16 @@ export class Orchestrator extends TypedEventEmitter {
   };
   private streamPhase: StreamPhase = 'idle';
   private activeToolCall: { id: string; name: string; startedAt: number } | null = null;
-  private currentStreamTurn: { turnId: string; attempt: number; conversationId: string } | null =
-    null;
+  private currentStreamTurn:
+    | {
+        turnId: string;
+        attempt: number;
+        conversationId: string;
+        sessionId: string;
+        source: SessionSource;
+      }
+    | null = null;
+  private currentQuerySession: QuerySession | null = null;
   private currentAttemptCompletionState: AttemptCompletionState | null = null;
   private currentPartialContent = '';
   private currentLastContentKind: StreamContentKind = 'empty';
@@ -905,6 +923,45 @@ export class Orchestrator extends TypedEventEmitter {
     return this.conversations.getMessages(id);
   }
 
+  getQuerySession(conversationId: string, sessionId: string): QuerySession | undefined {
+    return this.conversations.getQuerySession(conversationId, sessionId);
+  }
+
+  recordSessionMemoryUpdate(
+    conversationId: string,
+    sessionId: string,
+    snapshot: SessionMemorySnapshot,
+  ): void {
+    const session = this.conversations.getQuerySession(conversationId, sessionId);
+    if (!session) return;
+
+    const updated: QuerySession = {
+      ...session,
+      memory: snapshot,
+      updatedAt: Date.now(),
+      summary: snapshot.summary || session.summary,
+    };
+    this.conversations.saveQuerySession(conversationId, updated);
+
+    const event: SessionEvent = {
+      sessionId,
+      conversationId,
+      turnId: session.turnId,
+      attempt: session.attempt,
+      timestamp: snapshot.updatedAt,
+      type: 'memory_updated',
+      state: updated.state,
+      summary: this.truncateResumeText(`Session memory updated: ${snapshot.summary}`, 500),
+      instanceId: updated.instanceId,
+      checkpointPath: updated.checkpointPath ?? null,
+      data: {
+        excerpt: snapshot.excerpt,
+      },
+    };
+    this.conversations.appendSessionEvent(conversationId, sessionId, event);
+    this.emit({ type: 'session:memory-updated', conversationId, sessionId, snapshot });
+  }
+
   startConversation(): string {
     const conversation = this.conversations.create();
     this.activeConversationId = conversation.id;
@@ -1068,6 +1125,119 @@ export class Orchestrator extends TypedEventEmitter {
     this.currentJournaledContentLength = 0;
   }
 
+  private createQuerySession(
+    conversationId: string,
+    turnId: string,
+    attempt: number,
+    source: SessionSource,
+    latestUserMessage: string,
+    stallRetryCount: number,
+    completionRetryCount: number,
+  ): QuerySession {
+    const timestamp = Date.now();
+    const instance = this.instanceStore?.get();
+    return {
+      id: turnId,
+      conversationId,
+      turnId,
+      attempt,
+      source,
+      state: 'ready',
+      startedAt: timestamp,
+      updatedAt: timestamp,
+      summary: `Turn attempt ${attempt} started.`,
+      latestUserMessage: this.truncateResumeText(latestUserMessage, 1200),
+      stallRetryCount,
+      completionRetryCount,
+      instanceId: instance?.id,
+      checkpointPath: instance?.activeCheckpoint ?? null,
+    };
+  }
+
+  private saveCurrentQuerySession(): void {
+    if (!this.currentStreamTurn || !this.currentQuerySession) return;
+    this.conversations.saveQuerySession(
+      this.currentStreamTurn.conversationId,
+      this.currentQuerySession,
+    );
+  }
+
+  private updateCurrentQuerySession(
+    type: TurnJournalEntryType,
+    summary: string,
+    data?: Record<string, unknown>,
+  ): void {
+    if (!this.currentStreamTurn || !this.currentQuerySession) return;
+
+    const eventState = this.getQuerySessionState(type, data);
+    const updatedAt = Date.now();
+    const next: QuerySession = {
+      ...this.currentQuerySession,
+      attempt: this.currentStreamTurn.attempt,
+      updatedAt,
+      summary: this.truncateResumeText(summary, 500),
+      state: this.resolveQuerySessionState(type, eventState, data),
+      checkpointPath: this.instanceStore?.get()?.activeCheckpoint ?? this.currentQuerySession.checkpointPath ?? null,
+    };
+
+    if (type === 'partial_text') {
+      const excerpt = typeof data?.excerpt === 'string' ? data.excerpt : summary;
+      next.latestAssistantMessage = this.truncateResumeText(excerpt, 1200);
+    }
+    if (type === 'tool_start') {
+      next.activeToolName = typeof data?.toolName === 'string' ? data.toolName : undefined;
+      next.activeToolCallId = typeof data?.callId === 'string' ? data.callId : undefined;
+    } else if (type !== 'tool_end') {
+      next.activeToolName = undefined;
+      next.activeToolCallId = undefined;
+    }
+    if (type === 'tool_end') {
+      next.activeToolName = undefined;
+      next.activeToolCallId = undefined;
+    }
+    if (type === 'turn_finished') {
+      const finalContent = typeof data?.finalContent === 'string' ? data.finalContent.trim() : '';
+      if (finalContent) {
+        next.latestAssistantMessage = this.truncateResumeText(finalContent, 1200);
+      }
+      if (typeof data?.turnOutcome === 'string') {
+        next.lastOutcome = data.turnOutcome as TurnOutcome;
+      }
+    }
+    if (type === 'turn_error') {
+      next.lastError = typeof data?.error === 'string' ? data.error : summary;
+      if (data?.aborted === true) {
+        next.lastOutcome = 'aborted';
+      } else {
+        next.lastOutcome = 'protocol_error';
+      }
+    }
+    if (type === 'completion_signal' && typeof data?.signal === 'string') {
+      next.summary = this.truncateResumeText(summary, 500);
+    }
+
+    this.currentQuerySession = next;
+    this.saveCurrentQuerySession();
+  }
+
+  private resolveQuerySessionState(
+    type: TurnJournalEntryType,
+    defaultState: QuerySessionState,
+    data?: Record<string, unknown>,
+  ): QuerySessionState {
+    if (type === 'turn_finished') {
+      const turnOutcome = data?.turnOutcome;
+      if (turnOutcome === 'completed' || turnOutcome === 'completed_no_text') return 'completed';
+      if (turnOutcome === 'stalled') return 'stalled';
+      if (turnOutcome === 'aborted') return 'aborted';
+      if (turnOutcome === 'ended_on_tool_calls' || turnOutcome === 'completion_signal_missing') {
+        return 'waiting_followup';
+      }
+      if (turnOutcome === 'protocol_error') return 'failed';
+    }
+    return defaultState;
+  }
+
   private appendTurnJournalEntry(
     type: TurnJournalEntryType,
     summary: string,
@@ -1088,6 +1258,84 @@ export class Orchestrator extends TypedEventEmitter {
       this.currentStreamTurn.turnId,
       entry,
     );
+    this.appendSessionEvent(type, entry.summary, data);
+  }
+
+  private appendSessionEvent(
+    type: TurnJournalEntryType,
+    summary: string,
+    data?: Record<string, unknown>,
+  ): void {
+    if (!this.currentStreamTurn) return;
+
+    const instance = this.instanceStore?.get();
+    const event: SessionEvent = {
+      sessionId: this.currentStreamTurn.sessionId,
+      conversationId: this.currentStreamTurn.conversationId,
+      turnId: this.currentStreamTurn.turnId,
+      attempt: this.currentStreamTurn.attempt,
+      timestamp: Date.now(),
+      type: this.mapJournalEntryToSessionEvent(type),
+      state: this.getQuerySessionState(type, data),
+      summary: this.truncateResumeText(summary, 500),
+      instanceId: instance?.id,
+      checkpointPath: instance?.activeCheckpoint ?? null,
+      ...(data ? { data } : {}),
+    };
+    this.conversations.appendSessionEvent(
+      this.currentStreamTurn.conversationId,
+      this.currentStreamTurn.sessionId,
+      event,
+    );
+    this.updateCurrentQuerySession(type, summary, data);
+  }
+
+  private mapJournalEntryToSessionEvent(type: TurnJournalEntryType): SessionEventType {
+    switch (type) {
+      case 'tool_start':
+        return 'tool_started';
+      case 'tool_end':
+        return 'tool_finished';
+      case 'checkpoint':
+        return 'checkpoint_recorded';
+      case 'boundary':
+        return 'boundary_committed';
+      case 'completion_signal':
+        return 'completion_signal_recorded';
+      case 'recovery':
+        return 'recovery_assessed';
+      case 'turn_error':
+        return 'turn_failed';
+      default:
+        return type;
+    }
+  }
+
+  private getQuerySessionState(
+    type: TurnJournalEntryType,
+    data?: Record<string, unknown>,
+  ): QuerySessionState {
+    switch (type) {
+      case 'turn_started':
+        return 'ready';
+      case 'partial_text':
+        return 'sampling';
+      case 'tool_start':
+        return 'tool_execution';
+      case 'tool_end':
+      case 'checkpoint':
+      case 'boundary':
+      case 'completion_signal':
+        return 'waiting_followup';
+      case 'recovery':
+        return data?.cause === 'stall' ? 'stalled' : 'waiting_followup';
+      case 'turn_finished':
+        return 'completed';
+      case 'turn_error':
+        return data?.aborted ? 'aborted' : 'failed';
+      default:
+        return 'waiting_followup';
+    }
   }
 
   private pruneTurnJournals(conversationId: string): void {
@@ -1159,6 +1407,15 @@ export class Orchestrator extends TypedEventEmitter {
       evidence: summary.evidence,
       browserState: summary.browserState,
     });
+
+    if (this.currentQuerySession) {
+      this.currentQuerySession = {
+        ...this.currentQuerySession,
+        latestBoundary: summary,
+        updatedAt: Date.now(),
+      };
+      this.saveCurrentQuerySession();
+    }
 
     return summary;
   }
@@ -2146,7 +2403,11 @@ export class Orchestrator extends TypedEventEmitter {
     this.resetStreamState();
   }
 
-  async sendMessage(content: string, conversationId?: string): Promise<void> {
+  async sendMessage(
+    content: string,
+    conversationId?: string,
+    options?: SendMessageOptions,
+  ): Promise<void> {
     if (!this.cerebrum) throw new Error('Cerebrum not connected');
     if (this.cerebellum && !this.cerebellum.isConnected()) {
       throw new Error(
@@ -2192,11 +2453,24 @@ export class Orchestrator extends TypedEventEmitter {
         const isCurrentAttempt = () => this.abortController === abortController;
         this.abortController = abortController;
         this.currentAttemptCompletionState = completionState;
+        const sessionSource = options?.source ?? 'local';
         this.currentStreamTurn = {
           turnId,
           attempt: attemptNumber,
           conversationId: convId,
+          sessionId: turnId,
+          source: sessionSource,
         };
+        this.currentQuerySession = this.createQuerySession(
+          convId,
+          turnId,
+          attemptNumber,
+          sessionSource,
+          latestUserMessage,
+          this.streamNudgeCount,
+          completionRetryCount,
+        );
+        this.saveCurrentQuerySession();
         this.currentPartialContent = '';
         this.currentLastContentKind = 'empty';
         this.currentJournaledContentLength = 0;
@@ -2215,7 +2489,13 @@ export class Orchestrator extends TypedEventEmitter {
           stallRetryCount: this.streamNudgeCount,
           completionRetryCount,
         });
-        this.emit({ type: 'message:cerebrum:start', conversationId: convId });
+        this.emit({
+          type: 'message:cerebrum:start',
+          conversationId: convId,
+          turnId,
+          sessionId: turnId,
+          source: sessionSource,
+        });
         this.startStreamWatchdog(latestUserMessage);
 
         let messages = this.conversations.getMessages(convId);
@@ -2584,7 +2864,14 @@ export class Orchestrator extends TypedEventEmitter {
                   displayContent,
                   visibleToolCalls?.length ? { toolCalls: visibleToolCalls } : undefined,
                 );
-                this.emit({ type: 'message:cerebrum:end', message: cerebrumMessage });
+                this.emit({
+                  type: 'message:cerebrum:end',
+                  conversationId: convId,
+                  turnId,
+                  sessionId: turnId,
+                  source: sessionSource,
+                  message: cerebrumMessage,
+                });
                 log.info('stream_finished', {
                   turnId,
                   attempt: attemptNumber,
@@ -2908,6 +3195,7 @@ export class Orchestrator extends TypedEventEmitter {
         this.emit({ type: 'error', error: err });
       }
     } finally {
+      this.currentQuerySession = null;
       this.currentStreamTurn = null;
     }
   }

@@ -35,6 +35,7 @@ describe('HippocampusStore', () => {
       const store = new HippocampusStore(dir);
       store.writeMemory('# Hello\nWorld');
       expect(store.readMemory()).toBe('# Hello\nWorld');
+      expect(existsSync(join(dir, 'project', 'MEMORY.md'))).toBe(true);
     });
 
     it('overwrites existing content', () => {
@@ -52,7 +53,7 @@ describe('HippocampusStore', () => {
       const store = new HippocampusStore(dir);
       store.appendDailyLog('test entry');
       const today = new Date().toISOString().slice(0, 10);
-      expect(existsSync(join(dir, `${today}.md`))).toBe(true);
+      expect(existsSync(join(dir, 'daily', `${today}.md`))).toBe(true);
     });
 
     it('readDailyLogs returns recent entries', () => {
@@ -68,7 +69,7 @@ describe('HippocampusStore', () => {
       dir = mkdtempSync(join(tmpdir(), 'cereworker-store-test-'));
       const store = new HippocampusStore(dir);
       // Create an old log file manually
-      writeFileSync(join(dir, '2020-01-01.md'), 'old entry', 'utf-8');
+      writeFileSync(join(dir, 'daily', '2020-01-01.md'), 'old entry', 'utf-8');
       store.appendDailyLog('recent entry');
       const logs = store.readDailyLogs(7);
       const dates = logs.map((l) => l.date);
@@ -86,16 +87,16 @@ describe('HippocampusStore', () => {
     it('returns sorted date strings', () => {
       dir = mkdtempSync(join(tmpdir(), 'cereworker-store-test-'));
       const store = new HippocampusStore(dir);
-      writeFileSync(join(dir, '2024-03-15.md'), 'a', 'utf-8');
-      writeFileSync(join(dir, '2024-03-10.md'), 'b', 'utf-8');
+      writeFileSync(join(dir, 'daily', '2024-03-15.md'), 'a', 'utf-8');
+      writeFileSync(join(dir, 'daily', '2024-03-10.md'), 'b', 'utf-8');
       expect(store.listLogFiles()).toEqual(['2024-03-10', '2024-03-15']);
     });
 
     it('ignores non-date files', () => {
       dir = mkdtempSync(join(tmpdir(), 'cereworker-store-test-'));
       const store = new HippocampusStore(dir);
-      writeFileSync(join(dir, 'MEMORY.md'), 'x', 'utf-8');
-      writeFileSync(join(dir, '2024-03-15.md'), 'y', 'utf-8');
+      writeFileSync(join(dir, 'project', 'MEMORY.md'), 'x', 'utf-8');
+      writeFileSync(join(dir, 'daily', '2024-03-15.md'), 'y', 'utf-8');
       expect(store.listLogFiles()).toEqual(['2024-03-15']);
     });
   });
@@ -104,12 +105,14 @@ describe('HippocampusStore', () => {
     it('lists all .md files', () => {
       dir = mkdtempSync(join(tmpdir(), 'cereworker-store-test-'));
       const store = new HippocampusStore(dir);
-      writeFileSync(join(dir, 'MEMORY.md'), '', 'utf-8');
-      writeFileSync(join(dir, '2024-01-01.md'), '', 'utf-8');
+      writeFileSync(join(dir, 'project', 'MEMORY.md'), '', 'utf-8');
+      writeFileSync(join(dir, 'daily', '2024-01-01.md'), '', 'utf-8');
+      writeFileSync(join(dir, 'session', 'conv-1.md'), '', 'utf-8');
       writeFileSync(join(dir, 'notes.txt'), '', 'utf-8');
       const files = store.listAll();
       expect(files).toContain('MEMORY.md');
       expect(files).toContain('2024-01-01.md');
+      expect(files).toContain('session/conv-1.md');
       expect(files).not.toContain('notes.txt');
     });
   });
@@ -118,8 +121,8 @@ describe('HippocampusStore', () => {
     it('reads a specific file', () => {
       dir = mkdtempSync(join(tmpdir(), 'cereworker-store-test-'));
       const store = new HippocampusStore(dir);
-      writeFileSync(join(dir, 'test.md'), 'content', 'utf-8');
-      expect(store.readFile('test.md')).toBe('content');
+      writeFileSync(join(dir, 'session', 'test.md'), 'content', 'utf-8');
+      expect(store.readFile('session/test.md')).toBe('content');
     });
 
     it('returns null for missing file', () => {
@@ -140,16 +143,16 @@ describe('HippocampusStore', () => {
     it('finds matching content case-insensitively', () => {
       dir = mkdtempSync(join(tmpdir(), 'cereworker-store-test-'));
       const store = new HippocampusStore(dir);
-      writeFileSync(join(dir, 'notes.md'), 'TypeScript is great', 'utf-8');
+      writeFileSync(join(dir, 'session', 'notes.md'), 'TypeScript is great', 'utf-8');
       const results = store.search('typescript');
       expect(results).toHaveLength(1);
-      expect(results[0].filename).toBe('notes.md');
+      expect(results[0].filename).toBe('session/notes.md');
     });
 
     it('returns empty for no matches', () => {
       dir = mkdtempSync(join(tmpdir(), 'cereworker-store-test-'));
       const store = new HippocampusStore(dir);
-      writeFileSync(join(dir, 'notes.md'), 'hello', 'utf-8');
+      writeFileSync(join(dir, 'session', 'notes.md'), 'hello', 'utf-8');
       expect(store.search('zzzzz')).toHaveLength(0);
     });
   });
@@ -158,12 +161,12 @@ describe('HippocampusStore', () => {
     it('deletes old logs and returns count', () => {
       dir = mkdtempSync(join(tmpdir(), 'cereworker-store-test-'));
       const store = new HippocampusStore(dir);
-      writeFileSync(join(dir, '2020-01-01.md'), 'old', 'utf-8');
-      writeFileSync(join(dir, '2020-01-02.md'), 'old', 'utf-8');
+      writeFileSync(join(dir, 'daily', '2020-01-01.md'), 'old', 'utf-8');
+      writeFileSync(join(dir, 'daily', '2020-01-02.md'), 'old', 'utf-8');
       store.appendDailyLog('recent');
       const pruned = store.pruneOldLogs(7);
       expect(pruned).toBe(2);
-      expect(existsSync(join(dir, '2020-01-01.md'))).toBe(false);
+      expect(existsSync(join(dir, 'daily', '2020-01-01.md'))).toBe(false);
     });
 
     it('keeps recent logs', () => {
@@ -182,6 +185,18 @@ describe('HippocampusStore', () => {
       const ftDir = store.finetuneDir;
       expect(ftDir).toBe(join(dir, 'finetune'));
       expect(existsSync(ftDir)).toBe(true);
+    });
+  });
+
+  describe('session memory', () => {
+    it('stores per-session markdown history', () => {
+      dir = mkdtempSync(join(tmpdir(), 'cereworker-store-test-'));
+      const store = new HippocampusStore(dir);
+      store.appendSessionTurn('conv-1', 'Boss asked for status.', 'Reported current status.');
+      const content = store.readSessionMemory('conv-1');
+      expect(content).toContain('Boss asked for status.');
+      expect(content).toContain('Reported current status.');
+      expect(existsSync(join(dir, 'session', 'conv-1.md'))).toBe(true);
     });
   });
 });

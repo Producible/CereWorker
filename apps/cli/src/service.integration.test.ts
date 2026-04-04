@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -207,6 +207,51 @@ describe('createService integration', () => {
         'utf-8',
       ),
     ).toBe('');
+
+    await service.shutdown();
+  });
+
+  it('writes per-session Hippocampus memory for a completed conversation turn', async () => {
+    const service = createService(
+      makeConfig({
+        hippocampus: { enabled: true },
+      }),
+      { homeDir: () => homeDir },
+    );
+
+    service.cerebrum.stream = vi.fn(async (_messages, _tools, callbacks) => {
+      const reply = 'Checked the state and summarized the next step clearly.';
+      callbacks.onChunk(reply);
+      callbacks.onFinish(reply);
+    });
+
+    let endedSessionId = '';
+    service.orchestrator.on('message:cerebrum:end', ({ sessionId }) => {
+      endedSessionId = sessionId;
+    });
+
+    const conversationId = service.orchestrator.startConversation();
+    await service.orchestrator.sendMessage('Please summarize the current state.', conversationId);
+
+    const sessionPath = join(
+      homeDir,
+      '.cereworker',
+      'memory',
+      'session',
+      `${conversationId}.md`,
+    );
+    expect(existsSync(sessionPath)).toBe(true);
+    const sessionMemory = readFileSync(sessionPath, 'utf-8');
+    expect(sessionMemory).toContain('**User**');
+    expect(sessionMemory).toContain('Please summarize the current state.');
+    expect(sessionMemory).toContain('**Assistant**');
+    expect(sessionMemory).toContain('Checked the state and summarized the next step clearly.');
+
+    expect(endedSessionId).toBeTruthy();
+    const querySession = service.orchestrator.getQuerySession(conversationId, endedSessionId);
+    expect(querySession?.memory?.summary).toBe(
+      'Stored the latest user/assistant exchange in session memory.',
+    );
 
     await service.shutdown();
   });
