@@ -14,6 +14,13 @@ interface ChatViewProps {
   updateAvailable?: string | null;
 }
 
+function formatTimestamp(ts: number): string {
+  const d = new Date(ts);
+  const h = String(d.getHours()).padStart(2, '0');
+  const m = String(d.getMinutes()).padStart(2, '0');
+  return `${h}:${m}`;
+}
+
 function MessageBlock({ message, debugMode }: { message: Message; debugMode: boolean }) {
   const roleColors: Record<string, string> = {
     user: 'blue',
@@ -35,8 +42,12 @@ function MessageBlock({ message, debugMode }: { message: Message; debugMode: boo
   const label = roleLabels[message.role] ?? message.role;
 
   if (!debugMode) {
+    const showTimestamp = message.role === 'user' || message.role === 'cerebrum';
     return (
       <Box flexDirection="column" marginBottom={1}>
+        {showTimestamp && (
+          <Text dimColor>{formatTimestamp(message.timestamp)}</Text>
+        )}
         <Text color={message.role === 'user' ? 'blue' : 'green'}>{message.content}</Text>
       </Box>
     );
@@ -76,7 +87,10 @@ function MessageBlock({ message, debugMode }: { message: Message; debugMode: boo
 
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text bold color={color}>{label}</Text>
+      <Box gap={1}>
+        <Text bold color={color}>{label}</Text>
+        <Text dimColor>{formatTimestamp(message.timestamp)}</Text>
+      </Box>
       <Text>{message.content}</Text>
     </Box>
   );
