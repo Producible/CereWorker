@@ -2,6 +2,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import type { Message } from '@cereworker/core';
 import { Banner } from './Banner.js';
+import { formatChatTimestamp } from '../presentation.js';
 
 interface ChatViewProps {
   messages: Message[];
@@ -12,13 +13,6 @@ interface ChatViewProps {
   version: string;
   debugMode: boolean;
   updateAvailable?: string | null;
-}
-
-function formatTimestamp(ts: number): string {
-  const d = new Date(ts);
-  const h = String(d.getHours()).padStart(2, '0');
-  const m = String(d.getMinutes()).padStart(2, '0');
-  return `${h}:${m}`;
 }
 
 function MessageBlock({ message, debugMode }: { message: Message; debugMode: boolean }) {
@@ -46,7 +40,7 @@ function MessageBlock({ message, debugMode }: { message: Message; debugMode: boo
     return (
       <Box flexDirection="column" marginBottom={1}>
         {showTimestamp && (
-          <Text dimColor>{formatTimestamp(message.timestamp)}</Text>
+          <Text dimColor>{formatChatTimestamp(message.timestamp)}</Text>
         )}
         <Text color={message.role === 'user' ? 'blue' : 'green'}>{message.content}</Text>
       </Box>
@@ -89,7 +83,7 @@ function MessageBlock({ message, debugMode }: { message: Message; debugMode: boo
     <Box flexDirection="column" marginBottom={1}>
       <Box gap={1}>
         <Text bold color={color}>{label}</Text>
-        <Text dimColor>{formatTimestamp(message.timestamp)}</Text>
+        <Text dimColor>{formatChatTimestamp(message.timestamp)}</Text>
       </Box>
       <Text>{message.content}</Text>
     </Box>

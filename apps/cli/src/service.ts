@@ -902,10 +902,13 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
     const goal = String(args.goal ?? '').trim();
     if (!goal) throw new Error('task_upsert requires a goal.');
     const providedId = args.id ? String(args.id) : goal.split('\n')[0];
+    const candidateId = buildNormalizedTaskId(providedId);
     const existingIds = new Set(taskStore.list().map((task) => task.id));
+    // Only allow overwriting an existing ID if the caller explicitly provided that ID
+    const isExplicitUpdate = Boolean(args.id) && existingIds.has(candidateId);
     const taskId = normalizeTaskId(providedId, {
       reservedIds: existingIds,
-      currentId: buildNormalizedTaskId(providedId),
+      currentId: isExplicitUpdate ? candidateId : undefined,
     });
     const schedule = normalizeTaskSchedule(
       (args.schedule as string | TaskSchedule | undefined) ?? 'daily',
