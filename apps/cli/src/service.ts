@@ -22,8 +22,15 @@ import {
   type TaskRunRecord,
   type TaskSchedule,
   type TaskReportTarget,
+  type SchedulerStatus,
 } from '@cereworker/core';
-import { CerebellumClient, type TaskSchedule as CerebellumTaskSchedule } from '@cereworker/cerebellum-client';
+import {
+  CerebellumClient,
+  type TaskSchedule as CerebellumTaskSchedule,
+  type SupervisorState as CerebellumSupervisorState,
+  type SupervisorTaskState as CerebellumSupervisorTaskState,
+  type TaskAction as CerebellumTaskAction,
+} from '@cereworker/cerebellum-client';
 import { CerebrumProvider, createBuiltinTools } from '@cereworker/cerebrum';
 import type { CereWorkerConfig } from '@cereworker/config';
 import { createChannelManager, type ChannelManager } from '@cereworker/channels';
@@ -290,6 +297,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
         source: 'config',
         createdAt: now,
       },
+      schedulerStatus: task.enabled ? 'pending_cerebellum' : 'disabled',
       timezone: schedule.type === 'interval' ? undefined : schedule.timezone,
     };
   }
@@ -313,6 +321,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
         timeoutMinutes: configuredTask.timeoutMinutes,
         reportTarget: configuredTask.reportTarget,
         updatedAt: new Date().toISOString(),
+        schedulerStatus: existing.enabled ? existing.schedulerStatus ?? 'pending_cerebellum' : 'disabled',
         timezone: configuredTask.timezone,
       });
     }
@@ -466,6 +475,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
   let finetuneScheduleHint = scheduleMap[config.cerebellum.finetune?.schedule ?? 'auto'] ?? 'when idle';
   let pendingFineTuneBatch: import('@cereworker/hippocampus').FineTuneQueuedBatch | null = null;
   const fineTuneRoundsByJob = new Map<string, string>();
+  let fineTuneActive = false;
 
   if (config.cerebellum.finetune?.enabled) {
     const conversationExtractor = new ConversationExtractor(
@@ -502,6 +512,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
   }
 
   orchestrator.on('finetune:start', ({ jobId }) => {
+    fineTuneActive = true;
     if (!pendingFineTuneBatch || pendingFineTuneBatch.pairs.length === 0) return;
     try {
       const manifest = fineTuneArchive.createRound(pendingFineTuneBatch, {
@@ -519,6 +530,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
   });
 
   orchestrator.on('finetune:complete', ({ jobId, checkpointPath }) => {
+    fineTuneActive = false;
     const roundId = fineTuneRoundsByJob.get(jobId);
     if (!roundId) return;
     void orchestrator.getFineTuneStatus()
@@ -546,6 +558,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
   });
 
   orchestrator.on('finetune:error', ({ jobId, error }) => {
+    fineTuneActive = false;
     const roundId = fineTuneRoundsByJob.get(jobId);
     if (!roundId) return;
     fineTuneArchive.updateRoundStatus(roundId, {
@@ -734,12 +747,205 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
   channelManager.setDmPolicy(config.channels.dmPolicy);
   channelManager.setPairingProvider(pairingStore);
 
-  const heartbeatTaskMap = new Map<string, { type: 'finetune' } | { type: 'task'; taskId: string }>();
-  const heartbeatTaskIdsByTaskId = new Map<string, string>();
+  const heartbeatTaskMap = new Map<string, { type: 'finetune' }>();
 
   function toCerebellumTaskSchedule(schedule: TaskSchedule): CerebellumTaskSchedule {
     return { ...schedule };
   }
+
+  function getDesiredSchedulerStatus(task: TaskDefinition): SchedulerStatus {
+    if (task.lastResult === 'running' || orchestrator.isTaskRunning(task.id)) {
+      return 'running';
+    }
+    if (!task.enabled || (task.kind === 'one_shot' && task.lastResult === 'success')) {
+      return 'disabled';
+    }
+    return cerebellumClient?.isConnected() ? 'registered' : 'pending_cerebellum';
+  }
+
+  function shouldSyncTaskWithCerebellum(task: TaskDefinition): boolean {
+    return task.enabled && !(task.kind === 'one_shot' && task.lastResult === 'success');
+  }
+
+  function deriveTaskMetadata(task: TaskDefinition): Record<string, string> {
+    const goal = task.goal.toLowerCase();
+    const requiresBrowser =
+      /\bbrowser\b|\bchrome\b|\bx\b|x\.com|\btimeline\b|\bpost\b|\blike\b/.test(goal);
+    return {
+      taskId: task.id,
+      taskKind: task.kind,
+      reportTarget: task.reportTarget,
+      requiresBrowser: requiresBrowser ? 'true' : 'false',
+    };
+  }
+
+  function toSupervisorTaskState(task: TaskDefinition): CerebellumSupervisorTaskState {
+    return {
+      taskId: task.id,
+      description: task.goal.split('\n')[0] || task.goal,
+      enabled: task.enabled,
+      kind: task.kind,
+      scheduleHint: taskScheduleToHint(task.schedule),
+      schedule: toCerebellumTaskSchedule(task.schedule),
+      status: task.lastResult ?? 'pending',
+      createdAt: task.createdAt,
+      lastRunAt: task.lastRunAt,
+      lastScheduledSlot: task.lastScheduledSlot,
+      schedulerStatus: task.schedulerStatus ?? getDesiredSchedulerStatus(task),
+      lastSummary: task.lastSummary,
+      metadata: deriveTaskMetadata(task),
+    };
+  }
+
+  function persistTaskDefinition(task: TaskDefinition): TaskDefinition {
+    const saved = taskStore.upsert({
+      ...task,
+      schedulerStatus: task.schedulerStatus ?? getDesiredSchedulerStatus(task),
+    });
+    if (saved.activeConversationId) {
+      orchestrator.setTaskConversation(saved.id, saved.activeConversationId);
+    }
+    refreshOrchestratorTaskPrompt();
+    return saved;
+  }
+
+  async function syncManagedTasksWithCerebellum(
+    options: { throwOnError?: boolean } = {},
+  ): Promise<boolean> {
+    if (!cerebellumClient?.isConnected()) return false;
+    const tasks = taskStore.list();
+    try {
+      await cerebellumClient.syncManagedTasks(
+        tasks.filter((task) => shouldSyncTaskWithCerebellum(task)).map(toSupervisorTaskState),
+        instanceTimezone,
+      );
+
+      for (const task of tasks) {
+        const desiredStatus = getDesiredSchedulerStatus(task);
+        if (task.schedulerStatus === desiredStatus && !task.schedulerError) continue;
+        taskStore.upsert({
+          ...task,
+          schedulerStatus: desiredStatus,
+          schedulerError: undefined,
+        });
+      }
+      refreshOrchestratorTaskPrompt();
+      return true;
+    } catch (err) {
+      const error = (err as Error).message;
+      for (const task of tasks) {
+        if (!shouldSyncTaskWithCerebellum(task)) continue;
+        taskStore.upsert({
+          ...task,
+          schedulerStatus: 'registration_failed',
+          schedulerError: error,
+        });
+      }
+      refreshOrchestratorTaskPrompt();
+      if (options.throwOnError !== false) {
+        throw err;
+      }
+      return false;
+    }
+  }
+
+  function buildSupervisorState(): CerebellumSupervisorState {
+    const tasks = taskStore.list();
+    const activeTaskIds = tasks
+      .filter((task) => task.lastResult === 'running' || orchestrator.isTaskRunning(task.id))
+      .map((task) => task.id);
+    return {
+      timestamp: Math.floor(Date.now() / 1000),
+      timezone: instanceTimezone,
+      tasks: tasks.map(toSupervisorTaskState),
+      activeTaskIds,
+      browserAvailable:
+        config.tools.browser.enabled
+        && (config.tools.browser.mode !== 'extension' || browserRelay?.isExtensionConnected() === true),
+      channelsAvailable: channelManager.listConnected().length > 0,
+      cerebrumBusy: activeTaskIds.length > 0,
+      fineTuneRunning: fineTuneActive,
+    };
+  }
+
+  async function recordSupervisorIssue(
+    task: TaskDefinition,
+    action: CerebellumTaskAction,
+  ): Promise<void> {
+    const alreadyRecordedForSlot = action.slotKey
+      && task.lastScheduledSlot === action.slotKey
+      && task.lastResult === 'failure';
+    if (alreadyRecordedForSlot) return;
+
+    const now = new Date().toISOString();
+    const summary = `Cerebellum deferred ${task.id}: ${action.reason}.`;
+    const failedTask: TaskDefinition = {
+      ...task,
+      lastRunAt: now,
+      lastScheduledSlot: action.slotKey ?? task.lastScheduledSlot,
+      lastResult: 'failure',
+      lastSummary: summary,
+      updatedAt: now,
+      schedulerStatus: 'registered',
+      lastSupervisorDecision: action.reason,
+      schedulerError: action.reason,
+    };
+    const runRecordBase: Omit<TaskRunRecord, 'id' | 'taskId'> = {
+      status: 'failure',
+      scheduledFor: action.scheduledFor,
+      slotKey: action.slotKey,
+      startedAt: now,
+      completedAt: now,
+      summary,
+      error: action.reason,
+      conversationId: failedTask.activeConversationId,
+    };
+    const reported = await deliverTaskReport(failedTask, {
+      id: '',
+      taskId: task.id,
+      ...runRecordBase,
+    }).catch(() => ({ id: '', taskId: task.id, ...runRecordBase }));
+    taskStore.appendRun(task.id, {
+      ...runRecordBase,
+      reportDeliveredAt: reported.reportDeliveredAt,
+    });
+    persistTaskDefinition(failedTask);
+  }
+
+  async function handleSupervisorActions(actions: CerebellumTaskAction[]): Promise<void> {
+    let launchedManagedTask = false;
+    for (const action of actions) {
+      if (!['invoke_task', 'continue_task', 'retry_task', 'report_issue'].includes(action.action)) {
+        continue;
+      }
+      const task = taskStore.get(action.taskId);
+      if (!task || !task.enabled) continue;
+
+      if (action.action === 'report_issue') {
+        await recordSupervisorIssue(task, action);
+        continue;
+      }
+
+      if (launchedManagedTask) continue;
+      if (orchestrator.isTaskRunning(task.id)) continue;
+
+      launchedManagedTask = true;
+      void executeManagedTask(task, {
+        scheduledFor: action.scheduledFor,
+        slotKey: action.slotKey,
+        reason: action.reason,
+      });
+    }
+  }
+
+  for (const task of taskStore.list()) {
+    if (task.schedulerStatus) continue;
+    taskStore.upsert({
+      ...task,
+      schedulerStatus: getDesiredSchedulerStatus(task),
+    });
+  }
+  refreshOrchestratorTaskPrompt();
 
   function getTaskDefinitions(): TaskDefinition[] {
     return taskStore.list().sort((a, b) => a.id.localeCompare(b.id));
@@ -780,8 +986,9 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
         timezone: task.timezone ?? instanceTimezone,
       });
       const status = task.lastResult === 'running' ? 'running' : task.enabled ? 'active' : 'disabled';
+      const scheduler = task.schedulerStatus ?? getDesiredSchedulerStatus(task);
       return [
-        `${task.id} | ${task.kind} | ${formatTaskSchedule(task.schedule)} | ${status}`,
+        `${task.id} | ${task.kind} | ${formatTaskSchedule(task.schedule)} | ${status} | scheduler:${scheduler}`,
         `Goal: ${task.goal.split('\n')[0]}`,
         `Next: ${nextRun ? nextRun.toISOString() : 'n/a'}`,
       ].join('\n');
@@ -833,64 +1040,35 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
     return { ...run, reportDeliveredAt: new Date().toISOString() };
   }
 
-  async function unregisterHeartbeatTask(taskId: string): Promise<void> {
-    const heartbeatId = heartbeatTaskIdsByTaskId.get(taskId);
-    if (!heartbeatId || !cerebellumClient) return;
-    await cerebellumClient.unregisterTask(heartbeatId);
-    heartbeatTaskIdsByTaskId.delete(taskId);
-    heartbeatTaskMap.delete(heartbeatId);
-  }
-
-  async function registerHeartbeatTask(task: TaskDefinition): Promise<void> {
-    if (!cerebellumClient) return;
-    await unregisterHeartbeatTask(task.id);
-    if (!task.enabled || (task.kind === 'one_shot' && task.lastResult === 'success')) {
-      return;
-    }
-    const heartbeatId = await cerebellumClient.registerTask(
-      task.goal.split('\n')[0],
-      taskScheduleToHint(task.schedule),
-      {
-        type: 'task',
-        taskId: task.id,
-        taskKind: task.kind,
-        createdAt: task.createdAt,
-        lastRunAt: task.lastRunAt ?? '',
-        lastScheduledSlot: task.lastScheduledSlot ?? '',
-      },
-      toCerebellumTaskSchedule(task.schedule),
-    );
-    if (!heartbeatId) return;
-    heartbeatTaskIdsByTaskId.set(task.id, heartbeatId);
-    heartbeatTaskMap.set(heartbeatId, { type: 'task', taskId: task.id });
-  }
-
-  async function syncHeartbeatTasks(): Promise<void> {
-    if (!cerebellumClient) return;
-    for (const taskId of Array.from(heartbeatTaskIdsByTaskId.keys())) {
-      await unregisterHeartbeatTask(taskId);
-    }
-    for (const task of listActiveTasks()) {
-      await registerHeartbeatTask(task);
-    }
-  }
-
   async function saveTaskDefinition(task: TaskDefinition): Promise<TaskDefinition> {
-    const saved = taskStore.upsert(task);
-    if (saved.activeConversationId) {
-      orchestrator.setTaskConversation(saved.id, saved.activeConversationId);
-    }
-    refreshOrchestratorTaskPrompt();
+    const baseline: TaskDefinition = {
+      ...task,
+      schedulerStatus: task.schedulerStatus ?? getDesiredSchedulerStatus(task),
+      schedulerError:
+        cerebellumClient?.isConnected() || !shouldSyncTaskWithCerebellum(task)
+          ? task.schedulerError
+          : undefined,
+    };
+    const saved = persistTaskDefinition(baseline);
     if (cerebellumClient?.isConnected()) {
-      await registerHeartbeatTask(saved);
+      await syncManagedTasksWithCerebellum({ throwOnError: false });
+      return taskStore.get(saved.id) ?? saved;
+    }
+    if (shouldSyncTaskWithCerebellum(saved) && saved.schedulerStatus !== 'pending_cerebellum') {
+      return persistTaskDefinition({
+        ...saved,
+        schedulerStatus: 'pending_cerebellum',
+      });
     }
     return saved;
   }
 
   async function removeTaskDefinition(taskId: string): Promise<boolean> {
-    await unregisterHeartbeatTask(taskId);
     const removed = taskStore.remove(taskId);
     refreshOrchestratorTaskPrompt();
+    if (removed && cerebellumClient?.isConnected()) {
+      await syncManagedTasksWithCerebellum({ throwOnError: false });
+    }
     return removed;
   }
 
@@ -943,6 +1121,10 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
       timeoutMinutes: args.timeoutMinutes === undefined ? existing?.timeoutMinutes ?? 10 : Number(args.timeoutMinutes),
       reportTarget,
       timezone: schedule.type === 'interval' ? undefined : schedule.timezone,
+      schedulerStatus: existing?.schedulerStatus
+        ?? ((args.enabled === undefined ? existing?.enabled ?? true : Boolean(args.enabled))
+          ? 'pending_cerebellum'
+          : 'disabled'),
       updatedAt: now,
     };
     if (task.kind === 'one_shot' && !task.activePlanId) {
@@ -997,9 +1179,16 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
         conversationId: context?.conversationId,
         ingress: context?.ingress,
       });
+      const nextRun = getNextTaskRun(result.task.schedule, new Date(), {
+        lastRunAt: result.task.lastRunAt,
+        timezone: result.task.timezone ?? instanceTimezone,
+      });
       return {
-        output: `${result.created ? 'Created' : 'Updated'} task ${result.task.id} (${formatTaskSchedule(result.task.schedule)}).`,
-        details: { task: result.task },
+        output:
+          `${result.created ? 'Created' : 'Updated'} task ${result.task.id} `
+          + `(${formatTaskSchedule(result.task.schedule)}; scheduler=${result.task.schedulerStatus ?? 'unknown'}; `
+          + `next=${nextRun ? nextRun.toISOString() : 'n/a'}).`,
+        details: { task: result.task, nextRun: nextRun?.toISOString() },
       };
     },
   });
@@ -1031,7 +1220,10 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
       }
       const runs = taskStore.listRuns(id).slice(-5);
       return {
-        output: `${task.id}: ${formatTaskSchedule(task.schedule)}\n${task.goal}`,
+        output:
+          `${task.id}: ${formatTaskSchedule(task.schedule)}\n`
+          + `Scheduler: ${task.schedulerStatus ?? getDesiredSchedulerStatus(task)}\n`
+          + `${task.goal}`,
         details: { task, runs },
       };
     },
@@ -1273,6 +1465,9 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
       lastRunAt: startedAt,
       lastScheduledSlot: options.slotKey ?? task.lastScheduledSlot,
       lastResult: 'running',
+      schedulerStatus: 'running',
+      schedulerError: undefined,
+      lastSupervisorDecision: options.reason ?? task.lastSupervisorDecision,
       runCount: (task.runCount ?? 0) + 1,
       updatedAt: startedAt,
     };
@@ -1292,6 +1487,11 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
       lastSummary: result.success
         ? `Completed task ${task.id}${options.reason ? ` (${options.reason})` : ''}.`
         : (result.error ?? `Task ${task.id} failed.`),
+      schedulerStatus:
+        task.kind === 'one_shot' && result.success
+          ? 'disabled'
+          : (result.success ? 'registered' : 'registered'),
+      schedulerError: result.success ? undefined : result.error,
       updatedAt: completedAt,
       ...(task.kind === 'one_shot' && result.success ? { enabled: false } : {}),
     };
@@ -1681,7 +1881,9 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
       // Non-blocking
     }
 
-    const registerHeartbeatTasks = async () => {
+    let supervisorTickInFlight = false;
+
+    const registerFineTuneHeartbeat = async () => {
       for (const heartbeatId of Array.from(heartbeatTaskMap.keys())) {
         try {
           await client.unregisterTask(heartbeatId);
@@ -1690,7 +1892,6 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
         }
       }
       heartbeatTaskMap.clear();
-      heartbeatTaskIdsByTaskId.clear();
 
       // Fine-tune task
       if (config.cerebellum.finetune?.enabled) {
@@ -1709,8 +1910,6 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
         }
       }
 
-      await syncHeartbeatTasks();
-
       if (heartbeatTaskMap.size === 0) return;
 
       // Subscribe to heartbeat events
@@ -1727,19 +1926,6 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
                 orchestrator.triggerFineTune().catch((err) =>
                   log.info('Auto fine-tune deferred', { reason: (err as Error).message }),
                 );
-              } else if (mapping.type === 'task') {
-                const task = taskStore.get(mapping.taskId);
-                if (!task || !task.enabled) continue;
-                log.info('Heartbeat triggered managed task', {
-                  taskId: mapping.taskId,
-                  scheduledFor: action.scheduledFor,
-                  slotKey: action.slotKey,
-                });
-                void executeManagedTask(task, {
-                  scheduledFor: action.scheduledFor,
-                  slotKey: action.slotKey,
-                  reason: action.reason,
-                });
               }
             }
             orchestrator.emit({ type: 'heartbeat:tick', actions: event.actions });
@@ -1750,19 +1936,48 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
       })();
     };
 
-    registerHeartbeatTasks().catch((err) => {
-      log.warn('Failed to register heartbeat tasks', { error: (err as Error).message });
-    });
+    const runSupervisorTick = async () => {
+      if (!cerebellumClient?.isConnected() || supervisorTickInFlight) return;
+      supervisorTickInFlight = true;
+      try {
+        const status = await cerebellumClient.getStatus();
+        if (status) {
+          orchestrator.emit({ type: 'cerebellum:status', status });
+        }
+        await syncManagedTasksWithCerebellum();
+        const actions = await cerebellumClient.reportSupervisorState(buildSupervisorState());
+        if (actions.length > 0) {
+          log.info('Cerebellum supervisor produced actions', {
+            actions: actions.map((action) => ({
+              taskId: action.taskId,
+              action: action.action,
+              reason: action.reason,
+            })),
+          });
+        }
+        orchestrator.emit({ type: 'heartbeat:tick', actions });
+        await handleSupervisorActions(actions);
+      } finally {
+        supervisorTickInFlight = false;
+      }
+    };
+
+    try {
+      await syncManagedTasksWithCerebellum();
+      await registerFineTuneHeartbeat();
+      await runSupervisorTick();
+    } catch (err) {
+      log.warn('Failed to initialize Cerebellum supervisor loop', {
+        error: (err as Error).message,
+      });
+    }
 
     // Start status polling
     const pollInterval = config.cerebellum.heartbeatInterval * 1000;
     cerebellumPoller = setInterval(async () => {
       if (!cerebellumClient) return;
       try {
-        const status = await cerebellumClient.getStatus();
-        if (status) {
-          orchestrator.emit({ type: 'cerebellum:status', status });
-        }
+        await runSupervisorTick();
       } catch {
         // Connection lost — emit offline status
         orchestrator.emit({
@@ -1773,7 +1988,9 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
         // Attempt reconnect
         try {
           await cerebellumClient.connect();
-          await registerHeartbeatTasks();
+          await syncManagedTasksWithCerebellum();
+          await registerFineTuneHeartbeat();
+          await runSupervisorTick();
         } catch {
           // Will retry next poll
         }

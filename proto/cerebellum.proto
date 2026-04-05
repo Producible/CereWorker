@@ -15,6 +15,12 @@ service Cerebellum {
   // List all registered tasks
   rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
 
+  // Bulk-sync the durable managed task registry into Cerebellum's scheduler view.
+  rpc SyncManagedTasks(SyncManagedTasksRequest) returns (SyncManagedTasksResponse);
+
+  // Evaluate scheduler/system state on every heartbeat tick.
+  rpc ReportSupervisorState(SupervisorStateRequest) returns (SupervisorStateResponse);
+
   // Health check
   rpc GetStatus(StatusRequest) returns (StatusResponse);
 
@@ -106,6 +112,46 @@ message TaskSchedule {
     DailyAtTaskSchedule daily_at = 2;
     OneShotTaskSchedule one_shot = 3;
   }
+}
+
+message ManagedTaskDefinition {
+  string task_id = 1;
+  string description = 2;
+  bool enabled = 3;
+  string kind = 4;
+  string schedule_hint = 5;
+  TaskSchedule schedule = 6;
+  string status = 7;
+  string created_at = 8;
+  string last_run_at = 9;
+  string last_scheduled_slot = 10;
+  string scheduler_status = 11;
+  string last_summary = 12;
+  map<string, string> metadata = 13;
+}
+
+message SyncManagedTasksRequest {
+  string timezone = 1;
+  repeated ManagedTaskDefinition tasks = 2;
+}
+
+message SyncManagedTasksResponse {
+  int32 synced_count = 1;
+}
+
+message SupervisorStateRequest {
+  int64 timestamp = 1;
+  string timezone = 2;
+  repeated ManagedTaskDefinition tasks = 3;
+  repeated string active_task_ids = 4;
+  bool browser_available = 5;
+  bool channels_available = 6;
+  bool cerebrum_busy = 7;
+  bool fine_tune_running = 8;
+}
+
+message SupervisorStateResponse {
+  repeated TaskAction actions = 1;
 }
 
 message UnregisterTaskRequest {

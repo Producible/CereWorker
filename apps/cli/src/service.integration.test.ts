@@ -61,6 +61,39 @@ function createWatchdogCerebellum(): CerebellumAdapter {
   };
 }
 
+function createSupervisorClient(overrides: Record<string, unknown> = {}) {
+  let connected = false;
+  return {
+    connect: vi.fn(async () => {
+      connected = true;
+    }),
+    disconnect: vi.fn(async () => {
+      connected = false;
+    }),
+    isConnected: vi.fn(() => connected),
+    getStatus: vi.fn(async () => ({
+      healthy: true,
+      modelName: 'test-cerebellum',
+      uptimeSeconds: 1,
+      tasksRegistered: 0,
+    })),
+    registerTask: vi.fn(async () => null),
+    unregisterTask: vi.fn(async () => {}),
+    listTasks: vi.fn(async () => []),
+    subscribeHeartbeat: vi.fn(async function* heartbeatStream() {
+      return;
+    }),
+    syncManagedTasks: vi.fn(async (tasks: unknown[]) => tasks.length),
+    reportSupervisorState: vi.fn(async () => []),
+    assessTurnRecovery: vi.fn(async () => null),
+    verifyToolResult: vi.fn(async () => null),
+    ingestTrainingData: vi.fn(async () => 0),
+    startFineTune: vi.fn(async () => ({ jobId: '', started: false, error: '' })),
+    getFineTuneStatus: vi.fn(async () => null),
+    ...overrides,
+  };
+}
+
 describe('createService integration', () => {
   let homeDir: string;
 
@@ -204,6 +237,83 @@ describe('createService integration', () => {
         { homeDir: () => homeDir },
       ),
     ).toThrow('Task id collision');
+  });
+
+  it('invokes a due scheduled task from the supervisor heartbeat without inbound chat', async () => {
+    const supervisorClient = createSupervisorClient({
+      reportSupervisorState: vi
+        .fn()
+        .mockResolvedValueOnce([
+          {
+            taskId: 'daily-x-update',
+            action: 'invoke_task',
+            reason: 'scheduled_time',
+            scheduledFor: '2026-04-04T17:00:00Z',
+            slotKey: '2026-04-04T17:00:00Z',
+          },
+        ])
+        .mockResolvedValue([]),
+      listTasks: vi.fn(async () => [
+        {
+          taskId: 'daily-x-update',
+          description: 'Post the daily X update',
+          status: 'pending',
+          lastRun: 0,
+          scheduleHint: 'daily at 10:00',
+          metadata: { type: 'managed' },
+        },
+      ]),
+    });
+
+    const service = createService(
+      makeConfig({
+        cerebellum: {
+          enabled: true,
+          heartbeatInterval: 1,
+          docker: { autoStart: false },
+          verification: { enabled: false },
+          finetune: { enabled: false },
+        },
+        tasks: [
+          {
+            id: 'daily-x-update',
+            goal: 'Post the daily X update and report the result.',
+            schedule: 'daily at 10:00',
+            enabled: true,
+            autoMode: true,
+            timeoutMinutes: 10,
+          },
+        ],
+      }),
+      {
+        homeDir: () => homeDir,
+        createCerebellumClient: () => supervisorClient as never,
+      },
+    );
+
+    service.cerebrum.stream = vi.fn(async (_messages, _tools, callbacks) => {
+      const reply = 'Completed the scheduled X update.';
+      callbacks.onChunk(reply);
+      callbacks.onFinish(reply);
+    });
+
+    const started = await service.startCerebellum();
+    expect(started).toEqual({ ok: true });
+
+    for (let i = 0; i < 20; i += 1) {
+      if (service.getTaskRuns('daily-x-update').length > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    const [task] = service.getTaskDefinitions();
+    expect(task.schedulerStatus).toBe('registered');
+    expect(task.activeConversationId).toBeTruthy();
+    expect(task.lastResult).toBe('success');
+    expect(service.getTaskRuns('daily-x-update')).toHaveLength(1);
+    expect(supervisorClient.syncManagedTasks).toHaveBeenCalled();
+    expect(supervisorClient.reportSupervisorState).toHaveBeenCalled();
+
+    await service.shutdown();
   });
 
   it('archives the exact training batch for each fine-tune round in human-readable files', async () => {

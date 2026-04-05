@@ -6,6 +6,12 @@ export type TaskKind = 'recurring' | 'one_shot';
 export type TaskReportTarget = 'origin' | 'none';
 export type TaskOriginSource = 'config' | 'conversation' | 'channel' | 'system';
 export type TaskRunStatus = 'running' | 'success' | 'failure' | 'cancelled';
+export type SchedulerStatus =
+  | 'registered'
+  | 'pending_cerebellum'
+  | 'registration_failed'
+  | 'running'
+  | 'disabled';
 
 export interface ToolCall {
   id: string;
@@ -43,7 +49,16 @@ export interface Conversation {
 
 export interface TaskAction {
   taskId: string;
-  action: 'invoke' | 'skip' | 'defer' | 'cancel';
+  action:
+    | 'invoke'
+    | 'skip'
+    | 'defer'
+    | 'cancel'
+    | 'invoke_task'
+    | 'continue_task'
+    | 'retry_task'
+    | 'report_issue'
+    | 'noop';
   reason: string;
   scheduledFor?: string;
   slotKey?: string;
@@ -98,6 +113,10 @@ export interface TaskDefinition {
   reportTarget: TaskReportTarget;
   createdAt: string;
   updatedAt: string;
+  schedulerStatus?: SchedulerStatus;
+  schedulerError?: string;
+  heartbeatTaskId?: string;
+  lastSupervisorDecision?: string;
   origin?: TaskOrigin;
   timezone?: string;
   activeConversationId?: string;
@@ -122,6 +141,33 @@ export interface TaskRunRecord {
   conversationId?: string;
   sessionId?: string;
   reportDeliveredAt?: string;
+}
+
+export interface SupervisorTaskState {
+  taskId: string;
+  description: string;
+  enabled: boolean;
+  kind: TaskKind;
+  scheduleHint: string;
+  schedule: TaskSchedule;
+  status: TaskRunStatus | 'pending' | 'idle';
+  createdAt?: string;
+  lastRunAt?: string;
+  lastScheduledSlot?: string;
+  schedulerStatus?: SchedulerStatus;
+  lastSummary?: string;
+  metadata?: Record<string, string>;
+}
+
+export interface SupervisorState {
+  timestamp: number;
+  timezone: string;
+  tasks: SupervisorTaskState[];
+  activeTaskIds: string[];
+  browserAvailable: boolean;
+  channelsAvailable: boolean;
+  cerebrumBusy: boolean;
+  fineTuneRunning: boolean;
 }
 
 export interface CerebellumStatus {

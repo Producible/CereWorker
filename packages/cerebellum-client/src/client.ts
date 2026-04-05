@@ -23,11 +23,27 @@ export interface TaskState {
 
 export interface TaskAction {
   taskId: string;
-  action: 'invoke' | 'skip' | 'defer' | 'cancel';
+  action:
+    | 'invoke'
+    | 'skip'
+    | 'defer'
+    | 'cancel'
+    | 'invoke_task'
+    | 'continue_task'
+    | 'retry_task'
+    | 'report_issue'
+    | 'noop';
   reason: string;
   scheduledFor?: string;
   slotKey?: string;
 }
+
+export type SchedulerStatus =
+  | 'registered'
+  | 'pending_cerebellum'
+  | 'registration_failed'
+  | 'running'
+  | 'disabled';
 
 export type TaskSchedule =
   | { type: 'interval'; every: number; unit: 'minutes' | 'hours' | 'days' | 'weeks' }
@@ -37,6 +53,33 @@ export type TaskSchedule =
 export interface HeartbeatEvent {
   timestamp: number;
   actions: TaskAction[];
+}
+
+export interface SupervisorTaskState {
+  taskId: string;
+  description: string;
+  enabled: boolean;
+  kind: 'recurring' | 'one_shot';
+  scheduleHint: string;
+  schedule: TaskSchedule;
+  status: 'pending' | 'idle' | 'running' | 'success' | 'failure' | 'cancelled';
+  createdAt?: string;
+  lastRunAt?: string;
+  lastScheduledSlot?: string;
+  schedulerStatus?: SchedulerStatus;
+  lastSummary?: string;
+  metadata?: Record<string, string>;
+}
+
+export interface SupervisorState {
+  timestamp: number;
+  timezone: string;
+  tasks: SupervisorTaskState[];
+  activeTaskIds: string[];
+  browserAvailable: boolean;
+  channelsAvailable: boolean;
+  cerebrumBusy: boolean;
+  fineTuneRunning: boolean;
 }
 
 export interface VerificationCheck {
@@ -348,6 +391,88 @@ export class CerebellumClient {
           })),
         );
       });
+    });
+  }
+
+  async syncManagedTasks(tasks: SupervisorTaskState[], timezone: string): Promise<number> {
+    if (!this.connected) return 0;
+
+    return new Promise((resolve, reject) => {
+      this.client.syncManagedTasks(
+        {
+          timezone,
+          tasks: tasks.map((task) => ({
+            taskId: task.taskId,
+            description: task.description,
+            enabled: task.enabled,
+            kind: task.kind,
+            scheduleHint: task.scheduleHint,
+            schedule: this.serializeTaskSchedule(task.schedule),
+            status: task.status,
+            createdAt: task.createdAt ?? '',
+            lastRunAt: task.lastRunAt ?? '',
+            lastScheduledSlot: task.lastScheduledSlot ?? '',
+            schedulerStatus: task.schedulerStatus ?? '',
+            lastSummary: task.lastSummary ?? '',
+            metadata: task.metadata ?? {},
+          })),
+        },
+        (err: Error | null, response: GrpcClient) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          resolve(response.syncedCount ?? 0);
+        },
+      );
+    });
+  }
+
+  async reportSupervisorState(request: SupervisorState): Promise<TaskAction[]> {
+    if (!this.connected) return [];
+
+    return new Promise((resolve, reject) => {
+      this.client.reportSupervisorState(
+        {
+          timestamp: request.timestamp,
+          timezone: request.timezone,
+          activeTaskIds: request.activeTaskIds,
+          browserAvailable: request.browserAvailable,
+          channelsAvailable: request.channelsAvailable,
+          cerebrumBusy: request.cerebrumBusy,
+          fineTuneRunning: request.fineTuneRunning,
+          tasks: request.tasks.map((task) => ({
+            taskId: task.taskId,
+            description: task.description,
+            enabled: task.enabled,
+            kind: task.kind,
+            scheduleHint: task.scheduleHint,
+            schedule: this.serializeTaskSchedule(task.schedule),
+            status: task.status,
+            createdAt: task.createdAt ?? '',
+            lastRunAt: task.lastRunAt ?? '',
+            lastScheduledSlot: task.lastScheduledSlot ?? '',
+            schedulerStatus: task.schedulerStatus ?? '',
+            lastSummary: task.lastSummary ?? '',
+            metadata: task.metadata ?? {},
+          })),
+        },
+        (err: Error | null, response: GrpcClient) => {
+          if (err) {
+            reject(err);
+            return;
+          }
+          resolve(
+            (response.actions || []).map((action: GrpcClient) => ({
+              taskId: action.taskId,
+              action: action.action,
+              reason: action.reason,
+              scheduledFor: action.scheduledFor || undefined,
+              slotKey: action.slotKey || undefined,
+            })),
+          );
+        },
+      );
     });
   }
 

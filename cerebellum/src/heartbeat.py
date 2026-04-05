@@ -116,6 +116,7 @@ class HeartbeatEngine:
         self.inference = inference
         self.interval = interval
         self.tasks: dict[str, dict[str, Any]] = {}
+        self.managed_tasks: dict[str, dict[str, Any]] = {}
         self.subscribers: list[Callable] = []
         self._running = False
 
@@ -149,7 +150,42 @@ class HeartbeatEngine:
             logger.info("Unregistered task %s", task_id)
 
     def list_tasks(self) -> list[dict[str, Any]]:
-        return list(self.tasks.values())
+        return list(self.tasks.values()) + list(self.managed_tasks.values())
+
+    def _build_managed_task(self, task: dict[str, Any]) -> dict[str, Any]:
+        metadata = dict(task.get("metadata") or {})
+        return {
+            "task_id": task["task_id"],
+            "description": task["description"],
+            "enabled": bool(task.get("enabled", True)),
+            "kind": str(task.get("kind", "recurring")),
+            "status": str(task.get("status", "pending") or "pending"),
+            "last_run": _parse_iso_timestamp(task.get("last_run_at")),
+            "last_slot": str(task.get("last_scheduled_slot", "") or ""),
+            "created_at": _parse_iso_timestamp(task.get("created_at")),
+            "schedule_hint": str(task.get("schedule_hint", "")),
+            "schedule": _parse_task_schedule(task.get("schedule")),
+            "scheduler_status": str(task.get("scheduler_status", "") or ""),
+            "last_summary": str(task.get("last_summary", "") or ""),
+            "metadata": metadata,
+        }
+
+    def sync_managed_tasks(
+        self,
+        tasks: list[dict[str, Any]],
+        timezone_name: str | None = None,
+    ) -> int:
+        next_tasks: dict[str, dict[str, Any]] = {}
+        for task in tasks:
+            entry = self._build_managed_task(task)
+            if not entry["schedule"] and entry["schedule_hint"]:
+                entry["schedule"] = _parse_task_schedule(task.get("schedule"))
+            if timezone_name and entry["schedule"] and entry["schedule"]["type"] == "daily_at":
+                entry["schedule"]["timezone"] = entry["schedule"].get("timezone") or timezone_name
+            next_tasks[entry["task_id"]] = entry
+        self.managed_tasks = next_tasks
+        logger.info("Synced %s managed tasks", len(self.managed_tasks))
+        return len(self.managed_tasks)
 
     def add_subscriber(self, callback: Callable) -> None:
         self.subscribers.append(callback)
@@ -285,6 +321,106 @@ class HeartbeatEngine:
         if schedule["type"] == "daily_at":
             return self._evaluate_daily_at_task(task, now)
         return self._evaluate_one_shot_task(task, now)
+
+    def _requires_browser(self, task: dict[str, Any]) -> bool:
+        metadata = task.get("metadata", {})
+        if metadata.get("requiresBrowser") == "true":
+            return True
+        description = str(task.get("description", "")).lower()
+        return any(
+            token in description
+            for token in [
+                "browser",
+                "chrome",
+                "timeline",
+                "x account",
+                "post on x",
+                "x update",
+                "like 3-5 relevant",
+            ]
+        )
+
+    def evaluate_supervisor(self, state: dict[str, Any]) -> list[dict[str, str]]:
+        timestamp = int(state.get("timestamp") or time.time())
+        browser_available = bool(state.get("browser_available", False))
+        active_task_ids = set(state.get("active_task_ids") or [])
+        system_busy = bool(state.get("cerebrum_busy", False) or active_task_ids)
+        actions: list[dict[str, str]] = []
+
+        for incoming in state.get("tasks") or []:
+            task_id = incoming.get("task_id")
+            if task_id in self.managed_tasks:
+                current = self.managed_tasks[task_id]
+                current["enabled"] = bool(incoming.get("enabled", current.get("enabled", True)))
+                current["status"] = str(incoming.get("status", current.get("status", "pending")) or "pending")
+                current["last_run"] = _parse_iso_timestamp(incoming.get("last_run_at")) or current.get("last_run", 0)
+                current["last_slot"] = str(incoming.get("last_scheduled_slot", current.get("last_slot", "")) or "")
+                current["scheduler_status"] = str(incoming.get("scheduler_status", current.get("scheduler_status", "")) or "")
+                current["last_summary"] = str(incoming.get("last_summary", current.get("last_summary", "")) or "")
+                current["metadata"] = dict(incoming.get("metadata") or current.get("metadata") or {})
+
+        for task in self.managed_tasks.values():
+            if not task.get("enabled", True):
+                actions.append({
+                    "task_id": task["task_id"],
+                    "action": "noop",
+                    "reason": "disabled",
+                })
+                continue
+
+            if task.get("kind") == "one_shot" and task.get("status") == "success":
+                actions.append({
+                    "task_id": task["task_id"],
+                    "action": "noop",
+                    "reason": "completed",
+                })
+                continue
+
+            if task["task_id"] in active_task_ids:
+                actions.append({
+                    "task_id": task["task_id"],
+                    "action": "noop",
+                    "reason": "active",
+                })
+                continue
+
+            if task.get("status") == "running":
+                actions.append({
+                    "task_id": task["task_id"],
+                    "action": "continue_task",
+                    "reason": "resume_running_task",
+                })
+                continue
+
+            decision = self._evaluate_task(task, timestamp, system_busy)
+            if decision["action"] != "invoke":
+                actions.append({
+                    "task_id": task["task_id"],
+                    "action": "noop",
+                    "reason": decision["reason"],
+                    **({"slot_key": decision["slot_key"]} if decision.get("slot_key") else {}),
+                })
+                continue
+
+            action = "invoke_task"
+            reason = decision["reason"]
+            if self._requires_browser(task) and not browser_available:
+                action = "report_issue"
+                reason = "browser_unavailable"
+
+            actions.append({
+                "task_id": task["task_id"],
+                "action": action,
+                "reason": reason,
+                "scheduled_for": decision.get("scheduled_for") or datetime.fromtimestamp(
+                    timestamp, tz=timezone.utc
+                ).isoformat(),
+                "slot_key": decision.get("slot_key") or _format_slot_key(
+                    datetime.fromtimestamp(timestamp, tz=timezone.utc)
+                ),
+            })
+
+        return actions
 
     async def run(self) -> None:
         self._running = True

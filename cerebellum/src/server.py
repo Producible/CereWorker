@@ -136,13 +136,87 @@ class CerebellumServicer(cerebellum_pb2_grpc.CerebellumServicer):
                     ts.schedule.one_shot.catch_up_policy = schedule.get("catch_up_policy", "")
         return response
 
+    async def SyncManagedTasks(self, request, context):
+        synced = self.heartbeat.sync_managed_tasks(
+            [
+                {
+                    "task_id": task.task_id,
+                    "description": task.description,
+                    "enabled": task.enabled,
+                    "kind": task.kind,
+                    "schedule_hint": task.schedule_hint,
+                    "schedule": {
+                        "interval": task.schedule.interval if task.schedule.HasField("interval") else None,
+                        "dailyAt": task.schedule.daily_at if task.schedule.HasField("daily_at") else None,
+                        "oneShot": task.schedule.one_shot if task.schedule.HasField("one_shot") else None,
+                    } if task.HasField("schedule") else None,
+                    "status": task.status,
+                    "created_at": task.created_at,
+                    "last_run_at": task.last_run_at,
+                    "last_scheduled_slot": task.last_scheduled_slot,
+                    "scheduler_status": task.scheduler_status,
+                    "last_summary": task.last_summary,
+                    "metadata": dict(task.metadata) if task.metadata else {},
+                }
+                for task in request.tasks
+            ],
+            request.timezone or "UTC",
+        )
+        return cerebellum_pb2.SyncManagedTasksResponse(synced_count=synced)
+
+    async def ReportSupervisorState(self, request, context):
+        actions = self.heartbeat.evaluate_supervisor(
+            {
+                "timestamp": request.timestamp or int(time.time()),
+                "timezone": request.timezone or "UTC",
+                "active_task_ids": list(request.active_task_ids),
+                "browser_available": request.browser_available,
+                "channels_available": request.channels_available,
+                "cerebrum_busy": request.cerebrum_busy,
+                "fine_tune_running": request.fine_tune_running,
+                "tasks": [
+                    {
+                        "task_id": task.task_id,
+                        "description": task.description,
+                        "enabled": task.enabled,
+                        "kind": task.kind,
+                        "schedule_hint": task.schedule_hint,
+                        "schedule": {
+                            "interval": task.schedule.interval if task.schedule.HasField("interval") else None,
+                            "dailyAt": task.schedule.daily_at if task.schedule.HasField("daily_at") else None,
+                            "oneShot": task.schedule.one_shot if task.schedule.HasField("one_shot") else None,
+                        } if task.HasField("schedule") else None,
+                        "status": task.status,
+                        "created_at": task.created_at,
+                        "last_run_at": task.last_run_at,
+                        "last_scheduled_slot": task.last_scheduled_slot,
+                        "scheduler_status": task.scheduler_status,
+                        "last_summary": task.last_summary,
+                        "metadata": dict(task.metadata) if task.metadata else {},
+                    }
+                    for task in request.tasks
+                ],
+            }
+        )
+        response = cerebellum_pb2.SupervisorStateResponse()
+        for action in actions:
+            ta = response.actions.add()
+            ta.task_id = action["task_id"]
+            ta.action = action["action"]
+            ta.reason = action["reason"]
+            if action.get("scheduled_for"):
+                ta.scheduled_for = action["scheduled_for"]
+            if action.get("slot_key"):
+                ta.slot_key = action["slot_key"]
+        return response
+
     async def GetStatus(self, request, context):
         uptime = int(time.time() - self.start_time)
         return cerebellum_pb2.StatusResponse(
             healthy=self.inference.is_loaded(),
             model_name=self.inference.model_path,
             uptime_seconds=uptime,
-            tasks_registered=len(self.heartbeat.tasks),
+            tasks_registered=len(self.heartbeat.tasks) + len(self.heartbeat.managed_tasks),
         )
 
     async def SubscribeHeartbeat(self, request, context):
@@ -422,7 +496,7 @@ class CerebellumServicer(cerebellum_pb2_grpc.CerebellumServicer):
             healthy=self.inference.is_loaded(),
             model_name=self.inference.model_path,
             uptime_seconds=uptime,
-            tasks_registered=len(self.heartbeat.tasks),
+            tasks_registered=len(self.heartbeat.tasks) + len(self.heartbeat.managed_tasks),
             agents_total=agents_total,
             agents_running=agents_running,
             agents_completed=agents_completed,

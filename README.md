@@ -55,9 +55,11 @@ CereWorker solves these problems by splitting the agent into two cooperating bra
 
 This isn't just an architectural novelty. The key insight: **a 600M-parameter model cannot reason, but it can answer "yes or no."** The Cerebellum never tries to think -- it only judges simple binary facts, while deterministic code does the heavy lifting. This keeps the small model from degrading the intelligence of the real brain.
 
-### 1. Heartbeat: Deterministic Scheduling with LLM Tiebreaker
+### 1. Heartbeat: Always-On Supervision and Scheduling
 
-Tasks now live in a text-backed task registry under `~/.cereworker/tasks/` and support three schedule families: interval (`every 3 hours`), exact local time (`daily at 10:00 PM` with timezone), and one-shot due tasks. Deterministic code handles slot calculation, catch-up-once behavior, and clear-cut interval decisions. Only in the ambiguous interval zone (0.8x-2.0x the interval) does the Cerebellum get asked a single binary question: "Should this task run now? yes or no." The model is a tiebreaker, not a scheduler.
+Tasks live in a text-backed registry under `~/.cereworker/tasks/` and support interval (`every 3 hours`), exact local time (`daily at 10:00 PM` with timezone), and one-shot due schedules. On every heartbeat tick, the TypeScript runtime sends Cerebellum a supervisor snapshot with the managed task registry, current task activity, and basic system availability. Cerebellum decides whether to `invoke_task`, `continue_task`, `retry_task`, `report_issue`, or `noop`, even if no conversation is active.
+
+Exact-time schedules use a heartbeat window: `daily at 10:00 AM` means "run on the first heartbeat tick at or after 10:00 AM" in the task timezone. With a 60-second heartbeat, the task may start up to about a minute late, but it will not silently depend on an open chat window.
 
 ### 2. Muscle+Skeleton: Programmatic Verification + Binary Verdict
 
