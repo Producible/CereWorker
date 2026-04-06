@@ -44,6 +44,7 @@ const taskConfigSchema = z.object({
   autoMode: z.boolean().default(true),
   timeoutMinutes: z.number().default(10),
   reportTarget: z.enum(['origin', 'none']).default('origin'),
+  executionSurface: z.enum(['browser', 'api', 'either', 'none']).default('either'),
 });
 
 export const configSchema = z.object({

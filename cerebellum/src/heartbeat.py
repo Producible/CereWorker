@@ -325,21 +325,12 @@ class HeartbeatEngine:
 
     def _requires_browser(self, task: dict[str, Any]) -> bool:
         metadata = task.get("metadata", {})
-        if metadata.get("requiresBrowser") == "true":
+        execution_surface = str(metadata.get("executionSurface", "")).lower()
+        if execution_surface == "browser":
             return True
-        description = str(task.get("description", "")).lower()
-        return any(
-            token in description
-            for token in [
-                "browser",
-                "chrome",
-                "timeline",
-                "x account",
-                "post on x",
-                "x update",
-                "like 3-5 relevant",
-            ]
-        )
+        if execution_surface in {"api", "either", "none"}:
+            return False
+        return metadata.get("requiresBrowser") == "true"
 
     def evaluate_supervisor(self, state: dict[str, Any]) -> list[dict[str, str]]:
         timestamp = int(state.get("timestamp") or time.time())

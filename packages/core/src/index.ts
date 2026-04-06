@@ -42,6 +42,7 @@ export type {
   TaskReportTarget,
   TaskOriginSource,
   TaskRunStatus,
+  TaskExecutionSurface,
   SchedulerStatus,
   IntervalTaskSchedule,
   DailyAtTaskSchedule,

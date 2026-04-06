@@ -368,7 +368,7 @@ describe('createService integration', () => {
     await service.shutdown();
   });
 
-  it('does not classify generic x-variable tasks as browser-dependent', async () => {
+  it('uses explicit execution surface metadata instead of goal-text browser inference', async () => {
     const syncManagedTasks = vi.fn(async (tasks: Array<{ metadata?: Record<string, string> }>) => tasks.length);
     const supervisorClient = createSupervisorClient({
       syncManagedTasks,
@@ -392,6 +392,24 @@ describe('createService integration', () => {
             autoMode: true,
             timeoutMinutes: 10,
           },
+          {
+            id: 'x-api-task',
+            goal: 'Post the X summary through the API and record the response.',
+            schedule: 'every 3 hours',
+            enabled: true,
+            autoMode: true,
+            timeoutMinutes: 10,
+            executionSurface: 'api',
+          },
+          {
+            id: 'x-browser-task',
+            goal: 'Post the X summary through the browser UI.',
+            schedule: 'every 3 hours',
+            enabled: true,
+            autoMode: true,
+            timeoutMinutes: 10,
+            executionSurface: 'browser',
+          },
         ],
       }),
       {
@@ -402,9 +420,20 @@ describe('createService integration', () => {
 
     const started = await service.startCerebellum();
     expect(started).toEqual({ ok: true });
-    const syncedTasks = syncManagedTasks.mock.calls.at(-1)?.[0] as Array<{ metadata?: Record<string, string> }>;
-    expect(syncedTasks).toHaveLength(1);
-    expect(syncedTasks[0]?.metadata?.requiresBrowser).toBe('false');
+    const syncedTasks = syncManagedTasks.mock.calls.at(-1)?.[0] as Array<{ taskId: string; metadata?: Record<string, string> }>;
+    expect(syncedTasks).toHaveLength(3);
+    expect(syncedTasks.find((task) => task.taskId === 'math-x-task')?.metadata).toMatchObject({
+      executionSurface: 'either',
+      requiresBrowser: 'false',
+    });
+    expect(syncedTasks.find((task) => task.taskId === 'x-api-task')?.metadata).toMatchObject({
+      executionSurface: 'api',
+      requiresBrowser: 'false',
+    });
+    expect(syncedTasks.find((task) => task.taskId === 'x-browser-task')?.metadata).toMatchObject({
+      executionSurface: 'browser',
+      requiresBrowser: 'true',
+    });
 
     await service.shutdown();
   });

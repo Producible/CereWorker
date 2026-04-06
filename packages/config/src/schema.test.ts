@@ -174,6 +174,7 @@ describe('configSchema', () => {
           {
             id: 'x-update',
             goal: 'Post the nightly X update',
+            executionSurface: 'browser',
             schedule: { type: 'daily_at', time: '22:00', timezone: 'America/Los_Angeles' },
           },
           {
@@ -191,6 +192,7 @@ describe('configSchema', () => {
       });
 
       expect(config.tasks[0]?.schedule).toMatchObject({ type: 'daily_at', time: '22:00' });
+      expect(config.tasks[0]?.executionSurface).toBe('browser');
       expect(config.tasks[1]?.schedule).toMatchObject({ type: 'interval', every: 3, unit: 'hours' });
       expect(config.tasks[2]?.schedule).toMatchObject({ type: 'one_shot', dueAt: '2026-04-05T05:00:00Z' });
     });

@@ -60,6 +60,7 @@ export interface SupervisorTaskState {
   description: string;
   enabled: boolean;
   kind: 'recurring' | 'one_shot';
+  executionSurface?: 'browser' | 'api' | 'either' | 'none';
   scheduleHint: string;
   schedule: TaskSchedule;
   status: 'pending' | 'idle' | 'running' | 'success' | 'failure' | 'cancelled';

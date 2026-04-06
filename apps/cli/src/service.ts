@@ -19,6 +19,7 @@ import {
   taskScheduleToHint,
   getNextTaskRun,
   type TaskDefinition,
+  type TaskExecutionSurface,
   type TaskRunRecord,
   type TaskSchedule,
   type TaskReportTarget,
@@ -291,6 +292,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
       autoMode: task.autoMode,
       timeoutMinutes: task.timeoutMinutes,
       reportTarget: task.reportTarget ?? 'origin',
+      executionSurface: task.executionSurface ?? 'either',
       createdAt: now,
       updatedAt: now,
       origin: {
@@ -320,6 +322,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
         autoMode: configuredTask.autoMode,
         timeoutMinutes: configuredTask.timeoutMinutes,
         reportTarget: configuredTask.reportTarget,
+        executionSurface: configuredTask.executionSurface,
         updatedAt: new Date().toISOString(),
         schedulerStatus: existing.enabled ? existing.schedulerStatus ?? 'pending_cerebellum' : 'disabled',
         timezone: configuredTask.timezone,
@@ -768,13 +771,13 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
   }
 
   function deriveTaskMetadata(task: TaskDefinition): Record<string, string> {
-    const goal = task.goal.toLowerCase();
-    const requiresBrowser =
-      /\bbrowser\b|\bchrome\b|x\.com|\btimeline\b|\bmanage (?:the )?x account\b|\bpost on x\b|\bdaily x update\b|\bx update\b|\blike \d+(?:-\d+)? relevant\b/.test(goal);
+    const executionSurface = task.executionSurface ?? 'either';
+    const requiresBrowser = executionSurface === 'browser';
     return {
       taskId: task.id,
       taskKind: task.kind,
       reportTarget: task.reportTarget,
+      executionSurface,
       requiresBrowser: requiresBrowser ? 'true' : 'false',
     };
   }
@@ -785,6 +788,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
       description: task.goal.split('\n')[0] || task.goal,
       enabled: task.enabled,
       kind: task.kind,
+      executionSurface: task.executionSurface ?? 'either',
       scheduleHint: taskScheduleToHint(task.schedule),
       schedule: toCerebellumTaskSchedule(task.schedule),
       status: task.lastResult ?? 'pending',
@@ -991,9 +995,11 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
       });
       const status = task.lastResult === 'running' ? 'running' : task.enabled ? 'active' : 'disabled';
       const scheduler = task.schedulerStatus ?? getDesiredSchedulerStatus(task);
+      const executionSurface = task.executionSurface ?? 'either';
       return [
         `${task.id} | ${task.kind} | ${formatTaskSchedule(task.schedule)} | ${status} | scheduler:${scheduler}`,
         `Goal: ${task.goal.split('\n')[0]}`,
+        `Execution: ${executionSurface}`,
         `Next: ${nextRun ? nextRun.toISOString() : 'n/a'}`,
       ].join('\n');
     }).join('\n\n');
@@ -1102,6 +1108,9 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
     const existing = taskStore.get(taskId);
     const reportTarget = (args.reportTarget as TaskReportTarget | undefined)
       ?? (context?.ingress?.channelId ? 'origin' : 'none');
+    const executionSurface = (args.executionSurface as TaskExecutionSurface | undefined)
+      ?? existing?.executionSurface
+      ?? 'either';
     const task: TaskDefinition = {
       ...(existing ?? {
         id: taskId,
@@ -1127,6 +1136,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
       autoMode: args.autoMode === undefined ? existing?.autoMode ?? true : Boolean(args.autoMode),
       timeoutMinutes: args.timeoutMinutes === undefined ? existing?.timeoutMinutes ?? 10 : Number(args.timeoutMinutes),
       reportTarget,
+      executionSurface,
       timezone: schedule.type === 'interval' ? undefined : schedule.timezone,
       schedulerStatus: existing?.schedulerStatus
         ?? ((args.enabled === undefined ? existing?.enabled ?? true : Boolean(args.enabled))
@@ -1174,6 +1184,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
       autoMode: { type: 'boolean' },
       timeoutMinutes: { type: 'number' },
       reportTarget: { type: 'string', enum: ['origin', 'none'] },
+      executionSurface: { type: 'string', enum: ['browser', 'api', 'either', 'none'] },
     },
     required: ['goal', 'schedule'],
   } as const;
@@ -1193,7 +1204,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
       return {
         output:
           `${result.created ? 'Created' : 'Updated'} task ${result.task.id} `
-          + `(${formatTaskSchedule(result.task.schedule)}; scheduler=${result.task.schedulerStatus ?? 'unknown'}; `
+          + `(${formatTaskSchedule(result.task.schedule)}; execution=${result.task.executionSurface ?? 'either'}; scheduler=${result.task.schedulerStatus ?? 'unknown'}; `
           + `next=${nextRun ? nextRun.toISOString() : 'n/a'}).`,
         details: { task: result.task, nextRun: nextRun?.toISOString() },
       };
@@ -1230,6 +1241,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
         output:
           `${task.id}: ${formatTaskSchedule(task.schedule)}\n`
           + `Scheduler: ${task.schedulerStatus ?? getDesiredSchedulerStatus(task)}\n`
+          + `Execution: ${task.executionSurface ?? 'either'}\n`
           + `${task.goal}`,
         details: { task, runs },
       };

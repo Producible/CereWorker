@@ -382,7 +382,8 @@ export function handleSlashCommand(command: string, args: string, ctx: CommandCo
             ? `last: ${formatLocalTimestamp(task.lastRunAt)}, runs: ${task.runCount ?? 0}`
             : 'never run';
           const scheduler = task.schedulerStatus ?? (task.enabled ? 'pending_cerebellum' : 'disabled');
-          return `  ${task.id} (${task.kind}, ${formatTaskSchedule(task.schedule)})${running}\n    ${task.goal.split('\n')[0]}\n    scheduler: ${scheduler}; ${lastRun}; next: ${nextRun ? formatLocalTimestamp(nextRun.toISOString()) : 'n/a'}`;
+          const executionSurface = task.executionSurface ?? 'either';
+          return `  ${task.id} (${task.kind}, ${formatTaskSchedule(task.schedule)})${running}\n    ${task.goal.split('\n')[0]}\n    scheduler: ${scheduler}; execution: ${executionSurface}; ${lastRun}; next: ${nextRun ? formatLocalTimestamp(nextRun.toISOString()) : 'n/a'}`;
         });
         return { type: 'message', text: `Scheduled Tasks:\n${lines.join('\n')}`, sticky: true };
       }

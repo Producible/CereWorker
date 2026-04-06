@@ -6,6 +6,7 @@ export type TaskKind = 'recurring' | 'one_shot';
 export type TaskReportTarget = 'origin' | 'none';
 export type TaskOriginSource = 'config' | 'conversation' | 'channel' | 'system';
 export type TaskRunStatus = 'running' | 'success' | 'failure' | 'cancelled';
+export type TaskExecutionSurface = 'browser' | 'api' | 'either' | 'none';
 export type SchedulerStatus =
   | 'registered'
   | 'pending_cerebellum'
@@ -111,6 +112,7 @@ export interface TaskDefinition {
   autoMode: boolean;
   timeoutMinutes: number;
   reportTarget: TaskReportTarget;
+  executionSurface?: TaskExecutionSurface;
   createdAt: string;
   updatedAt: string;
   schedulerStatus?: SchedulerStatus;
@@ -148,6 +150,7 @@ export interface SupervisorTaskState {
   description: string;
   enabled: boolean;
   kind: TaskKind;
+  executionSurface?: TaskExecutionSurface;
   scheduleHint: string;
   schedule: TaskSchedule;
   status: TaskRunStatus | 'pending' | 'idle';

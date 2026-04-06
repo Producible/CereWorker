@@ -128,7 +128,7 @@ class HeartbeatScheduleTests(unittest.IsolatedAsyncioTestCase):
                     "last_scheduled_slot": "",
                     "scheduler_status": "registered",
                     "last_summary": "",
-                    "metadata": {"requiresBrowser": "true"},
+                    "metadata": {"executionSurface": "browser", "requiresBrowser": "true"},
                 }
             ],
             "UTC",
@@ -171,7 +171,7 @@ class HeartbeatScheduleTests(unittest.IsolatedAsyncioTestCase):
                     "last_scheduled_slot": "",
                     "scheduler_status": "registered",
                     "last_summary": "baseline",
-                    "metadata": {"requiresBrowser": "true"},
+                    "metadata": {"executionSurface": "browser", "requiresBrowser": "true"},
                 }
             ],
             "UTC",
@@ -194,7 +194,7 @@ class HeartbeatScheduleTests(unittest.IsolatedAsyncioTestCase):
                         "last_scheduled_slot": "slot-1",
                         "scheduler_status": "running",
                         "last_summary": "updated in request",
-                        "metadata": {"requiresBrowser": "false"},
+                        "metadata": {"executionSurface": "api", "requiresBrowser": "false"},
                     }
                 ],
             }
@@ -203,7 +203,7 @@ class HeartbeatScheduleTests(unittest.IsolatedAsyncioTestCase):
         task = engine.managed_tasks["stable-task"]
         self.assertEqual(task["status"], "pending")
         self.assertEqual(task["last_summary"], "baseline")
-        self.assertEqual(task["metadata"]["requiresBrowser"], "true")
+        self.assertEqual(task["metadata"]["executionSurface"], "browser")
 
 
 if __name__ == "__main__":

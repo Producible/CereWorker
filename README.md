@@ -57,7 +57,7 @@ This isn't just an architectural novelty. The key insight: **a 600M-parameter mo
 
 ### 1. Heartbeat: Always-On Supervision and Scheduling
 
-Tasks live in a text-backed registry under `~/.cereworker/tasks/` and support interval (`every 3 hours`), exact local time (`daily at 10:00 PM` with timezone), and one-shot due schedules. On every heartbeat tick, the TypeScript runtime sends Cerebellum a supervisor snapshot with the managed task registry, current task activity, and basic system availability. Cerebellum decides whether to `invoke_task`, `continue_task`, `retry_task`, `report_issue`, or `noop`, even if no conversation is active.
+Tasks live in a text-backed registry under `~/.cereworker/tasks/` and support interval (`every 3 hours`), exact local time (`daily at 10:00 PM` with timezone), and one-shot due schedules. Each task can also declare its execution surface (`browser`, `api`, `either`, or `none`) so Cerebellum gates on explicit task requirements instead of guessing from goal text. On every heartbeat tick, the TypeScript runtime sends Cerebellum a supervisor snapshot with the managed task registry, current task activity, and basic system availability. Cerebellum decides whether to `invoke_task`, `continue_task`, `retry_task`, `report_issue`, or `noop`, even if no conversation is active.
 
 Exact-time schedules use a heartbeat window: `daily at 10:00 AM` means "run on the first heartbeat tick at or after 10:00 AM" in the task timezone. With a 60-second heartbeat, the task may start up to about a minute late, but it will not silently depend on an open chat window.
 
