@@ -44,6 +44,27 @@ class CerebellumServicer(cerebellum_pb2_grpc.CerebellumServicer):
         self.inference = heartbeat.inference
         self._last_agent_actions = []
 
+    def _managed_task_to_dict(self, task):
+        return {
+            "task_id": task.task_id,
+            "description": task.description,
+            "enabled": task.enabled,
+            "kind": task.kind,
+            "schedule_hint": task.schedule_hint,
+            "schedule": {
+                "interval": task.schedule.interval if task.schedule.HasField("interval") else None,
+                "dailyAt": task.schedule.daily_at if task.schedule.HasField("daily_at") else None,
+                "oneShot": task.schedule.one_shot if task.schedule.HasField("one_shot") else None,
+            } if task.HasField("schedule") else None,
+            "status": task.status,
+            "created_at": task.created_at,
+            "last_run_at": task.last_run_at,
+            "last_scheduled_slot": task.last_scheduled_slot,
+            "scheduler_status": task.scheduler_status,
+            "last_summary": task.last_summary,
+            "metadata": dict(task.metadata) if task.metadata else {},
+        }
+
     async def Heartbeat(self, request, context):
         """Manual heartbeat trigger — evaluates tasks with binary yes/no."""
         timestamp = request.timestamp or int(time.time())
@@ -138,28 +159,7 @@ class CerebellumServicer(cerebellum_pb2_grpc.CerebellumServicer):
 
     async def SyncManagedTasks(self, request, context):
         synced = self.heartbeat.sync_managed_tasks(
-            [
-                {
-                    "task_id": task.task_id,
-                    "description": task.description,
-                    "enabled": task.enabled,
-                    "kind": task.kind,
-                    "schedule_hint": task.schedule_hint,
-                    "schedule": {
-                        "interval": task.schedule.interval if task.schedule.HasField("interval") else None,
-                        "dailyAt": task.schedule.daily_at if task.schedule.HasField("daily_at") else None,
-                        "oneShot": task.schedule.one_shot if task.schedule.HasField("one_shot") else None,
-                    } if task.HasField("schedule") else None,
-                    "status": task.status,
-                    "created_at": task.created_at,
-                    "last_run_at": task.last_run_at,
-                    "last_scheduled_slot": task.last_scheduled_slot,
-                    "scheduler_status": task.scheduler_status,
-                    "last_summary": task.last_summary,
-                    "metadata": dict(task.metadata) if task.metadata else {},
-                }
-                for task in request.tasks
-            ],
+            [self._managed_task_to_dict(task) for task in request.tasks],
             request.timezone or "UTC",
         )
         return cerebellum_pb2.SyncManagedTasksResponse(synced_count=synced)
@@ -174,28 +174,7 @@ class CerebellumServicer(cerebellum_pb2_grpc.CerebellumServicer):
                 "channels_available": request.channels_available,
                 "cerebrum_busy": request.cerebrum_busy,
                 "fine_tune_running": request.fine_tune_running,
-                "tasks": [
-                    {
-                        "task_id": task.task_id,
-                        "description": task.description,
-                        "enabled": task.enabled,
-                        "kind": task.kind,
-                        "schedule_hint": task.schedule_hint,
-                        "schedule": {
-                            "interval": task.schedule.interval if task.schedule.HasField("interval") else None,
-                            "dailyAt": task.schedule.daily_at if task.schedule.HasField("daily_at") else None,
-                            "oneShot": task.schedule.one_shot if task.schedule.HasField("one_shot") else None,
-                        } if task.HasField("schedule") else None,
-                        "status": task.status,
-                        "created_at": task.created_at,
-                        "last_run_at": task.last_run_at,
-                        "last_scheduled_slot": task.last_scheduled_slot,
-                        "scheduler_status": task.scheduler_status,
-                        "last_summary": task.last_summary,
-                        "metadata": dict(task.metadata) if task.metadata else {},
-                    }
-                    for task in request.tasks
-                ],
+                "tasks": [self._managed_task_to_dict(task) for task in request.tasks],
             }
         )
         response = cerebellum_pb2.SupervisorStateResponse()

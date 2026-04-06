@@ -316,6 +316,99 @@ describe('createService integration', () => {
     await service.shutdown();
   });
 
+  it('leaves tasks pending on transient supervisor sync failure instead of marking them all failed', async () => {
+    const supervisorClient = createSupervisorClient({
+      syncManagedTasks: vi.fn(async () => {
+        throw new Error('temporary sync outage');
+      }),
+    });
+
+    const service = createService(
+      makeConfig({
+        cerebellum: {
+          enabled: true,
+          heartbeatInterval: 1,
+          docker: { autoStart: false },
+          verification: { enabled: false },
+          finetune: { enabled: false },
+        },
+        tasks: [
+          {
+            id: 'task-one',
+            goal: 'Post the first update.',
+            schedule: 'every 3 hours',
+            enabled: true,
+            autoMode: true,
+            timeoutMinutes: 10,
+          },
+          {
+            id: 'task-two',
+            goal: 'Post the second update.',
+            schedule: 'daily at 10:00',
+            enabled: true,
+            autoMode: true,
+            timeoutMinutes: 10,
+          },
+        ],
+      }),
+      {
+        homeDir: () => homeDir,
+        createCerebellumClient: () => supervisorClient as never,
+      },
+    );
+
+    const started = await service.startCerebellum();
+    expect(started).toEqual({ ok: true });
+
+    const definitions = service.getTaskDefinitions();
+    expect(definitions).toHaveLength(2);
+    expect(definitions.every((task) => task.schedulerStatus === 'pending_cerebellum')).toBe(true);
+    expect(definitions.some((task) => task.schedulerStatus === 'registration_failed')).toBe(false);
+
+    await service.shutdown();
+  });
+
+  it('does not classify generic x-variable tasks as browser-dependent', async () => {
+    const syncManagedTasks = vi.fn(async (tasks: Array<{ metadata?: Record<string, string> }>) => tasks.length);
+    const supervisorClient = createSupervisorClient({
+      syncManagedTasks,
+    });
+
+    const service = createService(
+      makeConfig({
+        cerebellum: {
+          enabled: true,
+          heartbeatInterval: 1,
+          docker: { autoStart: false },
+          verification: { enabled: false },
+          finetune: { enabled: false },
+        },
+        tasks: [
+          {
+            id: 'math-x-task',
+            goal: 'Multiply x by 2 and write the result to the daily report.',
+            schedule: 'every 3 hours',
+            enabled: true,
+            autoMode: true,
+            timeoutMinutes: 10,
+          },
+        ],
+      }),
+      {
+        homeDir: () => homeDir,
+        createCerebellumClient: () => supervisorClient as never,
+      },
+    );
+
+    const started = await service.startCerebellum();
+    expect(started).toEqual({ ok: true });
+    const syncedTasks = syncManagedTasks.mock.calls.at(-1)?.[0] as Array<{ metadata?: Record<string, string> }>;
+    expect(syncedTasks).toHaveLength(1);
+    expect(syncedTasks[0]?.metadata?.requiresBrowser).toBe('false');
+
+    await service.shutdown();
+  });
+
   it('archives the exact training batch for each fine-tune round in human-readable files', async () => {
     const service = createService(
       makeConfig({

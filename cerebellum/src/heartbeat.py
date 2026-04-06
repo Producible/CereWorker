@@ -1,6 +1,7 @@
 """Heartbeat engine - deterministic task scheduling with limited model tiebreaking."""
 
 import asyncio
+import copy
 import logging
 import re
 import time
@@ -346,20 +347,28 @@ class HeartbeatEngine:
         active_task_ids = set(state.get("active_task_ids") or [])
         system_busy = bool(state.get("cerebrum_busy", False) or active_task_ids)
         actions: list[dict[str, str]] = []
+        runtime_tasks = {
+            task_id: {
+                **copy.deepcopy(task),
+                "metadata": dict(task.get("metadata") or {}),
+            }
+            for task_id, task in self.managed_tasks.items()
+        }
 
         for incoming in state.get("tasks") or []:
             task_id = incoming.get("task_id")
-            if task_id in self.managed_tasks:
-                current = self.managed_tasks[task_id]
-                current["enabled"] = bool(incoming.get("enabled", current.get("enabled", True)))
-                current["status"] = str(incoming.get("status", current.get("status", "pending")) or "pending")
-                current["last_run"] = _parse_iso_timestamp(incoming.get("last_run_at")) or current.get("last_run", 0)
-                current["last_slot"] = str(incoming.get("last_scheduled_slot", current.get("last_slot", "")) or "")
-                current["scheduler_status"] = str(incoming.get("scheduler_status", current.get("scheduler_status", "")) or "")
-                current["last_summary"] = str(incoming.get("last_summary", current.get("last_summary", "")) or "")
-                current["metadata"] = dict(incoming.get("metadata") or current.get("metadata") or {})
+            if task_id not in runtime_tasks:
+                continue
+            current = runtime_tasks[task_id]
+            current["enabled"] = bool(incoming.get("enabled", current.get("enabled", True)))
+            current["status"] = str(incoming.get("status", current.get("status", "pending")) or "pending")
+            current["last_run"] = _parse_iso_timestamp(incoming.get("last_run_at")) or current.get("last_run", 0)
+            current["last_slot"] = str(incoming.get("last_scheduled_slot", current.get("last_slot", "")) or "")
+            current["scheduler_status"] = str(incoming.get("scheduler_status", current.get("scheduler_status", "")) or "")
+            current["last_summary"] = str(incoming.get("last_summary", current.get("last_summary", "")) or "")
+            current["metadata"] = dict(incoming.get("metadata") or current.get("metadata") or {})
 
-        for task in self.managed_tasks.values():
+        for task in runtime_tasks.values():
             if not task.get("enabled", True):
                 actions.append({
                     "task_id": task["task_id"],

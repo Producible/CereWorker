@@ -152,6 +152,59 @@ class HeartbeatScheduleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(issue["reason"], "browser_unavailable")
         self.assertIn("slot_key", issue)
 
+    async def test_supervisor_does_not_mutate_managed_task_snapshot(self):
+        engine = HeartbeatEngine(FakeInference(), interval=60)
+        engine.sync_managed_tasks(
+            [
+                {
+                    "task_id": "stable-task",
+                    "description": "Daily X update",
+                    "enabled": True,
+                    "kind": "recurring",
+                    "schedule_hint": "daily at 10:00",
+                    "schedule": {
+                        "dailyAt": {"time": "10:00", "timezone": "UTC", "catchUpPolicy": "once"}
+                    },
+                    "status": "pending",
+                    "created_at": "2026-04-04T08:00:00Z",
+                    "last_run_at": "",
+                    "last_scheduled_slot": "",
+                    "scheduler_status": "registered",
+                    "last_summary": "baseline",
+                    "metadata": {"requiresBrowser": "true"},
+                }
+            ],
+            "UTC",
+        )
+
+        engine.evaluate_supervisor(
+            {
+                "timestamp": int(datetime(2026, 4, 4, 10, 0, 30, tzinfo=timezone.utc).timestamp()),
+                "timezone": "UTC",
+                "browser_available": True,
+                "channels_available": True,
+                "cerebrum_busy": False,
+                "fine_tune_running": False,
+                "active_task_ids": [],
+                "tasks": [
+                    {
+                        "task_id": "stable-task",
+                        "status": "running",
+                        "last_run_at": "2026-04-04T10:00:00Z",
+                        "last_scheduled_slot": "slot-1",
+                        "scheduler_status": "running",
+                        "last_summary": "updated in request",
+                        "metadata": {"requiresBrowser": "false"},
+                    }
+                ],
+            }
+        )
+
+        task = engine.managed_tasks["stable-task"]
+        self.assertEqual(task["status"], "pending")
+        self.assertEqual(task["last_summary"], "baseline")
+        self.assertEqual(task["metadata"]["requiresBrowser"], "true")
+
 
 if __name__ == "__main__":
     unittest.main()
