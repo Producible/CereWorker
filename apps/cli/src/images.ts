@@ -1,11 +1,49 @@
 import { execSync } from 'node:child_process';
 import { loadConfig } from '@cereworker/config';
+import {
+  getCurrentCereWorkerVersion,
+  resolveCerebellumDockerImage,
+} from './cerebellum-docker.js';
+
+function inspectRemoteDigest(dockerCmd: string, image: string): string | null {
+  try {
+    const manifest = execSync(`${dockerCmd} manifest inspect --verbose ${image}`, {
+      stdio: 'pipe',
+      timeout: 15_000,
+    }).toString().trim();
+    if (!manifest) return null;
+    const parsed = JSON.parse(manifest) as {
+      Descriptor?: { digest?: string };
+      digest?: string;
+      config?: { digest?: string };
+    };
+    return parsed.Descriptor?.digest ?? parsed.digest ?? parsed.config?.digest ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function inspectLocalDigest(dockerCmd: string, image: string): string | null {
+  try {
+    const output = execSync(
+      `${dockerCmd} image inspect ${image} --format "{{json .RepoDigests}}"`,
+      { stdio: 'pipe' },
+    ).toString().trim();
+    if (!output) return null;
+    const repoDigests = JSON.parse(output) as string[];
+    const digest = repoDigests
+      .map((entry) => entry.split('@')[1]?.trim() ?? '')
+      .find((entry) => entry.length > 0);
+    return digest ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export async function runImages(): Promise<void> {
   const config = loadConfig();
-  const image = config.cerebellum.docker.image;
-  // Strip tag for docker images query (e.g. "cereworker/cerebellum:gpu" → "cereworker/cerebellum")
-  const repo = image.includes(':') ? image.slice(0, image.lastIndexOf(':')) : image;
+  const image = resolveCerebellumDockerImage(config);
+  const currentVersion = getCurrentCereWorkerVersion();
 
   // Detect docker
   let dockerCmd = 'docker';
@@ -24,13 +62,13 @@ export async function runImages(): Promise<void> {
   // List local images
   try {
     const output = execSync(
-      `${dockerCmd} images ${repo} --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.Size}}\t{{.CreatedSince}}"`,
+      `${dockerCmd} images ${image.repo} --format "table {{.Repository}}:{{.Tag}}\t{{.ID}}\t{{.Size}}\t{{.CreatedSince}}"`,
       { stdio: 'pipe' },
     ).toString().trim();
 
     if (!output || output.split('\n').length <= 1) {
       console.log('No Cerebellum images found locally.');
-      console.log(`Run "cereworker images upgrade" to pull ${image}.`);
+      console.log(`Run "cereworker images upgrade" to pull ${image.runtimeImage}.`);
       return;
     }
 
@@ -38,7 +76,7 @@ export async function runImages(): Promise<void> {
     console.log(output);
   } catch {
     console.log('No Cerebellum images found locally.');
-    console.log(`Run "cereworker images upgrade" to pull ${image}.`);
+    console.log(`Run "cereworker images upgrade" to pull ${image.runtimeImage}.`);
     return;
   }
 
@@ -59,24 +97,28 @@ export async function runImages(): Promise<void> {
     // ignore
   }
 
-  // Check remote digest vs local
-  try {
-    const localDigest = execSync(
-      `${dockerCmd} images ${image} --format "{{.Digest}}"`,
-      { stdio: 'pipe' },
-    ).toString().trim();
-
-    if (localDigest && localDigest !== '<none>') {
-      const remoteDigest = execSync(
-        `${dockerCmd} manifest inspect ${image} 2>/dev/null | grep -o '"digest": "sha256:[a-f0-9]*"' | head -1`,
-        { stdio: 'pipe', timeout: 15_000 },
-      ).toString().trim();
-
-      if (remoteDigest && !remoteDigest.includes(localDigest.replace('sha256:', ''))) {
-        console.log(`\nA newer image may be available. Run "cereworker images upgrade" to update.`);
-      }
-    }
-  } catch {
-    // Remote check failed — skip silently
+  console.log(`\nConfigured image: ${image.configuredImage}`);
+  if (image.customImage || !image.expectedImage) {
+    console.log('Alignment: custom image (version alignment unmanaged).');
+    return;
   }
+
+  console.log(`Expected image for CereWorker ${currentVersion}: ${image.expectedImage}`);
+
+  const localDigest = image.localAlignmentImages
+    .map((candidate) => inspectLocalDigest(dockerCmd, candidate))
+    .find((digest) => Boolean(digest)) ?? null;
+  const expectedDigest = inspectRemoteDigest(dockerCmd, image.expectedImage);
+
+  if (localDigest && expectedDigest) {
+    if (localDigest === expectedDigest) {
+      console.log(`Alignment: aligned with CereWorker ${currentVersion}.`);
+    } else {
+      console.log(`Alignment: not aligned; expected ${image.expectedImage}.`);
+      console.log('Run "cereworker images upgrade" to pull the matching image version.');
+    }
+    return;
+  }
+
+  console.log(`Alignment: unable to verify; expected ${image.expectedImage}.`);
 }

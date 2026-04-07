@@ -60,6 +60,7 @@ import {
 import {
   buildCerebellumComposeCommand,
   buildCerebellumComposeEnv,
+  resolveCerebellumDockerImage,
   resolveCerebellumDockerModel,
 } from './cerebellum-docker.js';
 import {
@@ -1616,7 +1617,8 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
   }
 
   function ensureImageExists(): boolean {
-    const image = config.cerebellum.docker.image;
+    const resolvedImage = resolveCerebellumDockerImage(config);
+    const image = resolvedImage.runtimeImage;
     try {
       const exists = execSyncImpl(`${dockerPrefix}docker images -q ${image}`, { stdio: 'pipe' }).toString().trim();
       if (exists) {
@@ -1676,6 +1678,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
   function ensureDockerRunning(): boolean {
     if (!isDockerAvailable()) return false;
     const resolvedModel = resolveCerebellumDockerModel(config);
+    const resolvedImage = resolveCerebellumDockerImage(config);
 
     const getConfiguredModelPath = (): string | null => {
       try {
@@ -1685,6 +1688,17 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
         ).toString().trim().split('\n');
         const modelLine = envLines.find((line) => line.startsWith('MODEL_PATH='));
         return modelLine ? modelLine.slice('MODEL_PATH='.length) : null;
+      } catch {
+        return null;
+      }
+    };
+
+    const getConfiguredImage = (): string | null => {
+      try {
+        return execSyncImpl(
+          `${dockerPrefix}docker inspect -f "{{.Config.Image}}" cereworker-cerebellum`,
+          { stdio: 'pipe' },
+        ).toString().trim() || null;
       } catch {
         return null;
       }
@@ -1710,11 +1724,15 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
       }).toString().trim();
       if (stopped) {
         const configuredModelPath = getConfiguredModelPath();
-        if (configuredModelPath && configuredModelPath !== resolvedModel.modelPath) {
+        const configuredImage = getConfiguredImage();
+        const imageChanged = Boolean(configuredImage && configuredImage !== resolvedImage.runtimeImage);
+        if ((configuredModelPath && configuredModelPath !== resolvedModel.modelPath) || imageChanged) {
           execSyncImpl(`${dockerPrefix}docker rm -f cereworker-cerebellum`, { stdio: 'pipe' });
-          log.info('Removed stale Cerebellum container to refresh model path', {
+          log.info('Removed stale Cerebellum container to refresh runtime configuration', {
             previousModelPath: configuredModelPath,
             nextModelPath: resolvedModel.modelPath,
+            previousImage: configuredImage,
+            nextImage: resolvedImage.runtimeImage,
           });
         } else {
           execSyncImpl(`${dockerPrefix}docker start cereworker-cerebellum`, { stdio: 'pipe' });
@@ -1749,7 +1767,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
 
     // Fall back to docker run
     try {
-      const image = config.cerebellum.docker.image;
+      const image = resolvedImage.runtimeImage;
       const modelId = resolvedModel.modelPath;
       const interval = config.cerebellum.heartbeatInterval;
       const port = config.cerebellum.address.split(':')[1] ?? '50051';

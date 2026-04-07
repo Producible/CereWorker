@@ -188,6 +188,20 @@ case "$cmd" in
       exit 0
     fi
     ;;
+  image)
+    shift
+    if [[ "\${1:-}" == "inspect" ]]; then
+      target="\${2:-}"
+      if [[ "\${target}" == "cereworker/cerebellum:26.406.1" || "\${target}" == "cereworker/cerebellum:latest" ]]; then
+        echo '["cereworker/cerebellum@sha256:abc123"]'
+        exit 0
+      fi
+      if [[ "\${target}" == "registry.example/cerebellum:gpu" ]]; then
+        echo '["registry.example/cerebellum@sha256:abc123"]'
+        exit 0
+      fi
+    fi
+    ;;
   ps)
     shift
     rest="$*"
@@ -205,7 +219,9 @@ case "$cmd" in
   manifest)
     shift
     if [[ "\${1:-}" == "inspect" ]]; then
-      echo '{"digest": "sha256:abc123"}'
+      shift
+      if [[ "\${1:-}" == "--verbose" ]]; then shift; fi
+      echo '{"Descriptor":{"digest":"sha256:abc123"}}'
       exit 0
     fi
     ;;
@@ -308,6 +324,47 @@ tools:
     const dockerCalls = readFileSync(dockerLog, 'utf-8');
     expect(dockerCalls).toContain('pull registry.example/cerebellum:gpu');
     expect(dockerCalls).not.toContain('cereworker/cerebellum:latest');
+  });
+
+  it('aligns official alias images to the current CereWorker version', async () => {
+    const homeDir = makeTempHome(`
+cerebrum:
+  defaultProvider: local
+  defaultModel: llama3.3
+  providers:
+    local:
+      baseUrl: http://127.0.0.1:11434
+      model: llama3.3
+cerebellum:
+  enabled: false
+  docker:
+    image: cereworker/cerebellum
+tools:
+  browser:
+    enabled: false
+`);
+    tempHomes.push(homeDir);
+
+    const binDir = join(homeDir, 'bin');
+    mkdirSync(binDir, { recursive: true });
+    const dockerLog = join(homeDir, 'docker.log');
+    writeFakeDocker(binDir, dockerLog);
+    const env = makeEnv(homeDir, { PATH: `${binDir}:${process.env.PATH ?? ''}` });
+
+    const images = await runCli(['images'], { env });
+    expect(images.code).toBe(0);
+    expect(images.stdout).toContain('Configured image: cereworker/cerebellum');
+    expect(images.stdout).toContain('Expected image for CereWorker 26.406.1: cereworker/cerebellum:26.406.1');
+    expect(images.stdout).toContain('Alignment: aligned with CereWorker 26.406.1.');
+
+    const upgrade = await runCli(['images', 'upgrade'], { env });
+    expect(upgrade.code).toBe(0);
+    expect(upgrade.stdout).toContain('Pulling cereworker/cerebellum:26.406.1...');
+    expect(upgrade.stdout).toContain('Aligned with CereWorker 26.406.1 via cereworker/cerebellum:26.406.1');
+
+    const dockerCalls = readFileSync(dockerLog, 'utf-8');
+    expect(dockerCalls).toContain('pull cereworker/cerebellum:26.406.1');
+    expect(dockerCalls).not.toContain('pull cereworker/cerebellum:latest');
   });
 
   it('starts headless mode and serves health checks from a temp config', async () => {

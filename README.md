@@ -250,8 +250,9 @@ pnpm start
 The onboarding wizard (`cereworker onboard`) automatically pulls the Cerebellum Docker image. To start it manually:
 
 ```bash
-docker pull cereworker/cerebellum
-docker run -d --name cereworker-cerebellum -p 50051:50051 cereworker/cerebellum
+docker pull cereworker/cerebellum:<your-cereworker-version>
+docker run -d --name cereworker-cerebellum -p 50051:50051 \
+  cereworker/cerebellum:<your-cereworker-version>
 ```
 
 Or from source:
@@ -279,11 +280,13 @@ When a new Cerebellum image is published, CereWorker automatically pulls it in t
 cereworker images upgrade
 ```
 
-This pulls the latest `cereworker/cerebellum` image from Docker Hub and removes the old container so it gets recreated with the new image on next start. To check the current image status:
+This pulls the version-matched `cereworker/cerebellum:<cereworker-version>` image from Docker Hub and removes the old container so it gets recreated with the aligned image on next start. To check the current image status:
 
 ```bash
 cereworker images
 ```
+
+Official Cerebellum images are version-aligned to the installed CereWorker CLI. `cereworker images` shows both the configured image reference and the expected versioned image tag, and `cereworker images upgrade` pulls the matching `cereworker/cerebellum:<cereworker-version>` image instead of blindly trusting `:latest`.
 
 ### Enable IM Channels (optional)
 

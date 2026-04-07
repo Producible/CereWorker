@@ -2,6 +2,7 @@ import { execSync, spawn as nodeSpawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { totalmem, homedir } from 'node:os';
 import { join } from 'node:path';
+import { getOfficialCerebellumImage } from '../../cerebellum-docker.js';
 import { clack, guardCancel } from '../prompter.js';
 
 export interface CerebellumResult {
@@ -222,8 +223,7 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
       dockerPrefix = 'sudo ';
     }
 
-    const imageTag = hw.hasGpu ? 'gpu' : 'latest';
-    const fullImage = `cereworker/cerebellum:${imageTag}`;
+    const fullImage = getOfficialCerebellumImage(hw.hasGpu ? 'gpu' : 'cpu');
     clack.log.info(`Selected image: ${fullImage}${hw.hasGpu ? ' (GPU detected)' : ' (CPU)'}`);
 
     let hasImage = false;
@@ -235,7 +235,7 @@ export async function cerebellumStep(): Promise<CerebellumResult> {
     if (!hasImage) {
       const pullImage = guardCancel(
         await clack.confirm({
-          message: `Download Cerebellum Docker image (${imageTag}) now?`,
+          message: `Download Cerebellum Docker image (${hw.hasGpu ? 'gpu' : 'cpu'}) now?`,
           initialValue: true,
         }),
       );
@@ -327,7 +327,7 @@ snapshot_download(sys.argv[1])
     }),
   );
 
-  const dockerImage = hw.hasGpu ? 'cereworker/cerebellum:gpu' : 'cereworker/cerebellum:latest';
+  const dockerImage = hw.hasGpu ? 'cereworker/cerebellum:gpu' : 'cereworker/cerebellum';
 
   return { enabled: true, model, finetune, dockerAutoStart, dockerImage };
 }

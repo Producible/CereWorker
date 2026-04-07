@@ -23,6 +23,11 @@ RUN mkdir -p /app/src/proto && python -m grpc_tools.protoc \
 FROM python:3.12-slim
 WORKDIR /app
 
+ARG CEREWORKER_VERSION=dev
+LABEL org.opencontainers.image.version=$CEREWORKER_VERSION
+LABEL org.opencontainers.image.title="CereWorker Cerebellum"
+LABEL org.opencontainers.image.source="https://github.com/Producible/CereWorker"
+
 COPY cerebellum/pyproject.toml ./pyproject.toml
 
 # Install CPU-only torch first, then the rest of the deps.

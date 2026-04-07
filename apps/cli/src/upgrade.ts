@@ -1,9 +1,50 @@
 import { execSync } from 'node:child_process';
 import { loadConfig } from '@cereworker/config';
+import {
+  getCurrentCereWorkerVersion,
+  resolveCerebellumDockerImage,
+} from './cerebellum-docker.js';
+
+function inspectRemoteDigest(dockerCmd: string, image: string): string | null {
+  try {
+    const manifest = execSync(`${dockerCmd} manifest inspect --verbose ${image}`, {
+      stdio: 'pipe',
+      timeout: 15_000,
+    }).toString().trim();
+    if (!manifest) return null;
+    const parsed = JSON.parse(manifest) as {
+      Descriptor?: { digest?: string };
+      digest?: string;
+      config?: { digest?: string };
+    };
+    return parsed.Descriptor?.digest ?? parsed.digest ?? parsed.config?.digest ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function inspectLocalDigest(dockerCmd: string, image: string): string | null {
+  try {
+    const output = execSync(
+      `${dockerCmd} image inspect ${image} --format "{{json .RepoDigests}}"`,
+      { stdio: 'pipe' },
+    ).toString().trim();
+    if (!output) return null;
+    const repoDigests = JSON.parse(output) as string[];
+    const digest = repoDigests
+      .map((entry) => entry.split('@')[1]?.trim() ?? '')
+      .find((entry) => entry.length > 0);
+    return digest ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export async function runUpgrade(): Promise<void> {
   const config = loadConfig();
-  const image = config.cerebellum.docker.image;
+  const image = resolveCerebellumDockerImage(config);
+  const currentVersion = getCurrentCereWorkerVersion();
+  const targetImage = image.runtimeImage;
 
   // Detect docker binary
   let dockerBin = '';
@@ -39,12 +80,22 @@ export async function runUpgrade(): Promise<void> {
   }
 
   // Pull latest image
-  console.log(`Pulling ${image}...`);
+  console.log(`Pulling ${targetImage}...`);
   try {
-    execSync(`${prefix}${dockerBin} pull ${image}`, { stdio: 'inherit', timeout: 3_600_000 });
+    execSync(`${prefix}${dockerBin} pull ${targetImage}`, { stdio: 'inherit', timeout: 3_600_000 });
   } catch {
-    console.error(`Failed to pull ${image}`);
+    console.error(`Failed to pull ${targetImage}`);
     process.exit(1);
+  }
+
+  if (image.aliasImage && image.expectedImage) {
+    const localDigest = inspectLocalDigest(`${prefix}${dockerBin}`, targetImage);
+    const expectedDigest = inspectRemoteDigest(`${prefix}${dockerBin}`, image.expectedImage);
+    if (!localDigest || !expectedDigest || localDigest !== expectedDigest) {
+      console.error(`Pulled image is not aligned with CereWorker ${currentVersion}.`);
+      console.error(`Expected ${image.expectedImage}`);
+      process.exit(1);
+    }
   }
 
   // Recreate container if it exists
@@ -63,5 +114,9 @@ export async function runUpgrade(): Promise<void> {
     // No container to remove — that's fine
   }
 
-  console.log('Upgrade complete.');
+  if (image.aliasImage && image.expectedImage) {
+    console.log(`Upgrade complete. Aligned with CereWorker ${currentVersion} via ${image.expectedImage}.`);
+  } else {
+    console.log('Upgrade complete.');
+  }
 }
