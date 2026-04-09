@@ -1,6 +1,6 @@
 {
   "name": "@cereworker/config",
-  "version": "26.406.1",
+  "version": "26.409.1",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

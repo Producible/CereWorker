@@ -4,6 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { afterEach, describe, expect, it } from 'vitest';
+import { getCurrentCereWorkerVersion } from './cerebellum-docker.js';
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
 const cliEntry = resolve(srcDir, '../dist/index.js');
@@ -192,7 +193,7 @@ case "$cmd" in
     shift
     if [[ "\${1:-}" == "inspect" ]]; then
       target="\${2:-}"
-      if [[ "\${target}" == "cereworker/cerebellum:26.406.1" || "\${target}" == "cereworker/cerebellum:latest" ]]; then
+      if [[ "\${target}" == cereworker/cerebellum:* ]]; then
         echo '["cereworker/cerebellum@sha256:abc123"]'
         exit 0
       fi
@@ -327,6 +328,7 @@ tools:
   });
 
   it('aligns official alias images to the current CereWorker version', async () => {
+    const version = getCurrentCereWorkerVersion();
     const homeDir = makeTempHome(`
 cerebrum:
   defaultProvider: local
@@ -354,16 +356,16 @@ tools:
     const images = await runCli(['images'], { env });
     expect(images.code).toBe(0);
     expect(images.stdout).toContain('Configured image: cereworker/cerebellum');
-    expect(images.stdout).toContain('Expected image for CereWorker 26.406.1: cereworker/cerebellum:26.406.1');
-    expect(images.stdout).toContain('Alignment: aligned with CereWorker 26.406.1.');
+    expect(images.stdout).toContain(`Expected image for CereWorker ${version}: cereworker/cerebellum:${version}`);
+    expect(images.stdout).toContain(`Alignment: aligned with CereWorker ${version}.`);
 
     const upgrade = await runCli(['images', 'upgrade'], { env });
     expect(upgrade.code).toBe(0);
-    expect(upgrade.stdout).toContain('Pulling cereworker/cerebellum:26.406.1...');
-    expect(upgrade.stdout).toContain('Aligned with CereWorker 26.406.1 via cereworker/cerebellum:26.406.1');
+    expect(upgrade.stdout).toContain(`Pulling cereworker/cerebellum:${version}...`);
+    expect(upgrade.stdout).toContain(`Aligned with CereWorker ${version} via cereworker/cerebellum:${version}`);
 
     const dockerCalls = readFileSync(dockerLog, 'utf-8');
-    expect(dockerCalls).toContain('pull cereworker/cerebellum:26.406.1');
+    expect(dockerCalls).toContain(`pull cereworker/cerebellum:${version}`);
     expect(dockerCalls).not.toContain('pull cereworker/cerebellum:latest');
   });
 
