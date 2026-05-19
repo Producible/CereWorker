@@ -189,9 +189,9 @@ export const CEREBRUM_PROVIDERS: readonly CerebrumProviderDefinition[] = [
     typeLabel: 'AI',
     authModes: ['apikey'],
     envVar: 'MISTRAL_API_KEY',
-    defaultModel: 'mistral-medium-3-5-26-04',
+    defaultModel: 'mistral-medium-3-5',
     models: [
-      { value: 'mistral-medium-3-5-26-04', label: 'Mistral Medium 3.5', hint: 'default, frontier multimodal, agentic + coding, new' },
+      { value: 'mistral-medium-3-5', label: 'Mistral Medium 3.5', hint: 'default, frontier multimodal, agentic + coding, new' },
       { value: 'mistral-large-latest', label: 'Mistral Large (latest)', hint: 'broadest capability (auto-updating alias)' },
       { value: 'devstral-2512', label: 'Devstral 2', hint: 'frontier code agents, new' },
       { value: 'magistral-medium-2509', label: 'Magistral Medium 1.2', hint: 'frontier reasoning, new' },
