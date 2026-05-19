@@ -27,6 +27,7 @@ ARG CEREWORKER_VERSION=dev
 LABEL org.opencontainers.image.version=$CEREWORKER_VERSION
 LABEL org.opencontainers.image.title="CereWorker Cerebellum"
 LABEL org.opencontainers.image.source="https://github.com/Producible/CereWorker"
+LABEL org.opencontainers.image.ref.name="producible/cereworker-cerebellum"
 
 COPY cerebellum/pyproject.toml ./pyproject.toml
 
