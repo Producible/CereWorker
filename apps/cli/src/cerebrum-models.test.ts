@@ -9,13 +9,13 @@ describe('getProviderModels', () => {
     expect(models[0]?.label).toBe('GPT-5.5');
   });
 
-  it('keeps older Codex models available as fallbacks', () => {
+  it('exposes the current OpenAI Codex model lineup', () => {
     expect(getProviderModels('openai-codex')).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ value: 'gpt-5.4' }),
-        expect.objectContaining({ value: 'gpt-5.2-codex' }),
-        expect.objectContaining({ value: 'gpt-5.1-codex-max' }),
-        expect.objectContaining({ value: 'gpt-5.1-codex' }),
+        expect.objectContaining({ value: 'gpt-5.4-mini' }),
+        expect.objectContaining({ value: 'gpt-5.3-codex' }),
+        expect.objectContaining({ value: 'gpt-5.3-codex-spark' }),
       ]),
     );
   });
