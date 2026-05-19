@@ -59,7 +59,7 @@ export const configSchema = z.object({
   cerebrum: z
     .object({
       defaultProvider: z.string().default('anthropic'),
-      defaultModel: z.string().default('claude-sonnet-4-6'),
+      defaultModel: z.string().default('claude-opus-4-7'),
       providers: z
         .object({
           anthropic: providerConfigSchema.optional(),

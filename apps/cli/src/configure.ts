@@ -111,7 +111,7 @@ export async function runConfigureModel(): Promise<void> {
 
   const raw = loadRawConfig();
   const cerebrum = raw.cerebrum as Record<string, unknown> | undefined;
-  clack.log.info(`Current: ${cerebrum?.defaultProvider ?? 'anthropic'} / ${cerebrum?.defaultModel ?? 'claude-sonnet-4-6'}`);
+  clack.log.info(`Current: ${cerebrum?.defaultProvider ?? 'anthropic'} / ${cerebrum?.defaultModel ?? 'claude-opus-4-7'}`);
 
   const result = await cerebrumStep();
 

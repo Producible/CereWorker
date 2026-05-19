@@ -175,7 +175,7 @@ mkdir -p ~/.cereworker
 cat > ~/.cereworker/config.yaml << 'EOF'
 cerebrum:
   defaultProvider: anthropic
-  defaultModel: claude-sonnet-4-6
+  defaultModel: claude-opus-4-7
   providers:
     anthropic:
       apiKey: ${ANTHROPIC_API_KEY}
@@ -193,7 +193,7 @@ cereworker auth openai-codex
 ```yaml
 cerebrum:
   defaultProvider: openai-codex
-  defaultModel: gpt-5.4
+  defaultModel: gpt-5.5
   providers:
     openai-codex:
       auth: oauth
@@ -738,7 +738,7 @@ Full config example:
 
 cerebrum:
   defaultProvider: anthropic
-  defaultModel: claude-sonnet-4-6
+  defaultModel: claude-opus-4-7
   providers:
     anthropic:
       apiKey: ${ANTHROPIC_API_KEY}

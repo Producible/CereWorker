@@ -6,7 +6,7 @@ describe('buildFinalConfig', () => {
     const finalConfig = buildFinalConfig({
       cerebrum: {
         provider: 'anthropic',
-        model: 'claude-sonnet-4-6',
+        model: 'claude-opus-4-7',
         apiKey: { envRef: 'ANTHROPIC_API_KEY' },
         auth: 'apikey',
       },
@@ -50,7 +50,7 @@ describe('buildFinalConfig', () => {
     });
     expect(finalConfig.cerebrum).toEqual({
       defaultProvider: 'anthropic',
-      defaultModel: 'claude-sonnet-4-6',
+      defaultModel: 'claude-opus-4-7',
       providers: {
         anthropic: {
           apiKey: '${ANTHROPIC_API_KEY}',
@@ -70,7 +70,7 @@ describe('buildFinalConfig', () => {
     const finalConfig = buildFinalConfig({
       cerebrum: {
         provider: 'anthropic',
-        model: 'claude-sonnet-4-6',
+        model: 'claude-opus-4-7',
         apiKey: { envRef: 'ANTHROPIC_API_KEY' },
         auth: 'apikey',
       },

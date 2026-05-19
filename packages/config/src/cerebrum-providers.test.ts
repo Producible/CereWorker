@@ -25,10 +25,10 @@ describe('cerebrum provider registry', () => {
     ]));
   });
 
-  it('makes GPT-5.4 the recommended OpenAI Codex model', () => {
+  it('makes GPT-5.5 the recommended OpenAI Codex model', () => {
     const models = getProviderModels('openai-codex');
     expect(models[0]?.value).toBe(DEFAULT_OPENAI_CODEX_MODEL);
-    expect(models[0]?.label).toBe('GPT-5.4');
+    expect(models[0]?.label).toBe('GPT-5.5');
   });
 
   it('makes MiniMax M2.7 the default for MiniMax providers', () => {

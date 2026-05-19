@@ -39,7 +39,7 @@ describe('loadConfig', () => {
   it('returns valid config with all defaults', () => {
     const config = loadConfig();
     expect(config.cerebrum.defaultProvider).toBe('anthropic');
-    expect(config.cerebrum.defaultModel).toBe('claude-sonnet-4-6');
+    expect(config.cerebrum.defaultModel).toBe('claude-opus-4-7');
     expect(config.cerebrum.maxSteps).toBe(10);
     expect(config.cerebrum.temperature).toBe(0.7);
     expect(config.tools.shell.enabled).toBe(true);
