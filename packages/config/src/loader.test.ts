@@ -76,6 +76,21 @@ describe('loadConfig', () => {
     expect(config.cerebrum.providers.minimax?.apiKey).toBe('minimax-test-789');
   });
 
+  it('rewrites legacy Mistral model IDs to the current API codes', () => {
+    const config = loadConfig({
+      cerebrum: {
+        defaultProvider: 'mistral',
+        defaultModel: 'mistral-medium-3-5-26-04',
+        providers: {
+          mistral: { apiKey: 'sk-test' },
+        },
+        maxSteps: 10,
+        temperature: 0.7,
+      },
+    });
+    expect(config.cerebrum.defaultModel).toBe('mistral-medium-3-5');
+  });
+
   it('normalizes legacy openai OAuth config to openai-codex', () => {
     const config = loadConfig({
       cerebrum: {

@@ -12,6 +12,18 @@ const LOCAL_CONFIG = '.cereworker.yaml';
 const LOCAL_CONFIG_ALT = '.cereworker.yml';
 const OPENAI_CODEX_PROVIDER = 'openai-codex';
 
+// IDs the registry briefly used between 6aa5feb and f2d305a (2026-05-19).
+// Local configs generated during that window may carry one of these in
+// cerebrum.defaultModel. Map them to the canonical Mistral API codes per
+// docs.mistral.ai/getting-started/changelog so the model resolves at request
+// time without forcing users to hand-edit YAML.
+const LEGACY_MODEL_ID_MAP: Record<string, string> = {
+  'mistral-medium-3.5-26-04': 'mistral-medium-3-5',
+  'mistral-medium-3-5-26-04': 'mistral-medium-3-5',
+  'devstral-2-25-12': 'devstral-2512',
+  'magistral-medium-1-2-25-09': 'magistral-medium-2509',
+};
+
 export function ensureConfigDir(): void {
   if (!existsSync(CONFIG_DIR)) {
     mkdirSync(CONFIG_DIR, { recursive: true });
@@ -74,6 +86,19 @@ function normalizeLegacyOpenAIOAuthConfig(config: Record<string, unknown>): Reco
   return { ...config, cerebrum: nextCerebrum };
 }
 
+function normalizeLegacyModelIds(config: Record<string, unknown>): Record<string, unknown> {
+  const cerebrum = asRecord(config.cerebrum);
+  if (!cerebrum) return config;
+  const defaultModel = cerebrum.defaultModel;
+  if (typeof defaultModel !== 'string') return config;
+  const replacement = LEGACY_MODEL_ID_MAP[defaultModel];
+  if (!replacement) return config;
+  return {
+    ...config,
+    cerebrum: { ...cerebrum, defaultModel: replacement },
+  };
+}
+
 function loadFromEnv(): Record<string, unknown> {
   const env: Record<string, unknown> = {};
   const providers: Record<string, unknown> = {};
@@ -129,8 +154,9 @@ export function loadConfig(overrides?: Partial<CereWorkerConfig>): CereWorkerCon
   const merged = deepMerge({}, globalConfig, localConfig, envConfig, (overrides ?? {}) as Record<string, unknown>);
   const interpolated = interpolateEnvVars(merged) as Record<string, unknown>;
   const normalized = normalizeLegacyOpenAIOAuthConfig(interpolated);
+  const normalizedModels = normalizeLegacyModelIds(normalized);
 
-  return configSchema.parse(normalized);
+  return configSchema.parse(normalizedModels);
 }
 
 export function loadRawConfig(): Record<string, unknown> {
