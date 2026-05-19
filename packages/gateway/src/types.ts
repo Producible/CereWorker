@@ -1,4 +1,4 @@
-import type { ToolResult, TransportEnvelope } from '@cereworker/core';
+import type { ToolResult, TransportEnvelope } from '@producible/cereworker-core';
 
 export interface NodeStatus {
   healthy: boolean;

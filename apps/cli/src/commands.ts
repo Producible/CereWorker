@@ -1,12 +1,12 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { formatTaskSchedule, getNextTaskRun, type Orchestrator } from '@cereworker/core';
-import type { CerebrumProvider } from '@cereworker/cerebrum';
-import type { ChannelManager } from '@cereworker/channels';
-import type { SkillRegistry } from '@cereworker/skills';
-import type { CereWorkerConfig } from '@cereworker/config';
-import type { GatewayServer, GatewayNodeClient } from '@cereworker/gateway';
+import { formatTaskSchedule, getNextTaskRun, type Orchestrator } from '@producible/cereworker-core';
+import type { CerebrumProvider } from '@producible/cereworker-cerebrum';
+import type { ChannelManager } from '@producible/cereworker-channels';
+import type { SkillRegistry } from '@producible/cereworker-skills';
+import type { CereWorkerConfig } from '@producible/cereworker-config';
+import type { GatewayServer, GatewayNodeClient } from '@producible/cereworker-gateway';
 import type { ServiceInstance } from './service.js';
 import { formatLocalTimestamp } from './presentation.js';
 

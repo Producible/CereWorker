@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import type { Orchestrator, Message } from '@cereworker/core';
+import type { Orchestrator, Message } from '@producible/cereworker-core';
 
 export interface ChatState {
   messages: Message[];

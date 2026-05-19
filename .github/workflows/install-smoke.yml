@@ -6,7 +6,7 @@ on:
       package_spec:
         description: npm package spec to install
         required: false
-        default: '@cereworker/cli@latest'
+        default: '@producible/cereworker@latest'
   schedule:
     - cron: '0 10 * * *'
   push:
@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 20
     env:
       # On tag pushes (v26.329.13), install that exact version from npm
-      CEREWORKER_PACKAGE_SPEC: ${{ inputs.package_spec || '@cereworker/cli@latest' }}
+      CEREWORKER_PACKAGE_SPEC: ${{ inputs.package_spec || '@producible/cereworker@latest' }}
       CEREWORKER_TAG_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
 
     steps:
@@ -40,9 +40,9 @@ jobs:
 
     steps:
       - name: Pull Cerebellum image
-        run: docker pull cereworker/cerebellum:latest
+        run: docker pull producible/cereworker-cerebellum:latest
 
       - name: Validate image runtime dependencies
         run: |
-          docker run --rm --entrypoint python cereworker/cerebellum:latest -c \
+          docker run --rm --entrypoint python producible/cereworker-cerebellum:latest -c \
             "import grpc, transformers, torch; print('cerebellum-image-ok')"

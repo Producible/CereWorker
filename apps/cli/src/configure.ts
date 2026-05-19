@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { loadRawConfig, GLOBAL_CONFIG, writeConfig } from '@cereworker/config';
+import { loadRawConfig, GLOBAL_CONFIG, writeConfig } from '@producible/cereworker-config';
 import { profileStep } from './onboard/steps/profile.js';
 import { clack, guardCancel } from './onboard/prompter.js';
 

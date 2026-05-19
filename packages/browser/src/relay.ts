@@ -1,6 +1,6 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer, type Server } from 'node:http';
-import { createLogger } from '@cereworker/core';
+import { createLogger } from '@producible/cereworker-core';
 import { EventEmitter } from 'node:events';
 
 const log = createLogger('browser-relay');

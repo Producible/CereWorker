@@ -1,4 +1,4 @@
-import type { ToolDefinition, ToolExecutionContext } from '@cereworker/core';
+import type { ToolDefinition, ToolExecutionContext } from '@producible/cereworker-core';
 import type { GatewayServer } from './server.js';
 
 export function createProxyTools(

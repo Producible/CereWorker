@@ -4,7 +4,7 @@
 $ErrorActionPreference = 'Stop'
 
 $NodeMin = 22
-$Pkg = "@cereworker/cli"
+$Pkg = "@producible/cereworker"
 
 function Write-Info($msg)  { Write-Host "[*] $msg" -ForegroundColor Cyan }
 function Write-Ok($msg)    { Write-Host "[+] $msg" -ForegroundColor Green }

@@ -1,7 +1,7 @@
 import {
   type CereWorkerConfig,
   getProviderAuthModes,
-} from '@cereworker/config';
+} from '@producible/cereworker-config';
 import type { CerebellumResult } from './steps/cerebellum.js';
 import type { ChannelSetup, ChannelsResult } from './steps/channels.js';
 import type { CerebrumResult } from './steps/cerebrum.js';

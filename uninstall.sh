@@ -115,16 +115,16 @@ remove_docker_image() {
   if [ -z "$DOCKER" ]; then return; fi
 
   local iid
-  iid=$($DOCKER images -q cereworker/cerebellum 2>/dev/null || true)
+  iid=$($DOCKER images -q producible/cereworker-cerebellum 2>/dev/null || true)
   if [ -z "$iid" ]; then
-    info "No cereworker/cerebellum image found"
+    info "No producible/cereworker-cerebellum image found"
     return
   fi
 
-  info "Removing cereworker/cerebellum Docker image..."
-  $DOCKER rmi cereworker/cerebellum:latest >/dev/null 2>&1 || true
-  ok "Removed image cereworker/cerebellum"
-  REMOVED+=("Docker image: cereworker/cerebellum")
+  info "Removing producible/cereworker-cerebellum Docker image..."
+  $DOCKER rmi producible/cereworker-cerebellum:latest >/dev/null 2>&1 || true
+  ok "Removed image producible/cereworker-cerebellum"
+  REMOVED+=("Docker image: producible/cereworker-cerebellum")
 }
 
 remove_docker_volumes() {
@@ -200,7 +200,7 @@ remove_config_dir() {
 
 remove_npm_package() {
   if ! command -v npm >/dev/null 2>&1; then
-    warn "npm not found — cannot uninstall @cereworker/cli"
+    warn "npm not found — cannot uninstall @producible/cereworker"
     return
   fi
 
@@ -209,10 +209,10 @@ remove_npm_package() {
     return
   fi
 
-  info "Uninstalling @cereworker/cli..."
-  npm uninstall -g @cereworker/cli 2>/dev/null || true
-  ok "Uninstalled @cereworker/cli"
-  REMOVED+=("npm package: @cereworker/cli")
+  info "Uninstalling @producible/cereworker..."
+  npm uninstall -g @producible/cereworker 2>/dev/null || true
+  ok "Uninstalled @producible/cereworker"
+  REMOVED+=("npm package: @producible/cereworker")
 }
 
 # --- Main ---
@@ -260,7 +260,7 @@ main() {
 
   if ! $PURGE; then
     printf "\n${YELLOW}Note:${RESET} Docker image and volumes were kept. To remove them:\n"
-    printf "  docker rmi cereworker/cerebellum:latest\n"
+    printf "  docker rmi producible/cereworker-cerebellum:latest\n"
     printf "  docker volume rm cerebellum-models cerebellum-checkpoints cerebellum-data\n"
     printf "  Or re-run: %s --purge\n" "$0"
   fi

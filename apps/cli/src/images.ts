@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { loadConfig } from '@cereworker/config';
+import { loadConfig } from '@producible/cereworker-config';
 import {
   getCurrentCereWorkerVersion,
   resolveCerebellumDockerImage,

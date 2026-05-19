@@ -4,7 +4,7 @@ import { join, dirname } from 'node:path';
 
 const CACHE_PATH = join(homedir(), '.cereworker', 'update-check.json');
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
-const REGISTRY_URL = 'https://registry.npmjs.org/@cereworker/cli/latest';
+const REGISTRY_URL = 'https://registry.npmjs.org/@producible/cereworker/latest';
 const FETCH_TIMEOUT_MS = 5_000;
 
 interface UpdateCache {

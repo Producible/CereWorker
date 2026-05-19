@@ -1,6 +1,6 @@
 {
-  "name": "@cereworker/skills",
-  "version": "26.519.1",
+  "name": "@producible/cereworker-skills",
+  "version": "26.520.1",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -22,8 +22,8 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@cereworker/core": "workspace:*",
-    "@cereworker/config": "workspace:*",
+    "@producible/cereworker-core": "workspace:*",
+    "@producible/cereworker-config": "workspace:*",
     "gray-matter": "^4.0.3"
   },
   "devDependencies": {

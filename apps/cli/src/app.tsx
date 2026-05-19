@@ -1,9 +1,9 @@
 import React, { useMemo, useCallback, useEffect, useState } from 'react';
 import { Box, Text, useApp } from 'ink';
 import { createRequire } from 'node:module';
-import { configureLogger } from '@cereworker/core';
-import type { CereWorkerConfig } from '@cereworker/config';
-import { GatewayServer, GatewayNodeClient } from '@cereworker/gateway';
+import { configureLogger } from '@producible/cereworker-core';
+import type { CereWorkerConfig } from '@producible/cereworker-config';
+import { GatewayServer, GatewayNodeClient } from '@producible/cereworker-gateway';
 import { createService } from './service.js';
 import { handleSlashCommand, type CommandContext } from './commands.js';
 import { StatusBar } from './components/StatusBar.js';

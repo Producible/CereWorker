@@ -60,16 +60,16 @@ function Remove-DockerContainer {
 function Remove-DockerImage {
     if (-not (Test-DockerAvailable)) { return }
 
-    $iid = docker images -q cereworker/cerebellum 2>$null
+    $iid = docker images -q producible/cereworker-cerebellum 2>$null
     if (-not $iid) {
-        Write-Info "No cereworker/cerebellum image found"
+        Write-Info "No producible/cereworker-cerebellum image found"
         return
     }
 
-    Write-Info "Removing cereworker/cerebellum Docker image..."
-    docker rmi cereworker/cerebellum:latest 2>$null | Out-Null
-    Write-Ok "Removed image cereworker/cerebellum"
-    $script:Removed += "Docker image: cereworker/cerebellum"
+    Write-Info "Removing producible/cereworker-cerebellum Docker image..."
+    docker rmi producible/cereworker-cerebellum:latest 2>$null | Out-Null
+    Write-Ok "Removed image producible/cereworker-cerebellum"
+    $script:Removed += "Docker image: producible/cereworker-cerebellum"
 }
 
 function Remove-DockerVolumes {
@@ -112,7 +112,7 @@ function Remove-ConfigDir {
 
 function Remove-NpmPackage {
     if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
-        Write-Warn "npm not found - cannot uninstall @cereworker/cli"
+        Write-Warn "npm not found - cannot uninstall @producible/cereworker"
         return
     }
 
@@ -121,10 +121,10 @@ function Remove-NpmPackage {
         return
     }
 
-    Write-Info "Uninstalling @cereworker/cli..."
-    npm uninstall -g @cereworker/cli 2>$null
-    Write-Ok "Uninstalled @cereworker/cli"
-    $script:Removed += "npm package: @cereworker/cli"
+    Write-Info "Uninstalling @producible/cereworker..."
+    npm uninstall -g @producible/cereworker 2>$null
+    Write-Ok "Uninstalled @producible/cereworker"
+    $script:Removed += "npm package: @producible/cereworker"
 }
 
 # --- Main ---
@@ -175,7 +175,7 @@ if ($Removed.Count -eq 0) {
 if (-not $Purge) {
     Write-Host ""
     Write-Warn "Docker image and volumes were kept. To remove them:"
-    Write-Host "  docker rmi cereworker/cerebellum:latest"
+    Write-Host "  docker rmi producible/cereworker-cerebellum:latest"
     Write-Host "  docker volume rm cerebellum-models cerebellum-checkpoints cerebellum-data"
     Write-Host "  Or re-run: .\uninstall.ps1 -Purge"
 }

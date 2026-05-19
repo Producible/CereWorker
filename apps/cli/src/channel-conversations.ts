@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { withTextStoreLock, writeJsonFileAtomic } from '@cereworker/core';
-import type { InboundMessage } from '@cereworker/channels';
+import { withTextStoreLock, writeJsonFileAtomic } from '@producible/cereworker-core';
+import type { InboundMessage } from '@producible/cereworker-channels';
 
 export type ChannelConversationState = Record<string, string>;
 

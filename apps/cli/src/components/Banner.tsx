@@ -39,7 +39,7 @@ export function Banner({ version, updateAvailable }: BannerProps) {
         {updateAvailable && (
           <Box flexDirection="column" alignItems="center" marginTop={1}>
             <Text color="yellow">Update available: {version} → {updateAvailable}</Text>
-            <Text color="yellow">Run: npm install -g @cereworker/cli</Text>
+            <Text color="yellow">Run: npm install -g @producible/cereworker</Text>
           </Box>
         )}
         <Text dimColor>Type a message to start chatting</Text>

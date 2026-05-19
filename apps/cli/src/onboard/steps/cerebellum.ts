@@ -327,7 +327,7 @@ snapshot_download(sys.argv[1])
     }),
   );
 
-  const dockerImage = hw.hasGpu ? 'cereworker/cerebellum:gpu' : 'cereworker/cerebellum';
+  const dockerImage = hw.hasGpu ? 'producible/cereworker-cerebellum:gpu' : 'producible/cereworker-cerebellum';
 
   return { enabled: true, model, finetune, dockerAutoStart, dockerImage };
 }

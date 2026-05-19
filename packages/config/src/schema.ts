@@ -125,7 +125,7 @@ export const configSchema = z.object({
       docker: z
         .object({
           autoStart: z.boolean().default(true),
-          image: z.string().default('cereworker/cerebellum'),
+          image: z.string().default('producible/cereworker-cerebellum'),
           modelsPath: z.string().default('~/.cereworker/models'),
           composeFile: z.string().optional(),
         })

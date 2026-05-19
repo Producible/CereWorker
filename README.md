@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@cereworker/cli"><img src="https://img.shields.io/npm/v/@cereworker/cli" alt="npm" /></a>
+  <a href="https://www.npmjs.com/package/@producible/cereworker"><img src="https://img.shields.io/npm/v/@producible/cereworker" alt="npm" /></a>
   <a href="https://github.com/Producible/CereWorker/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Producible/CereWorker" alt="GitHub" /></a>
 </p>
 
@@ -135,7 +135,7 @@ The installer detects your OS, installs Node.js if missing, installs CereWorker 
 **Prerequisites:** Node.js 22+, Docker (optional, for Cerebellum)
 
 ```bash
-npm install -g @cereworker/cli
+npm install -g @producible/cereworker
 ```
 
 CereWorker persists conversations, pairing state, plans, and fine-tune material as plain JSON/JSONL files under `~/.cereworker/`, so runs can be inspected and diffed by hand. Per-turn recovery journals are stored under `~/.cereworker/conversations/<conversationId>/turns/` and pruned automatically by age and count.
@@ -250,9 +250,9 @@ pnpm start
 The onboarding wizard (`cereworker onboard`) automatically pulls the Cerebellum Docker image. To start it manually:
 
 ```bash
-docker pull cereworker/cerebellum:<your-cereworker-version>
+docker pull producible/cereworker-cerebellum:<your-cereworker-version>
 docker run -d --name cereworker-cerebellum -p 50051:50051 \
-  cereworker/cerebellum:<your-cereworker-version>
+  producible/cereworker-cerebellum:<your-cereworker-version>
 ```
 
 Or from source:
@@ -280,13 +280,13 @@ When a new Cerebellum image is published, CereWorker automatically pulls it in t
 cereworker images upgrade
 ```
 
-This pulls the version-matched `cereworker/cerebellum:<cereworker-version>` image from Docker Hub and removes the old container so it gets recreated with the aligned image on next start. To check the current image status:
+This pulls the version-matched `producible/cereworker-cerebellum:<cereworker-version>` image from Docker Hub and removes the old container so it gets recreated with the aligned image on next start. To check the current image status:
 
 ```bash
 cereworker images
 ```
 
-Official Cerebellum images are version-aligned to the installed CereWorker CLI. `cereworker images` shows both the configured image reference and the expected versioned image tag, and `cereworker images upgrade` pulls the matching `cereworker/cerebellum:<cereworker-version>` image instead of blindly trusting `:latest`.
+Official Cerebellum images are version-aligned to the installed CereWorker CLI. `cereworker images` shows both the configured image reference and the expected versioned image tag, and `cereworker images upgrade` pulls the matching `producible/cereworker-cerebellum:<cereworker-version>` image instead of blindly trusting `:latest`.
 
 ### Enable IM Channels (optional)
 
@@ -610,16 +610,16 @@ Other agents get more expensive as they get smarter (longer prompts, more retrie
 
 | Package | npm | Description |
 |---------|-----|-------------|
-| [`@cereworker/cli`](apps/cli) | [![npm](https://img.shields.io/npm/v/@cereworker/cli)](https://www.npmjs.com/package/@cereworker/cli) | Ink 5 terminal UI |
-| [`@cereworker/core`](packages/core) | [![npm](https://img.shields.io/npm/v/@cereworker/core)](https://www.npmjs.com/package/@cereworker/core) | Orchestrator, message model, typed events, conversation store |
-| [`@cereworker/cerebrum`](packages/cerebrum) | [![npm](https://img.shields.io/npm/v/@cereworker/cerebrum)](https://www.npmjs.com/package/@cereworker/cerebrum) | AI SDK 6 multi-provider LLM abstraction + built-in tools |
-| [`@cereworker/cerebellum-client`](packages/cerebellum-client) | [![npm](https://img.shields.io/npm/v/@cereworker/cerebellum-client)](https://www.npmjs.com/package/@cereworker/cerebellum-client) | gRPC client for the Cerebellum container |
-| [`@cereworker/channels`](packages/channels) | [![npm](https://img.shields.io/npm/v/@cereworker/channels)](https://www.npmjs.com/package/@cereworker/channels) | IM adapters (Slack, Discord, Telegram, Matrix, Feishu, WeChat, WhatsApp, Signal, IRC) |
-| [`@cereworker/browser`](packages/browser) | [![npm](https://img.shields.io/npm/v/@cereworker/browser)](https://www.npmjs.com/package/@cereworker/browser) | Browser automation (Puppeteer, CDP, Chrome extension) |
-| [`@cereworker/skills`](packages/skills) | [![npm](https://img.shields.io/npm/v/@cereworker/skills)](https://www.npmjs.com/package/@cereworker/skills) | SKILL.md plugin loader and registry |
-| [`@cereworker/hippocampus`](packages/hippocampus) | [![npm](https://img.shields.io/npm/v/@cereworker/hippocampus)](https://www.npmjs.com/package/@cereworker/hippocampus) | Temporary memory store, memory tools, fine-tune curator |
-| [`@cereworker/gateway`](packages/gateway) | [![npm](https://img.shields.io/npm/v/@cereworker/gateway)](https://www.npmjs.com/package/@cereworker/gateway) | WebSocket gateway for multi-node control |
-| [`@cereworker/config`](packages/config) | [![npm](https://img.shields.io/npm/v/@cereworker/config)](https://www.npmjs.com/package/@cereworker/config) | YAML config with Zod validation, env var interpolation |
+| [`@producible/cereworker`](apps/cli) | [![npm](https://img.shields.io/npm/v/@producible/cereworker)](https://www.npmjs.com/package/@producible/cereworker) | Ink 5 terminal UI |
+| [`@producible/cereworker-core`](packages/core) | [![npm](https://img.shields.io/npm/v/@producible/cereworker-core)](https://www.npmjs.com/package/@producible/cereworker-core) | Orchestrator, message model, typed events, conversation store |
+| [`@producible/cereworker-cerebrum`](packages/cerebrum) | [![npm](https://img.shields.io/npm/v/@producible/cereworker-cerebrum)](https://www.npmjs.com/package/@producible/cereworker-cerebrum) | AI SDK 6 multi-provider LLM abstraction + built-in tools |
+| [`@producible/cereworker-cerebellum-client`](packages/cerebellum-client) | [![npm](https://img.shields.io/npm/v/@producible/cereworker-cerebellum-client)](https://www.npmjs.com/package/@producible/cereworker-cerebellum-client) | gRPC client for the Cerebellum container |
+| [`@producible/cereworker-channels`](packages/channels) | [![npm](https://img.shields.io/npm/v/@producible/cereworker-channels)](https://www.npmjs.com/package/@producible/cereworker-channels) | IM adapters (Slack, Discord, Telegram, Matrix, Feishu, WeChat, WhatsApp, Signal, IRC) |
+| [`@producible/cereworker-browser`](packages/browser) | [![npm](https://img.shields.io/npm/v/@producible/cereworker-browser)](https://www.npmjs.com/package/@producible/cereworker-browser) | Browser automation (Puppeteer, CDP, Chrome extension) |
+| [`@producible/cereworker-skills`](packages/skills) | [![npm](https://img.shields.io/npm/v/@producible/cereworker-skills)](https://www.npmjs.com/package/@producible/cereworker-skills) | SKILL.md plugin loader and registry |
+| [`@producible/cereworker-hippocampus`](packages/hippocampus) | [![npm](https://img.shields.io/npm/v/@producible/cereworker-hippocampus)](https://www.npmjs.com/package/@producible/cereworker-hippocampus) | Temporary memory store, memory tools, fine-tune curator |
+| [`@producible/cereworker-gateway`](packages/gateway) | [![npm](https://img.shields.io/npm/v/@producible/cereworker-gateway)](https://www.npmjs.com/package/@producible/cereworker-gateway) | WebSocket gateway for multi-node control |
+| [`@producible/cereworker-config`](packages/config) | [![npm](https://img.shields.io/npm/v/@producible/cereworker-config)](https://www.npmjs.com/package/@producible/cereworker-config) | YAML config with Zod validation, env var interpolation |
 
 ## Built-in Tools
 
@@ -878,7 +878,7 @@ The test layers are split intentionally:
 - `test:e2e:install` installs a published CLI into a temporary prefix and runs a blank-machine smoke flow. Override the package under test with `CEREWORKER_PACKAGE_SPEC`, for example:
 
 ```bash
-CEREWORKER_PACKAGE_SPEC=@cereworker/cli@latest pnpm test:e2e:install
+CEREWORKER_PACKAGE_SPEC=@producible/cereworker@latest pnpm test:e2e:install
 ```
 
 ### CI

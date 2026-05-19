@@ -7,7 +7,7 @@ installWarningFilter();
 import React from 'react';
 import { render, Text, Box } from 'ink';
 import { createRequire } from 'node:module';
-import { loadConfig } from '@cereworker/config';
+import { loadConfig } from '@producible/cereworker-config';
 import { App } from './app.js';
 import { exitOneShot } from './process-exit.js';
 
@@ -25,7 +25,7 @@ async function main() {
         new Promise<null>((r) => setTimeout(() => r(null), 500)),
       ]);
       if (latest) {
-        console.log(`Update available: ${latest} — run: npm install -g @cereworker/cli`);
+        console.log(`Update available: ${latest} — run: npm install -g @producible/cereworker`);
       }
     } catch {
       // Non-critical
@@ -115,7 +115,7 @@ async function main() {
       // Fallback to npm package location
       const { createRequire: cr } = await import('node:module');
       const r = cr(import.meta.url);
-      const p = r.resolve('@cereworker/browser');
+      const p = r.resolve('@producible/cereworker-browser');
       console.log(p.substring(0, p.lastIndexOf('dist')) + 'extension');
     }
     await exitOneShot(0);
@@ -145,7 +145,7 @@ async function main() {
   try {
     const config = loadConfig();
     if (debugFlag) {
-      const { configureLogger } = await import('@cereworker/core');
+      const { configureLogger } = await import('@producible/cereworker-core');
       configureLogger({ level: 'debug', stderr: true });
     }
     render(<App config={config} resumeConversationId={resumeId} debugMode={debugFlag} />, { exitOnCtrlC: false });

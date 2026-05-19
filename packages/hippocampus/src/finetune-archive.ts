@@ -8,7 +8,7 @@ import {
   withTextStoreLock,
   writeJsonFileAtomic,
   writeTextFileAtomic,
-} from '@cereworker/core';
+} from '@producible/cereworker-core';
 import type { TrainingPair } from './types.js';
 
 export type FineTuneQueueSource = 'discovery' | 'conversations' | 'curated-memory';

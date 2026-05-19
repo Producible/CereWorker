@@ -1,4 +1,4 @@
-import type { Message, ToolCall, ToolResult, StreamFinishMetadata } from '@cereworker/core';
+import type { Message, ToolCall, ToolResult, StreamFinishMetadata } from '@producible/cereworker-core';
 
 export interface CerebrumConfig {
   defaultProvider: string;

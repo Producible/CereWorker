@@ -2,9 +2,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync }
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { configSchema, type CereWorkerConfig } from '@cereworker/config';
-import type { CerebellumAdapter } from '@cereworker/core';
-import type { ChannelPlugin, MessageHandler, InboundMessage } from '@cereworker/channels';
+import { configSchema, type CereWorkerConfig } from '@producible/cereworker-config';
+import type { CerebellumAdapter } from '@producible/cereworker-core';
+import type { ChannelPlugin, MessageHandler, InboundMessage } from '@producible/cereworker-channels';
 import { createService } from './service.js';
 import { buildChannelConversationKey } from './channel-conversations.js';
 

@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { CereWorkerConfig } from '@cereworker/config';
+import type { CereWorkerConfig } from '@producible/cereworker-config';
 import { describe, expect, it } from 'vitest';
 import {
   buildCerebellumComposeCommand,
@@ -31,7 +31,7 @@ const config = {
     },
     docker: {
       autoStart: true,
-      image: 'cereworker/cerebellum:latest',
+      image: 'producible/cereworker-cerebellum:latest',
       modelsPath: '~/.cereworker/models',
     },
   },
@@ -67,12 +67,12 @@ describe('buildCerebellumComposeEnv', () => {
 describe('resolveCerebellumDockerImage', () => {
   it('resolves official alias images to the current version at runtime', () => {
     expect(resolveCerebellumDockerImage(config, { version: '26.406.1' })).toEqual({
-      configuredImage: 'cereworker/cerebellum:latest',
-      configuredStatusImage: 'cereworker/cerebellum:latest',
-      expectedImage: 'cereworker/cerebellum:26.406.1',
-      runtimeImage: 'cereworker/cerebellum:26.406.1',
-      localAlignmentImages: ['cereworker/cerebellum:26.406.1', 'cereworker/cerebellum:latest'],
-      repo: 'cereworker/cerebellum',
+      configuredImage: 'producible/cereworker-cerebellum:latest',
+      configuredStatusImage: 'producible/cereworker-cerebellum:latest',
+      expectedImage: 'producible/cereworker-cerebellum:26.406.1',
+      runtimeImage: 'producible/cereworker-cerebellum:26.406.1',
+      localAlignmentImages: ['producible/cereworker-cerebellum:26.406.1', 'producible/cereworker-cerebellum:latest'],
+      repo: 'producible/cereworker-cerebellum',
       variant: 'cpu',
       officialImage: true,
       aliasImage: true,
@@ -88,19 +88,19 @@ describe('resolveCerebellumDockerImage', () => {
             ...config.cerebellum,
             docker: {
               ...config.cerebellum.docker,
-              image: 'cereworker/cerebellum:26.405.0',
+              image: 'producible/cereworker-cerebellum:26.405.0',
             },
           },
         },
         { version: '26.406.1' },
       ),
     ).toEqual({
-      configuredImage: 'cereworker/cerebellum:26.405.0',
-      configuredStatusImage: 'cereworker/cerebellum:26.405.0',
-      expectedImage: 'cereworker/cerebellum:26.406.1',
-      runtimeImage: 'cereworker/cerebellum:26.405.0',
-      localAlignmentImages: ['cereworker/cerebellum:26.405.0'],
-      repo: 'cereworker/cerebellum',
+      configuredImage: 'producible/cereworker-cerebellum:26.405.0',
+      configuredStatusImage: 'producible/cereworker-cerebellum:26.405.0',
+      expectedImage: 'producible/cereworker-cerebellum:26.406.1',
+      runtimeImage: 'producible/cereworker-cerebellum:26.405.0',
+      localAlignmentImages: ['producible/cereworker-cerebellum:26.405.0'],
+      repo: 'producible/cereworker-cerebellum',
       variant: 'cpu',
       officialImage: true,
       aliasImage: false,
@@ -109,8 +109,8 @@ describe('resolveCerebellumDockerImage', () => {
   });
 
   it('builds the official versioned image reference for a variant', () => {
-    expect(getOfficialCerebellumImage('cpu', { version: '26.406.1' })).toBe('cereworker/cerebellum:26.406.1');
-    expect(getOfficialCerebellumImage('gpu', { version: '26.406.1' })).toBe('cereworker/cerebellum:26.406.1-gpu');
+    expect(getOfficialCerebellumImage('cpu', { version: '26.406.1' })).toBe('producible/cereworker-cerebellum:26.406.1');
+    expect(getOfficialCerebellumImage('gpu', { version: '26.406.1' })).toBe('producible/cereworker-cerebellum:26.406.1-gpu');
   });
 });
 

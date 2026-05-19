@@ -5,7 +5,7 @@ import {
   ensureDir,
   readJsonFile,
   writeJsonFileAtomic,
-} from '@cereworker/core';
+} from '@producible/cereworker-core';
 import type {
   AnyGatewayFrame,
   GatewayFrame,

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createProxyTools } from './proxy-tools.js';
 import type { GatewayServer } from './server.js';
-import type { ToolResult } from '@cereworker/core';
+import type { ToolResult } from '@producible/cereworker-core';
 
 function mockServer(
   invokeResult: ToolResult = { callId: 'call-1', output: 'ok', isError: false },

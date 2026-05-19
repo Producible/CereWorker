@@ -24,19 +24,19 @@ import {
   type TaskSchedule,
   type TaskReportTarget,
   type SchedulerStatus,
-} from '@cereworker/core';
+} from '@producible/cereworker-core';
 import {
   CerebellumClient,
   type TaskSchedule as CerebellumTaskSchedule,
   type SupervisorState as CerebellumSupervisorState,
   type SupervisorTaskState as CerebellumSupervisorTaskState,
   type TaskAction as CerebellumTaskAction,
-} from '@cereworker/cerebellum-client';
-import { CerebrumProvider, createBuiltinTools } from '@cereworker/cerebrum';
-import type { CereWorkerConfig } from '@cereworker/config';
-import { createChannelManager, type ChannelManager } from '@cereworker/channels';
-import { createBrowserTools, PuppeteerBackend, CdpBackend, BrowserRelay, ExtensionBackend } from '@cereworker/browser';
-import { loadSkills, filterEligibleSkills, SkillRegistry } from '@cereworker/skills';
+} from '@producible/cereworker-cerebellum-client';
+import { CerebrumProvider, createBuiltinTools } from '@producible/cereworker-cerebrum';
+import type { CereWorkerConfig } from '@producible/cereworker-config';
+import { createChannelManager, type ChannelManager } from '@producible/cereworker-channels';
+import { createBrowserTools, PuppeteerBackend, CdpBackend, BrowserRelay, ExtensionBackend } from '@producible/cereworker-browser';
+import { loadSkills, filterEligibleSkills, SkillRegistry } from '@producible/cereworker-skills';
 import { parseCommand, handleSlashCommand, CHANNEL_COMMANDS, type CommandContext } from './commands.js';
 import {
   HippocampusStore,
@@ -49,14 +49,14 @@ import {
   memoryLogParameters,
   memorySearchParameters,
   type TrainingCandidate,
-} from '@cereworker/hippocampus';
+} from '@producible/cereworker-hippocampus';
 import {
   GatewayServer,
   GatewayNodeClient,
   createProxyTools,
   type AnyGatewayFrame,
   type RemoteToolExecutionContext,
-} from '@cereworker/gateway';
+} from '@producible/cereworker-gateway';
 import {
   buildCerebellumComposeCommand,
   buildCerebellumComposeEnv,
@@ -477,7 +477,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
     weekly: 'every week',
   };
   let finetuneScheduleHint = scheduleMap[config.cerebellum.finetune?.schedule ?? 'auto'] ?? 'when idle';
-  let pendingFineTuneBatch: import('@cereworker/hippocampus').FineTuneQueuedBatch | null = null;
+  let pendingFineTuneBatch: import('@producible/cereworker-hippocampus').FineTuneQueuedBatch | null = null;
   const fineTuneRoundsByJob = new Map<string, string>();
   let fineTuneActive = false;
 
@@ -1379,7 +1379,7 @@ export function createService(config: CereWorkerConfig, deps: ServiceDeps = {}):
 
       // Queue training pairs from the discovery conversation for a later fine-tune round
       try {
-        const discoveryPairs: import('@cereworker/hippocampus').TrainingPair[] = [];
+        const discoveryPairs: import('@producible/cereworker-hippocampus').TrainingPair[] = [];
         const messages = orchestrator.getMessages();
         const discoverySessionId = orchestrator.getActiveConversationId() ?? undefined;
         for (let i = 0; i < messages.length - 1; i++) {

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
-import type { CerebellumStatus } from '@cereworker/core';
+import type { CerebellumStatus } from '@producible/cereworker-core';
 import type { CerebellumLoading } from '../hooks/useCerebellum.js';
 
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];

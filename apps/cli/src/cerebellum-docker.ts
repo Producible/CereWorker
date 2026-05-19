@@ -2,11 +2,11 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { CereWorkerConfig } from '@cereworker/config';
+import type { CereWorkerConfig } from '@producible/cereworker-config';
 
 const require = createRequire(import.meta.url);
 const { version: CLI_VERSION } = require('../package.json');
-export const OFFICIAL_CEREBELLUM_IMAGE = 'cereworker/cerebellum';
+export const OFFICIAL_CEREBELLUM_IMAGE = 'producible/cereworker-cerebellum';
 export const OFFICIAL_CEREBELLUM_GPU_ALIAS = `${OFFICIAL_CEREBELLUM_IMAGE}:gpu`;
 
 export interface ResolvedCerebellumModel {

@@ -268,7 +268,7 @@ export class CerebellumClient {
     if (!existsSync(protoPath)) {
       this.connected = false;
       throw new Error(
-        `Proto file not found at ${protoPath}. Reinstall @cereworker/cerebellum-client.`,
+        `Proto file not found at ${protoPath}. Reinstall @producible/cereworker-cerebellum-client.`,
       );
     }
 

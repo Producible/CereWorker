@@ -1,5 +1,5 @@
 import { createInterface } from 'node:readline';
-import { loadConfig } from '@cereworker/config';
+import { loadConfig } from '@producible/cereworker-config';
 import {
   loginMiniMaxPortal,
   runOAuthFlow,
@@ -8,7 +8,7 @@ import {
   isRemoteEnvironment,
   loginOpenAICodex,
   loginGoogle,
-} from '@cereworker/cerebrum';
+} from '@producible/cereworker-cerebrum';
 import { canonicalizeOAuthProvider, isIntegratedOAuthProvider, listSupportedOAuthProviders } from './auth-utils.js';
 import { openBrowser } from './open-browser.js';
 

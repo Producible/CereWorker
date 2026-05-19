@@ -1,4 +1,4 @@
-import type { ToolExecutionValue } from '@cereworker/core';
+import type { ToolExecutionValue } from '@producible/cereworker-core';
 import { z } from 'zod';
 import type { BrowserBackend, TabInfo } from './backend.js';
 

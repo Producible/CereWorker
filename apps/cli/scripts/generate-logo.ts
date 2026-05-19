@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
  * Converts the CereWorker logo PNG to ANSI half-block character art.
- * Run: pnpm --filter @cereworker/cli generate:logo
+ * Run: pnpm --filter @producible/cereworker generate:logo
  * Output: src/components/logo-data.ts
  */
 import sharp from 'sharp';

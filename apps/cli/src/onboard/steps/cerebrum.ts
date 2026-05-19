@@ -8,8 +8,8 @@ import {
   getProviderModels,
   listCerebrumProviderFamilies,
   type ProviderAuthMode,
-} from '@cereworker/config';
-import { loginGoogle, loginMiniMaxPortal, loginOpenAICodex, TokenStore } from '@cereworker/cerebrum';
+} from '@producible/cereworker-config';
+import { loginGoogle, loginMiniMaxPortal, loginOpenAICodex, TokenStore } from '@producible/cereworker-cerebrum';
 import { openBrowser } from '../../open-browser.js';
 
 export interface CerebrumResult {

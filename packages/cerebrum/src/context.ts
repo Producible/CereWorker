@@ -1,4 +1,4 @@
-import type { Message } from '@cereworker/core';
+import type { Message } from '@producible/cereworker-core';
 
 /**
  * Build the prompt for the compaction LLM call.

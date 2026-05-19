@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { configSchema } from '@cereworker/config';
+import { configSchema } from '@producible/cereworker-config';
 import {
   getCurrentCerebrumConfig,
   getCurrentChannelsConfig,

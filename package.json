@@ -9,7 +9,7 @@
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
     "clean": "turbo run clean",
-    "start": "pnpm --filter @cereworker/cli start",
+    "start": "pnpm --filter @producible/cereworker start",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:unit": "vitest run --exclude 'apps/cli/src/service.integration.test.ts' --exclude 'apps/cli/src/cli.smoke.test.ts'",
@@ -26,5 +26,5 @@
     "typescript": "^5.7.3",
     "vitest": "^4.0.18"
   },
-  "version": "26.519.1"
+  "version": "26.520.1"
 }

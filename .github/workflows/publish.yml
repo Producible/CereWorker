@@ -126,18 +126,18 @@ jobs:
         run: |
           docker build \
             --build-arg CEREWORKER_VERSION=${{ steps.version.outputs.version }} \
-            -t cereworker/cerebellum:latest \
-            -t cereworker/cerebellum:${{ steps.version.outputs.version }} \
+            -t producible/cereworker-cerebellum:latest \
+            -t producible/cereworker-cerebellum:${{ steps.version.outputs.version }} \
             -f cerebellum/Dockerfile .
-          docker push cereworker/cerebellum:latest
-          docker push cereworker/cerebellum:${{ steps.version.outputs.version }}
+          docker push producible/cereworker-cerebellum:latest
+          docker push producible/cereworker-cerebellum:${{ steps.version.outputs.version }}
 
       - name: Build and push GPU image
         run: |
           docker build \
             --build-arg CEREWORKER_VERSION=${{ steps.version.outputs.version }} \
-            -t cereworker/cerebellum:gpu \
-            -t cereworker/cerebellum:${{ steps.version.outputs.version }}-gpu \
+            -t producible/cereworker-cerebellum:gpu \
+            -t producible/cereworker-cerebellum:${{ steps.version.outputs.version }}-gpu \
             -f cerebellum/Dockerfile.gpu .
-          docker push cereworker/cerebellum:gpu
-          docker push cereworker/cerebellum:${{ steps.version.outputs.version }}-gpu
+          docker push producible/cereworker-cerebellum:gpu
+          docker push producible/cereworker-cerebellum:${{ steps.version.outputs.version }}-gpu

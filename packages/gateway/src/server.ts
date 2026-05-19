@@ -1,7 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { nanoid } from 'nanoid';
-import { createLogger, type ToolResult } from '@cereworker/core';
+import { createLogger, type ToolResult } from '@producible/cereworker-core';
 import type {
   AnyGatewayFrame,
   GatewayFrame,

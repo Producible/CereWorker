@@ -1,5 +1,5 @@
 import WebSocket from 'ws';
-import { createLogger, type ToolResult } from '@cereworker/core';
+import { createLogger, type ToolResult } from '@producible/cereworker-core';
 import type {
   AnyGatewayFrame,
   GatewayClientConfig,

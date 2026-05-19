@@ -1,5 +1,5 @@
 import { clack, guardCancel } from '../prompter.js';
-import { DiscoveryEngine, type DiscoveryResult, type CerebrumAdapter } from '@cereworker/core';
+import { DiscoveryEngine, type DiscoveryResult, type CerebrumAdapter } from '@producible/cereworker-core';
 
 export interface DiscoveryStepResult {
   name: string;

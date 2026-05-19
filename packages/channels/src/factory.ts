@@ -1,4 +1,4 @@
-import type { CereWorkerConfig } from '@cereworker/config';
+import type { CereWorkerConfig } from '@producible/cereworker-config';
 import type { CommandDef } from './types.js';
 import { ChannelManager } from './manager.js';
 import { createSlackChannel } from './adapters/slack.js';

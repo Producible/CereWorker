@@ -1,4 +1,4 @@
-import type { ToolDefinition } from '@cereworker/core';
+import type { ToolDefinition } from '@producible/cereworker-core';
 import {
   shellToolParameters,
   createShellExecutor,

@@ -193,8 +193,8 @@ case "$cmd" in
     shift
     if [[ "\${1:-}" == "inspect" ]]; then
       target="\${2:-}"
-      if [[ "\${target}" == cereworker/cerebellum:* ]]; then
-        echo '["cereworker/cerebellum@sha256:abc123"]'
+      if [[ "\${target}" == producible/cereworker-cerebellum:* ]]; then
+        echo '["producible/cereworker-cerebellum@sha256:abc123"]'
         exit 0
       fi
       if [[ "\${target}" == "registry.example/cerebellum:gpu" ]]; then
@@ -261,7 +261,7 @@ describeBuilt('CLI smoke', () => {
       const originalFetch = globalThis.fetch;
       globalThis.fetch = async (input, init) => {
         const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-        if (url === 'https://registry.npmjs.org/@cereworker/cli/latest') {
+        if (url === 'https://registry.npmjs.org/@producible/cereworker/latest') {
           return await new Promise((resolve) => {
             setTimeout(() => resolve(new Response(JSON.stringify({ version: '99.0.0' }), {
               status: 200,
@@ -324,7 +324,7 @@ tools:
 
     const dockerCalls = readFileSync(dockerLog, 'utf-8');
     expect(dockerCalls).toContain('pull registry.example/cerebellum:gpu');
-    expect(dockerCalls).not.toContain('cereworker/cerebellum:latest');
+    expect(dockerCalls).not.toContain('producible/cereworker-cerebellum:latest');
   });
 
   it('aligns official alias images to the current CereWorker version', async () => {
@@ -340,7 +340,7 @@ cerebrum:
 cerebellum:
   enabled: false
   docker:
-    image: cereworker/cerebellum
+    image: producible/cereworker-cerebellum
 tools:
   browser:
     enabled: false
@@ -355,18 +355,18 @@ tools:
 
     const images = await runCli(['images'], { env });
     expect(images.code).toBe(0);
-    expect(images.stdout).toContain('Configured image: cereworker/cerebellum');
-    expect(images.stdout).toContain(`Expected image for CereWorker ${version}: cereworker/cerebellum:${version}`);
+    expect(images.stdout).toContain('Configured image: producible/cereworker-cerebellum');
+    expect(images.stdout).toContain(`Expected image for CereWorker ${version}: producible/cereworker-cerebellum:${version}`);
     expect(images.stdout).toContain(`Alignment: aligned with CereWorker ${version}.`);
 
     const upgrade = await runCli(['images', 'upgrade'], { env });
     expect(upgrade.code).toBe(0);
-    expect(upgrade.stdout).toContain(`Pulling cereworker/cerebellum:${version}...`);
-    expect(upgrade.stdout).toContain(`Aligned with CereWorker ${version} via cereworker/cerebellum:${version}`);
+    expect(upgrade.stdout).toContain(`Pulling producible/cereworker-cerebellum:${version}...`);
+    expect(upgrade.stdout).toContain(`Aligned with CereWorker ${version} via producible/cereworker-cerebellum:${version}`);
 
     const dockerCalls = readFileSync(dockerLog, 'utf-8');
-    expect(dockerCalls).toContain(`pull cereworker/cerebellum:${version}`);
-    expect(dockerCalls).not.toContain('pull cereworker/cerebellum:latest');
+    expect(dockerCalls).toContain(`pull producible/cereworker-cerebellum:${version}`);
+    expect(dockerCalls).not.toContain('pull producible/cereworker-cerebellum:latest');
   });
 
   it('starts headless mode and serves health checks from a temp config', async () => {

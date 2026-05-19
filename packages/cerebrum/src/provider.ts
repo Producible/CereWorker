@@ -16,7 +16,7 @@ import {
   GOOGLE_OPENAI_BASE_URL,
   OPENAI_CODEX_BASE_URL,
   type ProviderRuntimeFamily,
-} from '@cereworker/config';
+} from '@producible/cereworker-config';
 import {
   createLogger,
   raceWithAbort,
@@ -27,7 +27,7 @@ import {
   type StreamFinishReason,
   type ToolCall as CWToolCall,
   type ToolDefinition,
-} from '@cereworker/core';
+} from '@producible/cereworker-core';
 import type { CerebrumConfig, ProviderConfig, StreamCallbacks } from './types.js';
 import { withRetry, type RetryOptions } from './retry.js';
 import { buildCompactionPrompt } from './context.js';

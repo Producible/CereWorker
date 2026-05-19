@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import type { Orchestrator, CerebellumStatus, TaskAction } from '@cereworker/core';
+import type { Orchestrator, CerebellumStatus, TaskAction } from '@producible/cereworker-core';
 
 export interface FineTuneInfo {
   active: boolean;

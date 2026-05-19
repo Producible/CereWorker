@@ -1,5 +1,5 @@
-import { GLOBAL_CONFIG, writeConfig } from '@cereworker/config';
-import { HippocampusStore } from '@cereworker/hippocampus';
+import { GLOBAL_CONFIG, writeConfig } from '@producible/cereworker-config';
+import { HippocampusStore } from '@producible/cereworker-hippocampus';
 import { clack, guardCancel } from '../prompter.js';
 import { buildFinalConfig, type BuildConfigParams } from '../config-builder.js';
 

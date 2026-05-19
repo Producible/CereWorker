@@ -1,5 +1,5 @@
 import { existsSync, unlinkSync } from 'node:fs';
-import { GLOBAL_CONFIG, loadConfig, loadRawConfig, type CereWorkerConfig } from '@cereworker/config';
+import { GLOBAL_CONFIG, loadConfig, loadRawConfig, type CereWorkerConfig } from '@producible/cereworker-config';
 import { clack, guardCancel } from '../prompter.js';
 
 export interface WelcomeResult {

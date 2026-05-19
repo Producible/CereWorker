@@ -1,4 +1,4 @@
-import type { Message } from '@cereworker/core';
+import type { Message } from '@producible/cereworker-core';
 
 export function formatLocalTimestamp(
   value: string | number | Date,

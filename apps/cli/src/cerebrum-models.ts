@@ -3,4 +3,4 @@ export {
   DEFAULT_OPENAI_MODEL,
   getProviderModels,
   type ProviderModelOption,
-} from '@cereworker/config';
+} from '@producible/cereworker-config';

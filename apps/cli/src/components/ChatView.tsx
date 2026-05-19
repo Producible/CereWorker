@@ -1,6 +1,6 @@
 import React from 'react';
 import { Box, Text } from 'ink';
-import type { Message } from '@cereworker/core';
+import type { Message } from '@producible/cereworker-core';
 import { Banner } from './Banner.js';
 import { formatChatTimestamp } from '../presentation.js';
 

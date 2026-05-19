@@ -1,7 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import { homedir } from 'node:os';
-import { configureLogger, createLogger } from '@cereworker/core';
-import type { CereWorkerConfig } from '@cereworker/config';
+import { configureLogger, createLogger } from '@producible/cereworker-core';
+import type { CereWorkerConfig } from '@producible/cereworker-config';
 import { createService } from './service.js';
 import type { GatewayHandles } from './service.js';
 

@@ -5,7 +5,7 @@ set -euo pipefail
 # Usage: curl -fsSL https://raw.githubusercontent.com/Producible/CereWorker/main/install.sh | bash
 
 NODE_MIN=22
-PKG="@cereworker/cli"
+PKG="@producible/cereworker"
 
 # --- Colors ---
 

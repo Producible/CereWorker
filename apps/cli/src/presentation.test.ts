@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Message } from '@cereworker/core';
+import type { Message } from '@producible/cereworker-core';
 import { filterTranscriptMessages, formatChatTimestamp, formatLocalTimestamp } from './presentation.js';
 
 describe('presentation helpers', () => {

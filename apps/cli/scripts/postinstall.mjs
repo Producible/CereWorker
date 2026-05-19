@@ -18,7 +18,7 @@ const dest = join(homedir(), '.cereworker', 'extension');
 
 try {
   const require = createRequire(import.meta.url);
-  const browserPkg = require.resolve('@cereworker/browser');
+  const browserPkg = require.resolve('@producible/cereworker-browser');
   const extensionSrc = join(browserPkg.substring(0, browserPkg.lastIndexOf('dist')), 'extension');
 
   if (existsSync(extensionSrc)) {
@@ -63,7 +63,7 @@ try {
   }
 }
 
-const image = 'cereworker/cerebellum:latest';
+const image = 'producible/cereworker-cerebellum:latest';
 log(`CereWorker: Pulling ${image}...`);
 try {
   execSync(`${dockerCmd} pull ${image}`, { stdio: 'inherit', timeout: 3_600_000 });

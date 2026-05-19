@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-IMAGE="cereworker/cerebellum"
+IMAGE="producible/cereworker-cerebellum"
 VERSION="$(node -p "require('./apps/cli/package.json').version")"
 
 echo "Building CPU image ($IMAGE:$VERSION and $IMAGE:latest)..."

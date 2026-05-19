@@ -1,4 +1,4 @@
-import { PairingStore, formatCode } from '@cereworker/core';
+import { PairingStore, formatCode } from '@producible/cereworker-core';
 
 export async function runApprove(code: string): Promise<void> {
   const store = new PairingStore();
