@@ -1,5 +1,9 @@
 name: Install Smoke
 
+# Validates the floating :latest npm package and Docker image on a daily cron
+# (regression catch) and on manual dispatch. Tag-time validation lives inside
+# the Publish workflow (.github/workflows/publish.yml) right after each push,
+# so we don't race the publish jobs that produce the artifacts being smoked.
 on:
   workflow_dispatch:
     inputs:
@@ -9,18 +13,13 @@ on:
         default: '@producible/cereworker@latest'
   schedule:
     - cron: '0 10 * * *'
-  push:
-    tags:
-      - 'v*'
 
 jobs:
   install-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
-      # On tag pushes (v26.329.13), install that exact version from npm
       CEREWORKER_PACKAGE_SPEC: ${{ inputs.package_spec || '@producible/cereworker@latest' }}
-      CEREWORKER_TAG_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
 
     steps:
       - name: Checkout
@@ -37,24 +36,12 @@ jobs:
   docker-image-smoke:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      CEREWORKER_TAG_VERSION: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
 
     steps:
-      - name: Resolve image tag
-        id: tag
-        run: |
-          if [ -n "${CEREWORKER_TAG_VERSION}" ]; then
-            # github.ref_name on tags is e.g. v26.520.3 — strip the leading v.
-            echo "image=producible/cereworker-cerebellum:${CEREWORKER_TAG_VERSION#v}" >> "$GITHUB_OUTPUT"
-          else
-            echo "image=producible/cereworker-cerebellum:latest" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Pull Cerebellum image
-        run: docker pull ${{ steps.tag.outputs.image }}
+        run: docker pull producible/cereworker-cerebellum:latest
 
       - name: Validate image runtime dependencies
         run: |
-          docker run --rm --entrypoint python ${{ steps.tag.outputs.image }} -c \
+          docker run --rm --entrypoint python producible/cereworker-cerebellum:latest -c \
             "import grpc, transformers, torch; print('cerebellum-image-ok')"

@@ -75,6 +75,11 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      - name: Validate published npm package
+        env:
+          CEREWORKER_TAG_VERSION: ${{ github.ref_name }}
+        run: bash scripts/e2e/install-smoke.sh
+
   check-docker-changes:
     needs: test
     runs-on: ubuntu-latest
@@ -131,6 +136,13 @@ jobs:
             -f cerebellum/Dockerfile .
           docker push producible/cereworker-cerebellum:latest
           docker push producible/cereworker-cerebellum:${{ steps.version.outputs.version }}
+
+      - name: Validate pushed CPU image
+        run: |
+          docker pull producible/cereworker-cerebellum:${{ steps.version.outputs.version }}
+          docker run --rm --entrypoint python \
+            producible/cereworker-cerebellum:${{ steps.version.outputs.version }} -c \
+            "import grpc, transformers, torch; print('cerebellum-image-ok')"
 
       - name: Build and push GPU image
         run: |

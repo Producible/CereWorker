@@ -1,6 +1,6 @@
 {
   "name": "@producible/cereworker",
-  "version": "26.520.3",
+  "version": "26.520.4",
   "type": "module",
   "bin": {
     "cereworker": "dist/index.js"

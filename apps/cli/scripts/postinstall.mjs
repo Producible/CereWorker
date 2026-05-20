@@ -71,10 +71,16 @@ const latestImage = 'producible/cereworker-cerebellum:latest';
 log(`CereWorker: Pulling ${versionedImage}...`);
 try {
   execSync(`${dockerCmd} pull ${versionedImage}`, { stdio: 'inherit', timeout: 3_600_000 });
-  // Also pull :latest so other tooling that targets the floating tag sees the
-  // same digest right after install. Identical content = no-op layer reuse.
-  execSync(`${dockerCmd} pull ${latestImage}`, { stdio: 'pipe', timeout: 3_600_000 });
   log('CereWorker: Cerebellum image updated.');
 } catch {
   log(`CereWorker: Could not pull ${versionedImage}. Run "cereworker images upgrade" to retry.`);
+}
+
+// Optional :latest pull — non-fatal. The versioned image above is what runtime
+// needs; :latest is a convenience tag for other tooling. A failure here must
+// not poison the report of the versioned pull above.
+try {
+  execSync(`${dockerCmd} pull ${latestImage}`, { stdio: 'pipe', timeout: 3_600_000 });
+} catch {
+  // Ignore — versioned image is sufficient for runtime.
 }
