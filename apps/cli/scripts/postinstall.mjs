@@ -63,11 +63,18 @@ try {
   }
 }
 
-const image = 'producible/cereworker-cerebellum:latest';
-log(`CereWorker: Pulling ${image}...`);
+const cliPkg = createRequire(import.meta.url)('../package.json');
+const cliVersion = cliPkg.version;
+const versionedImage = `producible/cereworker-cerebellum:${cliVersion}`;
+const latestImage = 'producible/cereworker-cerebellum:latest';
+
+log(`CereWorker: Pulling ${versionedImage}...`);
 try {
-  execSync(`${dockerCmd} pull ${image}`, { stdio: 'inherit', timeout: 3_600_000 });
+  execSync(`${dockerCmd} pull ${versionedImage}`, { stdio: 'inherit', timeout: 3_600_000 });
+  // Also pull :latest so other tooling that targets the floating tag sees the
+  // same digest right after install. Identical content = no-op layer reuse.
+  execSync(`${dockerCmd} pull ${latestImage}`, { stdio: 'pipe', timeout: 3_600_000 });
   log('CereWorker: Cerebellum image updated.');
 } catch {
-  log(`CereWorker: Could not pull ${image}. Run "cereworker images upgrade" to retry.`);
+  log(`CereWorker: Could not pull ${versionedImage}. Run "cereworker images upgrade" to retry.`);
 }

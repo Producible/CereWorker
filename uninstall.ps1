@@ -60,16 +60,21 @@ function Remove-DockerContainer {
 function Remove-DockerImage {
     if (-not (Test-DockerAvailable)) { return }
 
-    $iid = docker images -q producible/cereworker-cerebellum 2>$null
-    if (-not $iid) {
+    $refs = docker images --format '{{.Repository}}:{{.Tag}}' producible/cereworker-cerebellum 2>$null
+    if (-not $refs) {
         Write-Info "No producible/cereworker-cerebellum image found"
         return
     }
 
-    Write-Info "Removing producible/cereworker-cerebellum Docker image..."
-    docker rmi producible/cereworker-cerebellum:latest 2>$null | Out-Null
-    Write-Ok "Removed image producible/cereworker-cerebellum"
-    $script:Removed += "Docker image: producible/cereworker-cerebellum"
+    Write-Info "Removing producible/cereworker-cerebellum Docker images..."
+    foreach ($ref in $refs -split "`n") {
+        $trimmed = $ref.Trim()
+        if ($trimmed) {
+            docker rmi $trimmed 2>$null | Out-Null
+        }
+    }
+    Write-Ok "Removed image producible/cereworker-cerebellum (all tags)"
+    $script:Removed += "Docker image: producible/cereworker-cerebellum (all tags)"
 }
 
 function Remove-DockerVolumes {

@@ -24,6 +24,9 @@ FROM python:3.12-slim
 WORKDIR /app
 
 ARG CEREWORKER_VERSION=dev
+# Image tag is version-pinned by the CLI (see apps/cli/src/cerebellum-docker.ts).
+# Both install (postinstall.mjs) and uninstall (uninstall.sh / .ps1) target
+# producible/cereworker-cerebellum:<version>, not the floating :latest tag.
 LABEL org.opencontainers.image.version=$CEREWORKER_VERSION
 LABEL org.opencontainers.image.title="CereWorker Cerebellum"
 LABEL org.opencontainers.image.source="https://github.com/Producible/CereWorker"

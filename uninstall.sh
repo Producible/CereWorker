@@ -114,17 +114,25 @@ remove_docker_container() {
 remove_docker_image() {
   if [ -z "$DOCKER" ]; then return; fi
 
-  local iid
-  iid=$($DOCKER images -q producible/cereworker-cerebellum 2>/dev/null || true)
-  if [ -z "$iid" ]; then
+  local refs
+  refs=$($DOCKER images --format '{{.Repository}}:{{.Tag}}' producible/cereworker-cerebellum 2>/dev/null || true)
+  if [ -z "$refs" ]; then
     info "No producible/cereworker-cerebellum image found"
     return
   fi
 
-  info "Removing producible/cereworker-cerebellum Docker image..."
-  $DOCKER rmi producible/cereworker-cerebellum:latest >/dev/null 2>&1 || true
-  ok "Removed image producible/cereworker-cerebellum"
-  REMOVED+=("Docker image: producible/cereworker-cerebellum")
+  info "Removing producible/cereworker-cerebellum Docker images..."
+  local removed_any=false
+  while IFS= read -r ref; do
+    [ -z "$ref" ] && continue
+    if $DOCKER rmi "$ref" >/dev/null 2>&1; then
+      removed_any=true
+    fi
+  done <<< "$refs"
+  if $removed_any; then
+    ok "Removed image producible/cereworker-cerebellum (all tags)"
+    REMOVED+=("Docker image: producible/cereworker-cerebellum (all tags)")
+  fi
 }
 
 remove_docker_volumes() {
