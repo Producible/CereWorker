@@ -29,6 +29,7 @@ ARG CEREWORKER_VERSION=dev
 # producible/cereworker-cerebellum:<version>, not the floating :latest tag.
 # Tag-time validation lives inside .github/workflows/publish.yml so the smoke
 # never races the artifact it depends on (was a real issue in v26.520.3).
+# Propagation poll is a single global retry loop bounded under the job timeout.
 LABEL org.opencontainers.image.version=$CEREWORKER_VERSION
 LABEL org.opencontainers.image.title="CereWorker Cerebellum"
 LABEL org.opencontainers.image.source="https://github.com/Producible/CereWorker"
