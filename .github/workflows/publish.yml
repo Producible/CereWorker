@@ -80,10 +80,14 @@ jobs:
           PKG_VERSION: ${{ github.ref_name }}
         run: |
           # npm registry is eventually consistent — after pnpm publish returns,
-          # each of the 10 workspace packages can take 5-60s to become queryable
-          # and lag independently. install-smoke runs `npm install` which
-          # resolves the CLI's internal deps, so we have to wait for ALL
-          # published workspace packages, not just the CLI.
+          # each of the published workspace packages can take 5-60s to become
+          # queryable, and they lag independently. install-smoke runs
+          # `npm install` which resolves the CLI's internal deps, so we have to
+          # wait for ALL published workspace packages, not just the CLI.
+          #
+          # Single global retry loop instead of per-package nested loops:
+          # 8 × 15s ≈ 2.5min worst case, well under publish-npm's 15min job
+          # timeout even when many packages lag at once.
           VER="${PKG_VERSION#v}"
           PACKAGES=$(pnpm -r ls --depth=-1 --json \
             | jq -r '.[] | select(.private != true and .name != null) | .name')
@@ -94,21 +98,25 @@ jobs:
           fi
           echo "Polling for ${VER} on:"
           echo "$PACKAGES" | sed 's/^/  - /'
-          for pkg in $PACKAGES; do
-            for i in 1 2 3 4 5 6 7 8; do
-              if npm view "${pkg}@${VER}" version >/dev/null 2>&1; then
-                echo "${pkg}@${VER} visible."
-                break
+          for attempt in 1 2 3 4 5 6 7 8; do
+            missing=""
+            for pkg in $PACKAGES; do
+              if ! npm view "${pkg}@${VER}" version >/dev/null 2>&1; then
+                missing="${missing} ${pkg}"
               fi
-              if [ "$i" -eq 8 ]; then
-                echo "${pkg}@${VER} still not visible after 2min — failing." >&2
-                exit 1
-              fi
-              echo "Attempt ${i} for ${pkg}: not yet visible, waiting 15s..."
-              sleep 15
             done
+            if [ -z "$missing" ]; then
+              echo "All workspace packages propagated."
+              exit 0
+            fi
+            if [ "$attempt" -eq 8 ]; then
+              echo "Packages still missing after 2min:${missing}" >&2
+              exit 1
+            fi
+            echo "Attempt ${attempt}: still missing:${missing}"
+            echo "Waiting 15s..."
+            sleep 15
           done
-          echo "All workspace packages propagated."
 
       - name: Validate published npm package
         env:
